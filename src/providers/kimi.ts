@@ -142,9 +142,13 @@ export function createKimiAdapter(
             status:
               piInspection === "available"
                 ? "available"
-                : piError
-                  ? "invalid"
-                  : "missing",
+                : // A lapsed pi grant is not a dead credential: pi refreshes it
+                  // on its own next use.
+                  piInspection === "expired"
+                  ? "expired"
+                  : piError
+                    ? "invalid"
+                    : "missing",
             ...(piError ? { error: piError } : {}),
           },
           {

@@ -1,12 +1,15 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import {
+  PI_AUTH_FILE_LIMIT_BYTES,
+  piAuthFilePath,
+  piGrantExpired,
+  piOAuthGrant,
+  usablePiCredential,
+  type PiEnvironment,
+} from "./pi-auth.js";
 
 const PI_PROVIDER_ID = "kimi-coding";
-const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
-// Treat an access token expiring within this window as already expired, so a
-// token cannot lapse between the check here and the request that uses it.
-const EXPIRY_SKEW_MS = 30_000;
 
 export type KimiCredentialResolution =
   | { status: "available"; apiKey: string }
@@ -25,11 +28,10 @@ export type KimiCredentialBroker = {
 };
 
 type BrokerDependencies = {
-  environment: Readonly<Record<string, string | undefined>>;
+  environment: PiEnvironment;
   homeDirectory: () => string;
   readFile: (path: string, maxBytes: number) => Promise<Buffer>;
   now: () => number;
-  providerId: string;
 };
 
 export function createPiKimiCredentialBroker(
@@ -40,7 +42,6 @@ export function createPiKimiCredentialBroker(
     homeDirectory: homedir,
     readFile: readBoundedFile,
     now: Date.now,
-    providerId: PI_PROVIDER_ID,
     ...overrides,
   };
 
@@ -59,13 +60,13 @@ async function resolveCredential(
   const path = authFilePath(dependencies);
   let contents: Buffer;
   try {
-    contents = await dependencies.readFile(path, AUTH_FILE_LIMIT_BYTES);
+    contents = await dependencies.readFile(path, PI_AUTH_FILE_LIMIT_BYTES);
   } catch (error) {
     return errorCode(error) === "ENOENT"
       ? { status: "missing" }
       : { status: "error" };
   }
-  if (contents.byteLength > AUTH_FILE_LIMIT_BYTES) {
+  if (contents.byteLength > PI_AUTH_FILE_LIMIT_BYTES) {
     return { status: "missing" };
   }
 
@@ -79,7 +80,7 @@ async function resolveCredential(
   const root = objectValue(parsed);
   if (!root) return { status: "missing" };
 
-  const entry = objectValue(root[dependencies.providerId]);
+  const entry = objectValue(root[PI_PROVIDER_ID]);
   if (!entry) return { status: "missing" };
 
   // pi stores a subscription as an OAuth grant, not an API key. The quota
@@ -97,7 +98,7 @@ async function resolveCredential(
     return { status: "missing" };
   }
 
-  const apiKey = usableApiKey(entry.key);
+  const apiKey = usablePiCredential(entry.key);
   return apiKey !== undefined
     ? { status: "available", apiKey }
     : { status: "missing" };
@@ -107,58 +108,19 @@ function oauthAccessToken(
   entry: Record<string, unknown>,
   nowMs: number,
 ): KimiCredentialResolution {
-  const token = usableApiKey(entry.access);
-  if (token === undefined) return { status: "missing" };
+  const grant = piOAuthGrant(entry);
+  if (!grant) return { status: "missing" };
 
   // `expires` is the access token's own lifetime. pi refreshes on use, but this
   // process only reads auth.json — it never refreshes — so an already-lapsed
   // token must be reported rather than sent and rejected upstream.
-  const expires = entry.expires;
-  if (typeof expires === "number" && Number.isFinite(expires)) {
-    if (expires - EXPIRY_SKEW_MS <= nowMs) return { status: "expired" };
-  }
-
-  return { status: "available", apiKey: token };
+  return piGrantExpired(grant, nowMs)
+    ? { status: "expired" }
+    : { status: "available", apiKey: grant.accessToken };
 }
 
 function authFilePath(dependencies: BrokerDependencies): string {
-  return join(piAgentDirectory(dependencies), "auth.json");
-}
-
-function piAgentDirectory(dependencies: BrokerDependencies): string {
-  const home = () =>
-    nonempty(dependencies.environment.HOME) ?? dependencies.homeDirectory();
-  const configured = nonempty(dependencies.environment.PI_CODING_AGENT_DIR);
-  if (configured === undefined) {
-    return join(home(), ".pi", "agent");
-  }
-  if (configured === "~") return home();
-  if (
-    configured.startsWith("~/") ||
-    (process.platform === "win32" && configured.startsWith("~\\"))
-  ) {
-    return join(home(), configured.slice(2));
-  }
-  return configured;
-}
-
-function usableApiKey(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-  // Reject environment, template, and command references without resolving them.
-  if (value.startsWith("!") || value.includes("$")) {
-    return undefined;
-  }
-  if (
-    [...value].some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f;
-    })
-  ) {
-    return undefined;
-  }
-  return value;
+  return piAuthFilePath(dependencies.environment, dependencies.homeDirectory);
 }
 
 async function readBoundedFile(
@@ -183,10 +145,6 @@ async function readBoundedFile(
   } finally {
     await file.close();
   }
-}
-
-function nonempty(value: string | undefined): string | undefined {
-  return value && value.length > 0 ? value : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
