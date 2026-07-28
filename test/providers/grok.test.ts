@@ -24,6 +24,7 @@ const originalGrokAuthJson = process.env.GROK_AUTH_JSON;
 const originalGrokAuthPath = process.env.GROK_AUTH_PATH;
 const originalGrokAuth = process.env.GROK_AUTH;
 const originalGrokHome = process.env.GROK_HOME;
+const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalPath = process.env.PATH;
 const originalPathExt = process.env.PATHEXT;
@@ -35,6 +36,9 @@ beforeEach(() => {
   delete process.env.GROK_AUTH_PATH;
   delete process.env.GROK_AUTH;
   process.env.GROK_HOME = join(tempDir, "grok-home");
+  // Point pi at an empty dir so no case accidentally reads the developer's real
+  // ~/.pi/agent/auth.json through the pi:xai fallback.
+  process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi-agent-empty");
   process.env.XDG_CACHE_HOME = join(tempDir, "cache");
   process.env.PATH = join(tempDir, "empty-bin");
   process.env.PATHEXT = ".CMD;.EXE";
@@ -52,6 +56,8 @@ afterEach(() => {
   else process.env.GROK_AUTH = originalGrokAuth;
   if (originalGrokHome === undefined) delete process.env.GROK_HOME;
   else process.env.GROK_HOME = originalGrokHome;
+  if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalPath === undefined) delete process.env.PATH;
@@ -747,6 +753,73 @@ describe("Grok auth discovery", () => {
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       headers: expect.objectContaining({ Authorization: "Bearer home-key" }),
     });
+  });
+
+  it("falls back to pi's xai OAuth grant when no Grok auth file exists", async () => {
+    // A box that authenticates Grok only through pi has no ~/.grok/auth.json at
+    // all. Before this fallback the sole source tried was that missing file, so
+    // a perfectly good subscription reported "sign-in required".
+    delete process.env.GROK_AUTH_JSON;
+    const piAgentDir = join(tempDir!, "pi-agent");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "pi-xai-access-token",
+          refresh: "must-not-be-refreshed",
+          expires: Date.now() + 3_600_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    const fetchMock = stubSuccessfulFetch();
+
+    await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        Authorization: "Bearer pi-xai-access-token",
+      }),
+    });
+    // Read-only: the refresh token is never sent anywhere.
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(
+      "must-not-be-refreshed",
+    );
+  });
+
+  it("reports a lapsed pi xai token as expired rather than sign-in required", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    const piAgentDir = join(tempDir!, "pi-agent-expired");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "stale-token",
+          refresh: "refresh-present",
+          expires: Date.now() - 1_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "unavailable",
+      state: {
+        status: "auth_required",
+        error: "Grok access token expired",
+      },
+    });
+    // The distinction that matters: an expired token is NOT "sign-in required",
+    // because pi still holds a refresh grant that recovers on next use.
+    expect(result.state.error).not.toMatch(/sign-in/i);
+    expect(JSON.stringify(result)).not.toContain("stale-token");
+    expect(JSON.stringify(result)).not.toContain("refresh-present");
   });
 
   it("reads GROK_AUTH_PATH before GROK_HOME", async () => {

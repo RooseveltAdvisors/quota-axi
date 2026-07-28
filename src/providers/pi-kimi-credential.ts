@@ -4,11 +4,15 @@ import { join } from "node:path";
 
 const PI_PROVIDER_ID = "kimi-coding";
 const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
+// Treat an access token expiring within this window as already expired, so a
+// token cannot lapse between the check here and the request that uses it.
+const EXPIRY_SKEW_MS = 30_000;
 
 export type KimiCredentialResolution =
   | { status: "available"; apiKey: string }
   | { status: "missing" }
   | { status: "unsupported" }
+  | { status: "expired" }
   | { status: "error" };
 
 export type KimiCredentialInspection =
@@ -24,6 +28,8 @@ type BrokerDependencies = {
   environment: Readonly<Record<string, string | undefined>>;
   homeDirectory: () => string;
   readFile: (path: string, maxBytes: number) => Promise<Buffer>;
+  now: () => number;
+  providerId: string;
 };
 
 export function createPiKimiCredentialBroker(
@@ -33,6 +39,8 @@ export function createPiKimiCredentialBroker(
     environment: process.env,
     homeDirectory: homedir,
     readFile: readBoundedFile,
+    now: Date.now,
+    providerId: PI_PROVIDER_ID,
     ...overrides,
   };
 
@@ -71,8 +79,16 @@ async function resolveCredential(
   const root = objectValue(parsed);
   if (!root) return { status: "missing" };
 
-  const entry = objectValue(root[PI_PROVIDER_ID]);
+  const entry = objectValue(root[dependencies.providerId]);
   if (!entry) return { status: "missing" };
+
+  // pi stores a subscription as an OAuth grant, not an API key. The quota
+  // endpoints take `Authorization: Bearer <token>`, so an unexpired access
+  // token is usable exactly like a key. Rejecting it stranded every
+  // subscription behind "unsupported_credential_type".
+  if (entry.type === "oauth") {
+    return oauthAccessToken(entry, dependencies.now());
+  }
 
   if (typeof entry.type === "string" && entry.type !== "api_key") {
     return { status: "unsupported" };
@@ -85,6 +101,24 @@ async function resolveCredential(
   return apiKey !== undefined
     ? { status: "available", apiKey }
     : { status: "missing" };
+}
+
+function oauthAccessToken(
+  entry: Record<string, unknown>,
+  nowMs: number,
+): KimiCredentialResolution {
+  const token = usableApiKey(entry.access);
+  if (token === undefined) return { status: "missing" };
+
+  // `expires` is the access token's own lifetime. pi refreshes on use, but this
+  // process only reads auth.json — it never refreshes — so an already-lapsed
+  // token must be reported rather than sent and rejected upstream.
+  const expires = entry.expires;
+  if (typeof expires === "number" && Number.isFinite(expires)) {
+    if (expires - EXPIRY_SKEW_MS <= nowMs) return { status: "expired" };
+  }
+
+  return { status: "available", apiKey: token };
 }
 
 function authFilePath(dependencies: BrokerDependencies): string {

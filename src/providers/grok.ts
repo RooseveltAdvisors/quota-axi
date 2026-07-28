@@ -571,7 +571,66 @@ function readCredentialState(): CredentialState {
     );
   }
   const authFile = grokAuthFile();
-  return extractCredentialState(readJsonFileResult(authFile), authFile);
+  const fromAuthFile = extractCredentialState(
+    readJsonFileResult(authFile),
+    authFile,
+  );
+  if (fromAuthFile.status !== "missing") return fromAuthFile;
+
+  // The standalone Grok CLI is not the only place a subscription lives: pi
+  // stores an `xai` OAuth grant of its own. Without this fallback a box that
+  // authenticates Grok solely through pi reports "sign-in required", because
+  // the only source ever tried was a ~/.grok/auth.json that never existed.
+  return piXaiCredentialState() ?? fromAuthFile;
+}
+
+const PI_XAI_PROVIDER_ID = "xai";
+const PI_XAI_SOURCE = "pi:xai";
+
+function piXaiCredentialState(): CredentialState | undefined {
+  const path = piAuthFile();
+  const raw = readJsonFileResult(path);
+  if (raw.status !== "success") return undefined;
+
+  const root = recordValue(raw.value);
+  const entry = recordValue(root?.[PI_XAI_PROVIDER_ID]);
+  if (!entry || entry.type !== "oauth") return undefined;
+
+  const access = stringValue(entry.access);
+  if (!access) return undefined;
+
+  // Read-only: the refresh token is never used and never surfaced. pi refreshes
+  // on its own next use, so a lapsed token is reported as refreshable rather
+  // than as a dead credential.
+  const expires = entry.expires;
+  if (typeof expires === "number" && Number.isFinite(expires)) {
+    if (expires <= Date.now()) {
+      return {
+        status: "expired",
+        source: authSource(PI_XAI_SOURCE, path, "expired"),
+        refreshable: typeof entry.refresh === "string" && entry.refresh !== "",
+      };
+    }
+  }
+
+  return extractCredentialState(
+    { status: "success", value: inlineTokenAuth(access) },
+    path,
+    PI_XAI_SOURCE,
+  );
+}
+
+function piAuthFile(): string {
+  const configured = stringValue(process.env.PI_CODING_AGENT_DIR);
+  const home = process.env.HOME || homedir();
+  if (configured) return join(configured, "auth.json");
+  return join(home, ".pi", "agent", "auth.json");
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function readInlineAuth(value: string): JsonFileReadResult {
