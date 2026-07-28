@@ -97,15 +97,25 @@ or when comparing supported local provider headroom side by side.
    local session is still signed in but the short-lived access token expired. Tell your user to
    open the Grok CLI (\`grok\`) once so Grok can refresh its local session token. Do not treat that
    as a full sign-out, and do not ask quota-axi to refresh credentials - it never launches Grok or
-   writes auth files. Reserve true sign-in recovery for \`Grok sign-in required\`.
+   writes auth files. Reserve true sign-in recovery for \`Grok sign-in required\`. If instead the
+   error is \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed grant is Pi's,
+   so tell your user to run Pi once - running the Grok CLI would not refresh it.
 8. For a managed Codex installation, set \`QUOTA_AXI_CODEX_BINARY\` to its absolute executable
    path. quota-axi uses that exact executable for auth inspection and the read-only app-server
    fallback, and fails closed if the override is invalid.
-9. For Kimi, quota-axi prefers a literal Pi-managed \`kimi-coding\` API key from
-   \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`). If it is
-   unavailable, quota-axi may reuse a fresh official Kimi Code CLI access token from
+9. For Kimi, quota-axi prefers a Pi-managed \`kimi-coding\` credential from
+   \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`) - either a literal
+   API key or an unexpired OAuth access token. If it is unavailable, quota-axi may reuse a
+   fresh official Kimi Code CLI access token from
    \`$KIMI_CODE_HOME/credentials/kimi-code.json\` (default
    \`$HOME/.kimi-code/credentials/kimi-code.json\`) without refreshing or writing credentials.
+10. If Kimi reports \`error: pi_credential_expired\`, Pi's OAuth access token has lapsed. Tell
+   your user to run Pi once so it refreshes its own grant; quota-axi never refreshes or writes
+   Pi credentials. Do not treat it as a signed-out credential.
+11. If Grok reports the \`pi:xai\` source, Grok is authenticated through Pi rather than through a
+   \`~/.grok/auth.json\`. That fallback is used only when no Grok auth location is configured;
+   setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
+   to that location instead.
 
 ## Usage
 

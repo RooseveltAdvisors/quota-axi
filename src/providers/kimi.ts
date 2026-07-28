@@ -113,9 +113,11 @@ export function createKimiAdapter(
       const piError =
         piInspection === "unsupported"
           ? "unsupported_credential_type"
-          : piInspection === "error"
-            ? "credential_resolution_failed"
-            : undefined;
+          : piInspection === "expired"
+            ? "pi_credential_expired"
+            : piInspection === "error"
+              ? "credential_resolution_failed"
+              : undefined;
 
       let cliInspection;
       try {
@@ -140,9 +142,13 @@ export function createKimiAdapter(
             status:
               piInspection === "available"
                 ? "available"
-                : piError
-                  ? "invalid"
-                  : "missing",
+                : // A lapsed pi grant is not a dead credential: pi refreshes it
+                  // on its own next use.
+                  piInspection === "expired"
+                  ? "expired"
+                  : piError
+                    ? "invalid"
+                    : "missing",
             ...(piError ? { error: piError } : {}),
           },
           {
@@ -318,6 +324,14 @@ function credentialFailureFor(
     return new KimiFailure("unsupported_credential_type", {
       status: "auth_required",
       definitiveAuth: true,
+    });
+  }
+  if (resolution.status === "expired") {
+    // Not definitive: pi refreshes its OAuth grant on use, so a lapsed access
+    // token usually recovers on its own once pi is next exercised.
+    return new KimiFailure("pi_credential_expired", {
+      status: "auth_required",
+      definitiveAuth: false,
     });
   }
   if (resolution.status === "error") {

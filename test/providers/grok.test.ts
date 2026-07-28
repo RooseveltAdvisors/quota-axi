@@ -24,6 +24,8 @@ const originalGrokAuthJson = process.env.GROK_AUTH_JSON;
 const originalGrokAuthPath = process.env.GROK_AUTH_PATH;
 const originalGrokAuth = process.env.GROK_AUTH;
 const originalGrokHome = process.env.GROK_HOME;
+const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalHome = process.env.HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalPath = process.env.PATH;
 const originalPathExt = process.env.PATHEXT;
@@ -35,6 +37,10 @@ beforeEach(() => {
   delete process.env.GROK_AUTH_PATH;
   delete process.env.GROK_AUTH;
   process.env.GROK_HOME = join(tempDir, "grok-home");
+  // Point pi and HOME at empty temp locations so no case accidentally reads the
+  // developer's real ~/.pi/agent/auth.json or ~/.grok/auth.json.
+  process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi-agent-empty");
+  process.env.HOME = join(tempDir, "home");
   process.env.XDG_CACHE_HOME = join(tempDir, "cache");
   process.env.PATH = join(tempDir, "empty-bin");
   process.env.PATHEXT = ".CMD;.EXE";
@@ -52,6 +58,10 @@ afterEach(() => {
   else process.env.GROK_AUTH = originalGrokAuth;
   if (originalGrokHome === undefined) delete process.env.GROK_HOME;
   else process.env.GROK_HOME = originalGrokHome;
+  if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalPath === undefined) delete process.env.PATH;
@@ -748,6 +758,198 @@ describe("Grok auth discovery", () => {
       headers: expect.objectContaining({ Authorization: "Bearer home-key" }),
     });
   });
+
+  it("falls back to pi's xai OAuth grant when no Grok auth file exists", async () => {
+    // A box that authenticates Grok only through pi has no ~/.grok/auth.json at
+    // all. Before this fallback the sole source tried was that missing file, so
+    // a perfectly good subscription reported "sign-in required".
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "pi-agent");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "pi-xai-access-token",
+          refresh: "must-not-be-refreshed",
+          expires: Date.now() + 3_600_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    const fetchMock = stubSuccessfulFetch();
+
+    await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        Authorization: "Bearer pi-xai-access-token",
+      }),
+    });
+    // Read-only: the refresh token is never sent anywhere.
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(
+      "must-not-be-refreshed",
+    );
+  });
+
+  it("expands a tilde-prefixed PI_CODING_AGENT_DIR like the kimi pi source", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "home", "pi-agent-tilde");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "tilde-resolved-token",
+          expires: Date.now() + 3_600_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = "~/pi-agent-tilde";
+    const fetchMock = stubSuccessfulFetch();
+
+    await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        Authorization: "Bearer tilde-resolved-token",
+      }),
+    });
+  });
+
+  it("never sends a pi xai token that is a template or command reference", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "pi-agent-template");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "$XAI_TOKEN",
+          expires: Date.now() + 3_600_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("auth_required");
+    expect(JSON.stringify(result)).not.toContain("XAI_TOKEN");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a lapsed pi xai token as expired rather than sign-in required", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "pi-agent-expired");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "stale-token",
+          refresh: "refresh-present",
+          expires: Date.now() - 1_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "unavailable",
+      state: {
+        status: "auth_required",
+        error: "Grok access token expired in Pi",
+      },
+    });
+    // The distinction that matters: an expired token is NOT "sign-in required",
+    // because pi still holds a refresh grant that recovers on next use.
+    expect(result.state.error).not.toMatch(/sign-in/i);
+    expect(JSON.stringify(result)).not.toContain("stale-token");
+    expect(JSON.stringify(result)).not.toContain("refresh-present");
+  });
+
+  it("points a lapsed pi xai grant at pi, not at the grok CLI", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "pi-agent-remedy");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "stale-token",
+          refresh: "refresh-present",
+          expires: Date.now() - 1_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    vi.stubGlobal("fetch", vi.fn());
+
+    const json = JSON.parse(
+      await captureCli(["--provider", "grok", "--json"]),
+    ) as QuotaAxiResponse;
+
+    expect(json.providers[0]).toMatchObject({
+      provider: "grok",
+      state: {
+        reason: "credentials_expired",
+        remedyCommand: "pi",
+      },
+    });
+    expect(json.help).toContain(
+      "Tell your user: run Pi (`pi`) once so it refreshes its own Grok OAuth grant on next use. quota-axi does not refresh credentials.",
+    );
+  });
+
+  it.each(["GROK_AUTH_PATH", "GROK_HOME"] as const)(
+    "never substitutes pi's grant for an explicitly configured %s",
+    async (variable) => {
+      delete process.env.GROK_AUTH_JSON;
+      delete process.env.GROK_HOME;
+      const piAgentDir = join(tempDir!, `pi-agent-${variable}`);
+      mkdirSync(piAgentDir, { recursive: true });
+      writeFileSync(
+        join(piAgentDir, "auth.json"),
+        JSON.stringify({
+          xai: {
+            type: "oauth",
+            access: "pi-token-must-not-be-substituted",
+            expires: Date.now() + 3_600_000,
+          },
+        }),
+      );
+      process.env.PI_CODING_AGENT_DIR = piAgentDir;
+      process.env[variable] = join(tempDir!, `absent-${variable}`);
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await fetchQuota({ allowKeychainPrompt: false });
+
+      // An explicitly configured location that is absent stays absent; it is
+      // never silently answered from a different credential source.
+      expect(result).toMatchObject({
+        source: "unavailable",
+        state: { status: "auth_required", error: "Grok sign-in required" },
+      });
+      expect(JSON.stringify(result)).not.toContain("pi:xai");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("reads GROK_AUTH_PATH before GROK_HOME", async () => {
     delete process.env.GROK_AUTH_JSON;

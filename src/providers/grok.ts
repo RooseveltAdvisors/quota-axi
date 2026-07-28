@@ -2,6 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readCachedProvider } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
+import {
+  piAuthFilePath,
+  piGrantExpired,
+  piOAuthGrant,
+  readPiAuthFile,
+} from "./pi-auth.js";
 import { nowIso, retryAfterToIso } from "../lib/time.js";
 import type {
   AuthProviderReport,
@@ -66,6 +72,7 @@ type CredentialCandidate = GrokCredentials & {
 
 const GROK_SIGN_IN_REQUIRED_ERROR = "Grok sign-in required";
 const GROK_ACCESS_TOKEN_EXPIRED_ERROR = "Grok access token expired";
+const GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR = "Grok access token expired in Pi";
 
 type NormalizedGrokQuota = {
   account?: ProviderQuota["account"];
@@ -127,9 +134,13 @@ export async function fetchQuota(
       status: "skipped",
       error: `credentials_${credentialState.status}`,
     });
+    // Whoever owns the credential owns the refresh: `grok` refreshes its own
+    // auth.json session, while pi refreshes its `xai` grant on its next use.
     finalError =
       credentialState.status === "expired" && credentialState.refreshable
-        ? GROK_ACCESS_TOKEN_EXPIRED_ERROR
+        ? credentialState.source.source === PI_XAI_SOURCE
+          ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
+          : GROK_ACCESS_TOKEN_EXPIRED_ERROR
         : GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
@@ -571,7 +582,58 @@ function readCredentialState(): CredentialState {
     );
   }
   const authFile = grokAuthFile();
-  return extractCredentialState(readJsonFileResult(authFile), authFile);
+  const fromAuthFile = extractCredentialState(
+    readJsonFileResult(authFile),
+    authFile,
+  );
+  if (fromAuthFile.status !== "missing" || hasExplicitGrokAuthPath()) {
+    return fromAuthFile;
+  }
+
+  // The standalone Grok CLI is not the only place a subscription lives: pi
+  // stores an `xai` OAuth grant of its own. Without this fallback a box that
+  // authenticates Grok solely through pi reports "sign-in required", because
+  // the only source ever tried was a ~/.grok/auth.json that never existed.
+  return piXaiCredentialState() ?? fromAuthFile;
+}
+
+const PI_XAI_PROVIDER_ID = "xai";
+const PI_XAI_SOURCE = "pi:xai";
+
+function hasExplicitGrokAuthPath(): boolean {
+  return (
+    stringValue(process.env.GROK_AUTH_PATH) !== undefined ||
+    stringValue(process.env.GROK_HOME) !== undefined
+  );
+}
+
+function piXaiCredentialState(): CredentialState | undefined {
+  const path = piAuthFilePath();
+  const raw = readPiAuthFile(path);
+  if (raw.status !== "success") return undefined;
+
+  const entry = objectValue(objectValue(raw.value)?.[PI_XAI_PROVIDER_ID]);
+  if (!entry || entry.type !== "oauth") return undefined;
+
+  const grant = piOAuthGrant(entry);
+  if (!grant) return undefined;
+
+  // Read-only: the refresh token is never used and never surfaced. pi refreshes
+  // on its own next use, so a lapsed token is reported as refreshable rather
+  // than as a dead credential.
+  if (piGrantExpired(grant, Date.now())) {
+    return {
+      status: "expired",
+      source: authSource(PI_XAI_SOURCE, path, "expired"),
+      refreshable: grant.refreshable,
+    };
+  }
+
+  return extractCredentialState(
+    { status: "success", value: inlineTokenAuth(grant.accessToken) },
+    path,
+    PI_XAI_SOURCE,
+  );
 }
 
 function readInlineAuth(value: string): JsonFileReadResult {

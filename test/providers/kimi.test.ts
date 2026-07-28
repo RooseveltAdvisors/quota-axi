@@ -130,7 +130,7 @@ describe("Kimi request transport", () => {
     expect(report.state.untrustedWindowIds).toEqual(["limit:2"]);
   });
 
-  it.each(["missing", "unsupported"] as const)(
+  it.each(["missing", "unsupported", "expired"] as const)(
     "uses a fresh CLI credential after Pi reports %s",
     async (piStatus) => {
       const cliToken = "synthetic-cli-token-529";
@@ -168,10 +168,11 @@ describe("Kimi request transport", () => {
         {
           source: "pi:kimi-coding",
           status: "skipped",
-          error:
-            piStatus === "missing"
-              ? "kimi_credential_unavailable"
-              : "unsupported_credential_type",
+          error: {
+            missing: "kimi_credential_unavailable",
+            unsupported: "unsupported_credential_type",
+            expired: "pi_credential_expired",
+          }[piStatus],
         },
         { source: "kimi-code-cli", status: "success" },
       ]);
@@ -804,6 +805,30 @@ describe("Kimi credential outcomes and cache policy", () => {
     },
   );
 
+  it("neither retires nor serves cache for an expired Pi credential", async () => {
+    const request = vi.fn();
+    const remove = vi.fn();
+    const report = await testAdapter({
+      broker: broker({ status: "expired" }),
+      fetch: request,
+      deleteCachedProvider: remove,
+      readCachedProvider: () => cachedQuota(),
+    }).fetchQuota(OPTIONS);
+
+    expect(request).not.toHaveBeenCalled();
+    // Not definitive: Pi refreshes the grant itself, so the cache survives.
+    expect(remove).not.toHaveBeenCalled();
+    // Not stale-eligible either: an auth outcome must not be answered with a
+    // cached snapshot.
+    expect(report.source).toBe("unavailable");
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      stale: false,
+      error: "pi_credential_expired",
+    });
+    expect(report.windows).toEqual([]);
+  });
+
   it("uses eligible cached windows after an unexpected resolver failure", async () => {
     const cached = cachedQuota();
     cached.state.untrustedWindowIds = ["limit:2"];
@@ -946,6 +971,7 @@ describe("Kimi credential outcomes and cache policy", () => {
         "unsupported",
         { status: "invalid", error: "unsupported_credential_type" },
       ],
+      ["expired", { status: "expired", error: "pi_credential_expired" }],
       ["error", { status: "invalid", error: "credential_resolution_failed" }],
     ] as const) {
       const report = await testAdapter({
