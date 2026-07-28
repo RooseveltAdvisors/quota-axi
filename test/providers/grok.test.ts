@@ -871,7 +871,7 @@ describe("Grok auth discovery", () => {
       source: "unavailable",
       state: {
         status: "auth_required",
-        error: "Grok access token expired",
+        error: "Grok access token expired in Pi",
       },
     });
     // The distinction that matters: an expired token is NOT "sign-in required",
@@ -879,6 +879,41 @@ describe("Grok auth discovery", () => {
     expect(result.state.error).not.toMatch(/sign-in/i);
     expect(JSON.stringify(result)).not.toContain("stale-token");
     expect(JSON.stringify(result)).not.toContain("refresh-present");
+  });
+
+  it("points a lapsed pi xai grant at pi, not at the grok CLI", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const piAgentDir = join(tempDir!, "pi-agent-remedy");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "stale-token",
+          refresh: "refresh-present",
+          expires: Date.now() - 1_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    vi.stubGlobal("fetch", vi.fn());
+
+    const json = JSON.parse(
+      await captureCli(["--provider", "grok", "--json"]),
+    ) as QuotaAxiResponse;
+
+    expect(json.providers[0]).toMatchObject({
+      provider: "grok",
+      state: {
+        reason: "credentials_expired",
+        remedyCommand: "pi",
+      },
+    });
+    expect(json.help).toContain(
+      "Tell your user: run Pi (`pi`) once so it refreshes its own Grok OAuth grant on next use. quota-axi does not refresh credentials.",
+    );
   });
 
   it.each(["GROK_AUTH_PATH", "GROK_HOME"] as const)(

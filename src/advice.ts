@@ -10,6 +10,9 @@ export const KEYCHAIN_ACCESS_REMEDY_COMMAND =
 export const CREDENTIALS_EXPIRED_REASON = "credentials_expired";
 export const GROK_TOKEN_REFRESH_REMEDY_COMMAND = "grok";
 export const GROK_ACCESS_TOKEN_EXPIRED_ERROR = "Grok access token expired";
+export const PI_TOKEN_REFRESH_REMEDY_COMMAND = "pi";
+export const GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR =
+  "Grok access token expired in Pi";
 
 const BLOCKED_CREDENTIAL_ERRORS = new Set([
   "credentials_expired",
@@ -49,13 +52,14 @@ function annotateProviderAdvice(provider: ProviderQuota): ProviderQuota {
       },
     };
   }
-  if (needsGrokTokenRefreshAdvice(provider)) {
+  const grokRemedy = grokTokenRefreshRemedy(provider);
+  if (grokRemedy) {
     return {
       ...provider,
       state: {
         ...provider.state,
         reason: CREDENTIALS_EXPIRED_REASON,
-        remedyCommand: GROK_TOKEN_REFRESH_REMEDY_COMMAND,
+        remedyCommand: grokRemedy,
       },
     };
   }
@@ -72,12 +76,18 @@ function needsKeychainAccessAdvice(provider: ProviderQuota): boolean {
   );
 }
 
-function needsGrokTokenRefreshAdvice(provider: ProviderQuota): boolean {
-  return (
-    provider.provider === "grok" &&
-    provider.state.status !== "fresh" &&
-    provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
-  );
+// The remedy depends on which credential lapsed: only a Grok-CLI session is
+// refreshed by running `grok`. A Pi-sourced grant is refreshed by Pi itself.
+function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
+  if (provider.provider !== "grok" || provider.state.status === "fresh") {
+    return undefined;
+  }
+  if (provider.state.error === GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR) {
+    return PI_TOKEN_REFRESH_REMEDY_COMMAND;
+  }
+  return provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
+    ? GROK_TOKEN_REFRESH_REMEDY_COMMAND
+    : undefined;
 }
 
 function isBlockedCredentialAttempt(attempt: SourceAttempt): boolean {
@@ -100,7 +110,12 @@ function isPromptBlockedKeychainAttempt(attempt: SourceAttempt): boolean {
 function providerHelpLines(provider: ProviderQuota): string[] {
   if (hasKeychainAccessAdvice(provider))
     return [keychainAccessHelpLine(provider)];
-  if (hasGrokTokenRefreshAdvice(provider)) return [grokTokenRefreshHelpLine()];
+  if (hasGrokTokenRefreshAdvice(provider, GROK_TOKEN_REFRESH_REMEDY_COMMAND)) {
+    return [grokTokenRefreshHelpLine()];
+  }
+  if (hasGrokTokenRefreshAdvice(provider, PI_TOKEN_REFRESH_REMEDY_COMMAND)) {
+    return [piTokenRefreshHelpLine()];
+  }
   return [];
 }
 
@@ -111,10 +126,13 @@ function hasKeychainAccessAdvice(provider: ProviderQuota): boolean {
   );
 }
 
-function hasGrokTokenRefreshAdvice(provider: ProviderQuota): boolean {
+function hasGrokTokenRefreshAdvice(
+  provider: ProviderQuota,
+  remedyCommand: string,
+): boolean {
   return (
     provider.state.reason === CREDENTIALS_EXPIRED_REASON &&
-    provider.state.remedyCommand === GROK_TOKEN_REFRESH_REMEDY_COMMAND
+    provider.state.remedyCommand === remedyCommand
   );
 }
 
@@ -124,4 +142,8 @@ function keychainAccessHelpLine(provider: ProviderQuota): string {
 
 function grokTokenRefreshHelpLine(): string {
   return `Tell your user: open the Grok CLI (\`${GROK_TOKEN_REFRESH_REMEDY_COMMAND}\`) once so it can refresh Grok's local session token. quota-axi does not refresh credentials.`;
+}
+
+function piTokenRefreshHelpLine(): string {
+  return `Tell your user: run Pi (\`${PI_TOKEN_REFRESH_REMEDY_COMMAND}\`) once so it refreshes its own Grok OAuth grant on next use. quota-axi does not refresh credentials.`;
 }

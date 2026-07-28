@@ -66,7 +66,9 @@ or when comparing supported local provider headroom side by side.
    local session is still signed in but the short-lived access token expired. Tell your user to
    open the Grok CLI (`grok`) once so Grok can refresh its local session token. Do not treat that
    as a full sign-out, and do not ask quota-axi to refresh credentials - it never launches Grok or
-   writes auth files. Reserve true sign-in recovery for `Grok sign-in required`.
+   writes auth files. Reserve true sign-in recovery for `Grok sign-in required`. If instead the
+   error is `Grok access token expired in Pi` (`remedyCommand: pi`), the lapsed grant is Pi's,
+   so tell your user to run Pi once - running the Grok CLI would not refresh it.
 8. For a managed Codex installation, set `QUOTA_AXI_CODEX_BINARY` to its absolute executable
    path. quota-axi uses that exact executable for auth inspection and the read-only app-server
    fallback, and fails closed if the override is invalid.

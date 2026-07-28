@@ -72,6 +72,7 @@ type CredentialCandidate = GrokCredentials & {
 
 const GROK_SIGN_IN_REQUIRED_ERROR = "Grok sign-in required";
 const GROK_ACCESS_TOKEN_EXPIRED_ERROR = "Grok access token expired";
+const GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR = "Grok access token expired in Pi";
 
 type NormalizedGrokQuota = {
   account?: ProviderQuota["account"];
@@ -133,9 +134,13 @@ export async function fetchQuota(
       status: "skipped",
       error: `credentials_${credentialState.status}`,
     });
+    // Whoever owns the credential owns the refresh: `grok` refreshes its own
+    // auth.json session, while pi refreshes its `xai` grant on its next use.
     finalError =
       credentialState.status === "expired" && credentialState.refreshable
-        ? GROK_ACCESS_TOKEN_EXPIRED_ERROR
+        ? credentialState.source.source === PI_XAI_SOURCE
+          ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
+          : GROK_ACCESS_TOKEN_EXPIRED_ERROR
         : GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
