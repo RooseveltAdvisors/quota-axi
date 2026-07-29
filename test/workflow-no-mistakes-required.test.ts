@@ -7,6 +7,22 @@ function loadWorkflow() {
   return readFileSync(WORKFLOW_PATH, "utf8");
 }
 
+function extractIndentedBlock(content: string, key: string) {
+  const lines = content.split("\n");
+  const start = lines.findIndex((line) => line === `${key}:`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const remaining = lines.slice(start + 1);
+  const end = remaining.findIndex((line) => line !== "" && !/^\s/.test(line));
+
+  return remaining.slice(0, end === -1 ? undefined : end).join("\n");
+}
+
+function extractRunScript(content: string) {
+  const match = content.match(/^\s+run:\s*\|\s*\n((?: {10}.*(?:\n|$))*)/m);
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("no-mistakes-required workflow (hardened pull_request_target gate)", () => {
   it("triggers on pull_request_target so base branch copy always runs", () => {
     const content = loadWorkflow();
@@ -30,9 +46,8 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
 
   it("uses contents: read only and no write permissions", () => {
     const content = loadWorkflow();
-    expect(content).toMatch(/permissions:\s*\n\s+contents: read/m);
-    // No write grants anywhere in permissions
-    expect(content).not.toMatch(/contents:\s*write/i);
+    const permissions = extractIndentedBlock(content, "permissions");
+    expect(permissions.trim()).toBe("contents: read");
   });
 
   it("uses hosted runner with 5 minute timeout", () => {
@@ -64,10 +79,10 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
 
   it("reads PR body via environment variable (not direct interpolation)", () => {
     const content = loadWorkflow();
+    const runScript = extractRunScript(content);
     expect(content).toContain("PR_BODY: ${{ github.event.pull_request.body }}");
-    // Must not interpolate body directly into the run script (injection risk)
-    expect(content).not.toMatch(
-      /\$\{\{\s*github\.event\.pull_request\.body\s*\}\}[\s\S]{0,30}run:/,
+    expect(runScript).not.toMatch(
+      /\$\{\{\s*github\.event\.pull_request\.body\s*\}\}/,
     );
   });
 
