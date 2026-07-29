@@ -3,13 +3,13 @@
 Thanks for wanting to contribute.
 One rule up front:
 
-**Human-authored pull requests targeting `main` must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes).**
+**Pull requests must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes), except for the repository's release and dependency automation.**
 We require this to reduce the maintainer's burden of reviewing and merging contributions.
 
 `no-mistakes` puts a local git proxy in front of your real remote.
 Pushing through it runs an AI-driven review/test/lint pipeline in an isolated worktree, forwards the push upstream only after every check passes, and opens a clean PR automatically.
 
-A GitHub Actions check (`Require no-mistakes`) runs on PRs targeting `main` and fails if the body is missing the deterministic signature that no-mistakes writes.
+A GitHub Actions check (`Require no-mistakes`) runs on every PR and fails if the body is missing the deterministic signature that no-mistakes writes.
 The release and dependency bots are exempt so their automation keeps working, but regular contributor PRs without the signature will not be reviewed or merged.
 
 ## Workflow
@@ -33,7 +33,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 ## Repo conventions
 
-- Node 20+, TypeScript, ESM-only.
+- Node 22.19+, TypeScript, ESM-only.
 - Install dependencies with `pnpm install --frozen-lockfile`; run `pnpm run build`, `pnpm run lint`, `pnpm run format:check`, `pnpm test`, and `pnpm run build:skill -- --check` before pushing.
 - Run `pnpm run format` when `pnpm run format:check` reports formatting drift.
 - After changing dependencies, run `pnpm exec prettier --write pnpm-lock.yaml` so the committed lockfile keeps its Prettier formatting.
