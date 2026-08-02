@@ -57,9 +57,7 @@ function refreshOptions(
         : undefined;
     },
     updateDocument: (document, token) => ({
-      ...(typeof document === "object" && document !== null
-        ? document
-        : {}),
+      ...(typeof document === "object" && document !== null ? document : {}),
       access_token: token.accessToken,
       expires_at: token.expiresAtMs,
     }),

@@ -157,9 +157,7 @@ async function readResponseObject(
 ): Promise<Record<string, unknown> | undefined> {
   const bytes = await readBoundedResponseBody(response);
   try {
-    return objectValue(
-      JSON.parse(new TextDecoder().decode(bytes)) as unknown,
-    );
+    return objectValue(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
   } catch {
     throw new OAuthRefreshError("invalid_response");
   }
@@ -348,13 +346,12 @@ function waitForLock(signal: AbortSignal): Promise<void> {
       reject(new OAuthRefreshError("unavailable"));
       return;
     }
-    let timer: ReturnType<typeof setTimeout>;
     const abort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
       reject(new OAuthRefreshError("unavailable"));
     };
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       signal.removeEventListener("abort", abort);
       resolve();
     }, LOCK_WAIT_MS);
@@ -367,10 +364,7 @@ function createRefreshDeadline(parentSignal?: AbortSignal): {
   dispose(): void;
 } {
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    OAUTH_REFRESH_TIMEOUT_MS,
-  );
+  const timer = setTimeout(() => controller.abort(), OAUTH_REFRESH_TIMEOUT_MS);
   const abort = () => controller.abort();
   if (parentSignal) {
     if (parentSignal.aborted) controller.abort();

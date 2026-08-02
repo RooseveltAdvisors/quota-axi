@@ -97,7 +97,7 @@ async function resolveCredential(
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents.toString("utf8")) as unknown;
-  } catch (error) {
+  } catch {
     return { status: "missing" };
   }
 
