@@ -112,4 +112,42 @@ describe("OAuth refresh helper", () => {
     ).resolves.toMatchObject({ accessToken: "fresh" });
     expect(existsSync(`${path}.quota-axi.lock`)).toBe(false);
   });
+
+  it("reclaims a malformed legacy lock marker", async () => {
+    const path = credentialFile();
+    writeFileSync(`${path}.quota-axi.lock`, "");
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ access_token: "fresh", expires_in: 900 }),
+          { status: 200 },
+        ),
+    );
+
+    await expect(
+      refreshOAuthJsonFile(refreshOptions(path, fetch)),
+    ).resolves.toMatchObject({ accessToken: "fresh" });
+    expect(existsSync(`${path}.quota-axi.lock`)).toBe(false);
+  });
+
+  it("bounds oversized OAuth response bodies", async () => {
+    const path = credentialFile();
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(64 * 1024 + 1));
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    await expect(
+      refreshOAuthJsonFile(refreshOptions(path, fetch)),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(existsSync(`${path}.quota-axi.lock`)).toBe(false);
+  });
 });

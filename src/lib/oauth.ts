@@ -155,18 +155,64 @@ async function requestRefreshToken(options: {
 async function readResponseObject(
   response: Response,
 ): Promise<Record<string, unknown> | undefined> {
-  let text: string;
+  const bytes = await readBoundedResponseBody(response);
   try {
-    text = await response.text();
+    return objectValue(
+      JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+    );
   } catch {
-    throw new OAuthRefreshError("unavailable");
+    throw new OAuthRefreshError("invalid_response");
   }
-  if (Buffer.byteLength(text, "utf8") > JSON_LIMIT_BYTES)
-    throw new OAuthRefreshError("invalid_response");
+}
+
+async function readBoundedResponseBody(
+  response: Response,
+): Promise<Uint8Array> {
+  const contentLength = response.headers.get("content-length")?.trim();
+  if (contentLength && /^\d+$/.test(contentLength)) {
+    if (BigInt(contentLength) > BigInt(JSON_LIMIT_BYTES))
+      throw new OAuthRefreshError("invalid_response");
+  }
+  if (!response.body) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
   try {
-    return objectValue(JSON.parse(text) as unknown);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) throw new OAuthRefreshError("unavailable");
+      length += value.byteLength;
+      if (length > JSON_LIMIT_BYTES) {
+        await cancelResponseReader(reader);
+        throw new OAuthRefreshError("invalid_response");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof OAuthRefreshError) throw error;
+    throw new OAuthRefreshError("unavailable");
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function cancelResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  try {
+    await reader.cancel();
   } catch {
-    throw new OAuthRefreshError("invalid_response");
+    return;
   }
 }
 
@@ -223,6 +269,7 @@ async function acquireLock(
       return { handle, path, contents };
     } catch (error) {
       await removeTemporaryFile(temporaryPath);
+      if (linked) await reclaimLockMarker(path, contents);
       if (!linked && errorCode(error) === "EEXIST") {
         if (await recoverStaleLock(path)) continue;
         await waitForLock(signal);
@@ -236,13 +283,7 @@ async function acquireLock(
 
 async function releaseLock(lock: OAuthLock): Promise<void> {
   await lock.handle.close();
-  try {
-    const contents = await readFile(lock.path, "utf8");
-    if (contents !== lock.contents) return;
-    await unlink(lock.path);
-  } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
-  }
+  await reclaimLockMarker(lock.path, lock.contents);
 }
 
 async function recoverStaleLock(path: string): Promise<boolean> {
@@ -256,7 +297,7 @@ async function recoverStaleLock(path: string): Promise<boolean> {
   try {
     metadata = JSON.parse(contents) as unknown;
   } catch {
-    return removeLockMarker(path);
+    return reclaimLockMarker(path, contents);
   }
   const lock = objectValue(metadata);
   const pid = lock?.pid;
@@ -271,19 +312,30 @@ async function recoverStaleLock(path: string): Promise<boolean> {
     typeof createdAtMs !== "number" ||
     !Number.isFinite(createdAtMs)
   )
-    return removeLockMarker(path);
+    return reclaimLockMarker(path, contents);
   try {
     process.kill(pid, 0);
     return false;
   } catch (error) {
     if (errorCode(error) !== "ESRCH") return false;
   }
-  return removeLockMarker(path);
+  return reclaimLockMarker(path, contents);
 }
 
-async function removeLockMarker(path: string): Promise<boolean> {
+async function reclaimLockMarker(
+  path: string,
+  expectedContents: string,
+): Promise<boolean> {
+  const quarantinePath = `${path}.${process.pid}.${randomUUID()}.stale`;
   try {
-    await unlink(path);
+    const contents = await readFile(path, "utf8");
+    if (contents !== expectedContents) return false;
+    await rename(path, quarantinePath);
+  } catch (error) {
+    return errorCode(error) === "ENOENT";
+  }
+  try {
+    await unlink(quarantinePath);
     return true;
   } catch (error) {
     return errorCode(error) === "ENOENT";
