@@ -482,7 +482,11 @@ describe("Pi Kimi credential broker", () => {
       now: () => 1_000_001,
     }).resolve({ refresh: true, fetch: fetchMock });
 
-    expect(resolution).toEqual({ status: "expired", refreshFailed: true });
+    expect(resolution).toEqual({
+      status: "expired",
+      refreshFailed: true,
+      refreshDefinitive: true,
+    });
     expectSnapshotEqual(authPath, before);
     expect(JSON.stringify(resolution)).not.toContain(
       "synthetic-pi-kimi-refresh",

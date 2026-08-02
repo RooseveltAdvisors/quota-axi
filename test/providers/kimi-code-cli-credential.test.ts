@@ -212,7 +212,11 @@ describe("Kimi Code CLI credential discovery", () => {
       fetch: fetchMock,
     });
 
-    expect(resolution).toEqual({ status: "expired", refreshFailed: true });
+    expect(resolution).toEqual({
+      status: "expired",
+      refreshFailed: true,
+      refreshDefinitive: true,
+    });
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(readFileSync(credential)).toEqual(before);
     expect(JSON.stringify(resolution)).not.toContain(refreshToken);

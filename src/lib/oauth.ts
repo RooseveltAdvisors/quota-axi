@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   chmod,
+  link,
   open,
   readFile,
   rename,
@@ -59,7 +60,7 @@ export async function refreshOAuthJsonFile(
   let lock: OAuthLock | undefined;
   try {
     lock = await acquireLock(options.filePath, deadline.signal);
-    const document = parseJson(await readFile(options.filePath, "utf8"));
+    const document = parseJson(await readBoundedText(options.filePath));
     const refreshToken = options.readRefreshToken(document);
     if (!refreshToken) throw new OAuthRefreshError("missing_refresh_token");
 
@@ -169,6 +170,29 @@ async function readResponseObject(
   }
 }
 
+async function readBoundedText(filePath: string): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const bytes = new Uint8Array(JSON_LIMIT_BYTES + 1);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > JSON_LIMIT_BYTES)
+      throw new OAuthRefreshError("invalid_response");
+    return Buffer.from(bytes.buffer, bytes.byteOffset, offset).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 type OAuthLock = {
   handle: Awaited<ReturnType<typeof open>>;
   path: string;
@@ -182,35 +206,27 @@ async function acquireLock(
   const path = `${filePath}.quota-axi.lock`;
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
     if (signal.aborted) throw new OAuthRefreshError("unavailable");
-    let handle: Awaited<ReturnType<typeof open>>;
-    try {
-      handle = await open(path, "wx", 0o600);
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST")
-        throw new OAuthRefreshError("lock_unavailable");
-      if (await recoverStaleLock(path)) continue;
-      await waitForLock(signal);
-      continue;
-    }
     const contents = `${JSON.stringify({
       pid: process.pid,
       token: randomUUID(),
       createdAtMs: Date.now(),
     })}\n`;
+    const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    let linked = false;
     try {
-      await handle.writeFile(contents, "utf8");
+      await writeFile(temporaryPath, contents, { mode: 0o600 });
+      await chmod(temporaryPath, 0o600);
+      await link(temporaryPath, path);
+      linked = true;
+      const handle = await open(path, "r");
+      await removeTemporaryFile(temporaryPath);
       return { handle, path, contents };
-    } catch {
-      try {
-        await handle.close();
-      } catch {
-        throw new OAuthRefreshError("lock_unavailable");
-      }
-      try {
-        await unlink(path);
-      } catch (error) {
-        if (errorCode(error) !== "ENOENT")
-          throw new OAuthRefreshError("lock_unavailable");
+    } catch (error) {
+      await removeTemporaryFile(temporaryPath);
+      if (!linked && errorCode(error) === "EEXIST") {
+        if (await recoverStaleLock(path)) continue;
+        await waitForLock(signal);
+        continue;
       }
       throw new OAuthRefreshError("lock_unavailable");
     }
@@ -240,7 +256,7 @@ async function recoverStaleLock(path: string): Promise<boolean> {
   try {
     metadata = JSON.parse(contents) as unknown;
   } catch {
-    return false;
+    return removeLockMarker(path);
   }
   const lock = objectValue(metadata);
   const pid = lock?.pid;
@@ -255,13 +271,17 @@ async function recoverStaleLock(path: string): Promise<boolean> {
     typeof createdAtMs !== "number" ||
     !Number.isFinite(createdAtMs)
   )
-    return false;
+    return removeLockMarker(path);
   try {
     process.kill(pid, 0);
     return false;
   } catch (error) {
     if (errorCode(error) !== "ESRCH") return false;
   }
+  return removeLockMarker(path);
+}
+
+async function removeLockMarker(path: string): Promise<boolean> {
   try {
     await unlink(path);
     return true;
