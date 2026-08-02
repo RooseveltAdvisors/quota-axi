@@ -20,6 +20,7 @@ import type { ProviderQuota, QuotaAxiResponse } from "../../src/types.js";
 
 const CONSUMER_QUOTA_URL =
   "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
+const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 const originalGrokAuthJson = process.env.GROK_AUTH_JSON;
 const originalGrokAuthPath = process.env.GROK_AUTH_PATH;
 const originalGrokAuth = process.env.GROK_AUTH;
@@ -398,7 +399,10 @@ describe("Grok consumer quota acquisition", () => {
     writeValidAuth();
     const fetchMock = stubSuccessfulFetch();
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "web",
@@ -865,7 +869,10 @@ describe("Grok auth discovery", () => {
     );
     process.env.PI_CODING_AGENT_DIR = piAgentDir;
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "unavailable",
@@ -901,7 +908,7 @@ describe("Grok auth discovery", () => {
     vi.stubGlobal("fetch", vi.fn());
 
     const json = JSON.parse(
-      await captureCli(["--provider", "grok", "--json"]),
+      await captureCli(["--provider", "grok", "--json", "--no-refresh"]),
     ) as QuotaAxiResponse;
 
     expect(json.providers[0]).toMatchObject({
@@ -912,7 +919,7 @@ describe("Grok auth discovery", () => {
       },
     });
     expect(json.help).toContain(
-      "Tell your user: run Pi (`pi`) once so it refreshes its own Grok OAuth grant on next use. quota-axi does not refresh credentials.",
+      "Tell your user: rerun quota-axi without `--no-refresh` so it can renew Pi's Grok OAuth grant, or run Pi (`pi`).",
     );
   });
 
@@ -1000,6 +1007,181 @@ describe("Grok auth discovery", () => {
 });
 
 describe("Grok expired access-token classification", () => {
+  it("renews an expired OIDC session before the quota request", async () => {
+    const authPath = process.env.GROK_AUTH_JSON!;
+    const refreshToken = "synthetic-grok-refresh-001";
+    writeAuth({
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+        key: "synthetic-grok-expired-001",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: refreshToken,
+      },
+    });
+    const rotatedRefreshToken = "synthetic-grok-refresh-rotated-002";
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === GROK_TOKEN_URL) {
+          expect(init?.method).toBe("POST");
+          expect(
+            new URLSearchParams(String(init?.body)).get("grant_type"),
+          ).toBe("refresh_token");
+          expect(
+            new URLSearchParams(String(init?.body)).get("refresh_token"),
+          ).toBe(refreshToken);
+          expect(new URLSearchParams(String(init?.body)).get("client_id")).toBe(
+            "b1a00492-073a-47ea-816f-4c329264a828",
+          );
+          return new Response(
+            JSON.stringify({
+              access_token: "synthetic-grok-fresh-003",
+              refresh_token: rotatedRefreshToken,
+              expires_in: 3_600,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return grpcResponse();
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const stored = JSON.parse(readFileSync(authPath, "utf8")) as Record<
+      string,
+      Record<string, string>
+    >;
+
+    expect(result.state.status).toBe("fresh");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        Authorization: "Bearer synthetic-grok-fresh-003",
+      }),
+    });
+    expect(
+      stored["https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"],
+    ).toMatchObject({
+      key: "synthetic-grok-fresh-003",
+      refresh_token: rotatedRefreshToken,
+    });
+    expect(JSON.stringify(result)).not.toContain(refreshToken);
+    expect(JSON.stringify(result)).not.toContain(rotatedRefreshToken);
+  });
+
+  it("fails closed on invalid_grant without rewriting or calling quota", async () => {
+    const authPath = process.env.GROK_AUTH_JSON!;
+    const refreshToken = "synthetic-grok-refresh-invalid-004";
+    writeAuth({
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+        key: "synthetic-grok-expired-005",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: refreshToken,
+      },
+    });
+    const before = readFileSync(authPath);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      stale: false,
+      error: "Grok access token expired; OAuth refresh was rejected",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(readFileSync(authPath)).toEqual(before);
+    expect(JSON.stringify(result)).not.toContain(refreshToken);
+  });
+
+  it("honors --no-refresh without writing or making a refresh request", async () => {
+    const authPath = process.env.GROK_AUTH_JSON!;
+    const refreshToken = "synthetic-grok-refresh-disabled-006";
+    writeAuth({
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+        key: "synthetic-grok-expired-007",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: refreshToken,
+      },
+    });
+    const before = readFileSync(authPath);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const json = JSON.parse(
+      await captureCli(["--provider", "grok", "--json", "--no-refresh"]),
+    ) as QuotaAxiResponse;
+
+    expect(json.providers[0].state.error).toBe("Grok access token expired");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readFileSync(authPath)).toEqual(before);
+  });
+
+  it("falls through an expired default Grok file to a renewable Pi xai grant", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    const grokPath = join(process.env.HOME!, ".grok", "auth.json");
+    writeAuth(
+      {
+        "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+          key: "synthetic-grok-default-expired-008",
+          auth_mode: "oidc",
+          expires_at: "2020-01-01T00:00:00.000Z",
+        },
+      },
+      grokPath,
+    );
+    const piAgentDir = join(tempDir!, "pi-agent-fallback");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      join(piAgentDir, "auth.json"),
+      JSON.stringify({
+        xai: {
+          type: "oauth",
+          access: "synthetic-pi-xai-expired-009",
+          refresh: "synthetic-pi-xai-refresh-010",
+          expires: Date.now() - 1_000,
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = piAgentDir;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === GROK_TOKEN_URL) {
+        return new Response(
+          JSON.stringify({
+            access_token: "synthetic-pi-xai-fresh-011",
+            expires_in: 3600,
+          }),
+          { status: 200 },
+        );
+      }
+      return grpcResponse();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("fresh");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        Authorization: "Bearer synthetic-pi-xai-fresh-011",
+      }),
+    });
+    expect(JSON.stringify(result)).not.toContain(
+      "synthetic-pi-xai-refresh-010",
+    );
+  });
+
   it("classifies expired OIDC session with refresh token as access-token expired without fetching", async () => {
     writeAuth({
       "https://auth.x.ai::fixture-client": {
@@ -1031,7 +1213,10 @@ describe("Grok expired access-token classification", () => {
     const authPath = process.env.GROK_AUTH_JSON!;
     const before = readFileSync(authPath);
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "unavailable",
@@ -1066,7 +1251,10 @@ describe("Grok expired access-token classification", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "unavailable",
@@ -1089,7 +1277,10 @@ describe("Grok expired access-token classification", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "unavailable",
@@ -1121,7 +1312,10 @@ describe("Grok expired access-token classification", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
 
     expect(result).toMatchObject({
       source: "cache",
@@ -1156,7 +1350,12 @@ describe("Grok expired access-token classification", () => {
     writeCachedProviders([cachedGrok("web")]);
     vi.stubGlobal("fetch", vi.fn());
 
-    const jsonText = await captureCli(["--provider", "grok", "--json"]);
+    const jsonText = await captureCli([
+      "--provider",
+      "grok",
+      "--json",
+      "--no-refresh",
+    ]);
     const json = JSON.parse(jsonText) as QuotaAxiResponse;
     const grok = json.providers[0];
 
@@ -1186,7 +1385,7 @@ describe("Grok expired access-token classification", () => {
       grok.quotaSemantics?.effectiveAvailability[0]?.effectivePercentRemaining,
     ).toBeUndefined();
     expect(json.help).toContain(
-      "Tell your user: open the Grok CLI (`grok`) once so it can refresh Grok's local session token. quota-axi does not refresh credentials.",
+      "Tell your user: rerun quota-axi without `--no-refresh` so it can renew Grok's local session token, or open the Grok CLI (`grok`).",
     );
 
     const fullText = await captureCli([
@@ -1194,6 +1393,7 @@ describe("Grok expired access-token classification", () => {
       "grok",
       "--json",
       "--full",
+      "--no-refresh",
     ]);
     const full = JSON.parse(fullText) as QuotaAxiResponse;
     expect(full.providers[0]?.attempts).toEqual([
@@ -1204,7 +1404,7 @@ describe("Grok expired access-token classification", () => {
       },
     ]);
 
-    const toon = await captureCli(["--provider", "grok"]);
+    const toon = await captureCli(["--provider", "grok", "--no-refresh"]);
     expect(toon).toContain("advice[1]{provider,reason,remedyCommand}:");
     expect(toon).toContain("grok,credentials_expired,grok");
   });

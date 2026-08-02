@@ -5,7 +5,7 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 export const SKILL_DESCRIPTION =
   "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows via the quota-axi CLI - remaining " +
   "percentages, reset times, cycle-average pace vs the reset clock, and provider status read from local auth sources, " +
-  "with no routing, recommendation, or provider mutation. Use before deciding whether it is safe " +
+  "with no routing, recommendation, or provider-side mutation. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
 
@@ -59,9 +59,11 @@ ${DESCRIPTION}
 You do not need quota-axi installed globally - invoke it with \`npx -y quota-axi\`.
 
 quota-axi is data only: it never routes, recommends, proxies, intercepts, logs in, imports
-browser cookies, or mutates provider state. It reads local provider auth sources and calls
-first-party provider quota, usage, billing, or entitlement endpoints; it never launches the
-Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures.
+browser cookies, or changes provider-side state. It reads local provider auth sources and calls
+first-party provider quota, usage, billing, or entitlement endpoints. By default, near-expiry
+Grok and Kimi OAuth grants may be renewed and atomically written back to their existing local
+auth files; use \`--no-refresh\` or \`QUOTA_AXI_NO_REFRESH=1\` for a pure read. It never launches
+the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures.
 
 ## When to use
 
@@ -86,33 +88,36 @@ or when comparing supported local provider headroom side by side.
 4. Pass \`--full\` to include account identity and per-source attempt details.
 5. Run \`npx -y quota-axi auth\` to check local auth-source availability without printing
    secret values.
-6. On macOS, Claude Keychain value reads are pinned to the same validated current-user account
+6. Short-lived OAuth credentials renew on read by default only when a local refresh token is
+   already available. Renewal uses a lock and atomic write, never exposes the refresh token, and
+   fails closed if the grant is rejected. Pass \`--no-refresh\` or set
+   \`QUOTA_AXI_NO_REFRESH=1\` to prevent refresh HTTP calls and credential-file writes. A timer
+   remains optional backup for multi-process races.
+7. On macOS, Claude Keychain value reads are pinned to the same validated current-user account
    Claude Code selects and are skipped by default until the user grants access once.
    If quota output reports \`reason: keychain_access_required\`, tell your user to run
    \`quota-axi --allow-keychain-prompt\` once and approve Keychain access ("Always Allow").
    After that successful grant, plain \`quota-axi\` calls reuse the existing Keychain access
    marker, scoped to both profile and account, to refresh live Claude quota without requiring
    the flag. Legacy markers are not reused, so an upgrade may require this one-time grant again.
-7. If Grok reports \`reason: credentials_expired\` (or \`error: Grok access token expired\`), the
-   local session is still signed in but the short-lived access token expired. Tell your user to
-   open the Grok CLI (\`grok\`) once so Grok can refresh its local session token. Do not treat that
-   as a full sign-out, and do not ask quota-axi to refresh credentials - it never launches Grok or
-   writes auth files. Reserve true sign-in recovery for \`Grok sign-in required\`. If instead the
-   error is \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed grant is Pi's,
-   so tell your user to run Pi once - running the Grok CLI would not refresh it.
-8. For a managed Codex installation, set \`QUOTA_AXI_CODEX_BINARY\` to its absolute executable
+8. If Grok reports \`reason: credentials_expired\` (or \`error: Grok access token expired\`) after
+   a \`--no-refresh\` read, rerun without that flag so quota-axi can renew the local session, or
+   open the Grok CLI (\`grok\`). A rejected renewal is an authentication failure, not fresh quota.
+   If instead the error is \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed
+   grant is Pi's; rerun without \`--no-refresh\` or run Pi.
+9. For a managed Codex installation, set \`QUOTA_AXI_CODEX_BINARY\` to its absolute executable
    path. quota-axi uses that exact executable for auth inspection and the read-only app-server
    fallback, and fails closed if the override is invalid.
-9. For Kimi, quota-axi prefers a Pi-managed \`kimi-coding\` credential from
+10. For Kimi, quota-axi prefers a Pi-managed \`kimi-coding\` credential from
    \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`) - either a literal
    API key or an unexpired OAuth access token. If it is unavailable, quota-axi may reuse a
    fresh official Kimi Code CLI access token from
    \`$KIMI_CODE_HOME/credentials/kimi-code.json\` (default
-   \`$HOME/.kimi-code/credentials/kimi-code.json\`) without refreshing or writing credentials.
-10. If Kimi reports \`error: pi_credential_expired\`, Pi's OAuth access token has lapsed. Tell
-   your user to run Pi once so it refreshes its own grant; quota-axi never refreshes or writes
-   Pi credentials. Do not treat it as a signed-out credential.
-11. If Grok reports the \`pi:xai\` source, Grok is authenticated through Pi rather than through a
+   \`$HOME/.kimi-code/credentials/kimi-code.json\`), renewing near-expiry OAuth grants on read
+   unless refresh is disabled.
+11. If Kimi reports \`error: pi_credential_expired\` after \`--no-refresh\`, rerun without the
+   flag so quota-axi can renew the grant, or run Pi. A rejected renewal is \`auth_required\`.
+12. If Grok reports the \`pi:xai\` source, Grok is authenticated through Pi rather than through a
    \`~/.grok/auth.json\`. That fallback is used only when no Grok auth location is configured;
    setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
    to that location instead.
@@ -127,6 +132,8 @@ ${TOP_HELP.trimEnd()}
 
 - Output is TOON-encoded and token-efficient by default; pass \`--json\` only when you need
   the normalized schema.
+- Pass \`--no-refresh\` when an operator requires zero local credential writes; the environment
+  equivalent is \`QUOTA_AXI_NO_REFRESH=1\`.
 - Exit code 0 means at least one provider returned data (fresh or stale); exit code 1 means
   every provider failed; exit code 2 means a usage error.
 - Percentages are not comparable across providers - quota-axi never claims one provider's

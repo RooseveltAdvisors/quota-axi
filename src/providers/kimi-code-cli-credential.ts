@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { refreshOAuthJsonFile } from "../lib/oauth.js";
 
 export const KIMI_CODE_CLI_CREDENTIAL_SOURCE = "kimi-code-cli";
 
@@ -9,14 +10,25 @@ const MINIMUM_FRESHNESS_SECONDS = 60;
 
 export type KimiCodeCliCredentialResolution =
   | { status: "available"; accessToken: string }
-  | { status: "missing" | "invalid" | "expired" | "error" };
+  | { status: "missing" | "invalid" | "error" }
+  | { status: "expired"; refreshFailed?: boolean };
 
 export type KimiCodeCliCredentialInspection =
   KimiCodeCliCredentialResolution["status"];
 
+export type KimiCodeCliCredentialResolveOptions = {
+  refresh?: boolean;
+  fetch?: typeof globalThis.fetch;
+  signal?: AbortSignal;
+};
+
 export type KimiCodeCliCredentialSource = {
-  resolve(): Promise<KimiCodeCliCredentialResolution>;
-  inspect(): Promise<KimiCodeCliCredentialInspection>;
+  resolve(
+    options?: KimiCodeCliCredentialResolveOptions,
+  ): Promise<KimiCodeCliCredentialResolution>;
+  inspect(
+    options?: KimiCodeCliCredentialResolveOptions,
+  ): Promise<KimiCodeCliCredentialInspection>;
 };
 
 type CredentialSourceDependencies = {
@@ -37,17 +49,20 @@ export function createKimiCodeCliCredentialSource(
     ...overrides,
   };
 
-  const inspect = async (): Promise<KimiCodeCliCredentialInspection> =>
-    (await resolveCredential(dependencies)).status;
+  const inspect = async (
+    options: KimiCodeCliCredentialResolveOptions = {},
+  ): Promise<KimiCodeCliCredentialInspection> =>
+    (await resolveCredential(dependencies, options)).status;
 
   return {
-    resolve: () => resolveCredential(dependencies),
+    resolve: (options = {}) => resolveCredential(dependencies, options),
     inspect,
   };
 }
 
 async function resolveCredential(
   dependencies: CredentialSourceDependencies,
+  options: KimiCodeCliCredentialResolveOptions,
 ): Promise<KimiCodeCliCredentialResolution> {
   const path = credentialPath(dependencies);
   let contents: Buffer;
@@ -76,7 +91,34 @@ async function resolveCredential(
   const expiresAt = expirySeconds(credential?.expires_at);
   if (!accessToken || expiresAt === undefined) return { status: "invalid" };
   if (expiresAt <= dependencies.now() / 1_000 + MINIMUM_FRESHNESS_SECONDS) {
-    return { status: "expired" };
+    const refreshToken = stringValue(credential?.refresh_token);
+    if (options.refresh !== true || !refreshToken || !options.fetch) {
+      return { status: "expired" };
+    }
+    try {
+      const token = await refreshOAuthJsonFile({
+        filePath: path,
+        tokenUrl: "https://auth.kimi.com/api/oauth/token",
+        clientId: "17e5f671-d194-4dfb-9706-5516cb48c098",
+        fetch: options.fetch,
+        signal: options.signal,
+        now: dependencies.now,
+        readRefreshToken: (document) =>
+          stringValue(objectValue(document)?.refresh_token),
+        updateDocument: (document, refreshed) => {
+          const current = objectValue(document);
+          if (!current) return document;
+          current.access_token = refreshed.accessToken;
+          current.expires_at = refreshed.expiresAtMs / 1_000;
+          if (refreshed.refreshToken)
+            current.refresh_token = refreshed.refreshToken;
+          return current;
+        },
+      });
+      return { status: "available", accessToken: token.accessToken };
+    } catch {
+      return { status: "expired", refreshFailed: true };
+    }
   }
   return { status: "available", accessToken };
 }
@@ -137,6 +179,10 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {

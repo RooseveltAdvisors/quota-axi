@@ -400,6 +400,95 @@ describe("Pi Kimi credential broker", () => {
     expectSnapshotEqual(authPath, before);
   });
 
+  it("renews an expired Pi OAuth grant and preserves the rotated refresh token", async () => {
+    const home = temporaryDirectory();
+    const authPath = join(home, ".pi", "agent", "auth.json");
+    mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      authPath,
+      JSON.stringify({
+        "kimi-coding": {
+          type: "oauth",
+          access: "synthetic-pi-kimi-expired-020",
+          refresh: "synthetic-pi-kimi-refresh-021",
+          expires: 1_000_000,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = dirname(authPath);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "synthetic-pi-kimi-fresh-022",
+            refresh_token: "synthetic-pi-kimi-refresh-rotated-023",
+            expires_in: 900,
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const resolution = await createPiKimiCredentialBroker({
+      now: () => 1_000_001,
+    }).resolve({ refresh: true, fetch: fetchMock });
+    const stored = JSON.parse(readFileSync(authPath, "utf8")) as Record<
+      string,
+      Record<string, unknown>
+    >;
+
+    expect(resolution).toEqual({
+      status: "available",
+      apiKey: "synthetic-pi-kimi-fresh-022",
+    });
+    expect(stored["kimi-coding"]).toMatchObject({
+      access: "synthetic-pi-kimi-fresh-022",
+      refresh: "synthetic-pi-kimi-refresh-rotated-023",
+      expires: 1_900_001,
+    });
+    expect(JSON.stringify(resolution)).not.toContain(
+      "synthetic-pi-kimi-refresh",
+    );
+  });
+
+  it("fails closed on an invalid Pi OAuth refresh without writing the file", async () => {
+    const home = temporaryDirectory();
+    const authPath = join(home, ".pi", "agent", "auth.json");
+    mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      authPath,
+      JSON.stringify({
+        "kimi-coding": {
+          type: "oauth",
+          access: "synthetic-pi-kimi-expired-024",
+          refresh: "synthetic-pi-kimi-refresh-invalid-025",
+          expires: 1_000_000,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = dirname(authPath);
+    const before = snapshot(authPath);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+        }),
+    );
+
+    const resolution = await createPiKimiCredentialBroker({
+      now: () => 1_000_001,
+    }).resolve({ refresh: true, fetch: fetchMock });
+
+    expect(resolution).toEqual({ status: "expired", refreshFailed: true });
+    expectSnapshotEqual(authPath, before);
+    expect(JSON.stringify(resolution)).not.toContain(
+      "synthetic-pi-kimi-refresh",
+    );
+  });
+
   it("treats a token inside the expiry skew window as already expired", async () => {
     const home = temporaryDirectory();
     const authPath = join(home, ".pi", "agent", "auth.json");

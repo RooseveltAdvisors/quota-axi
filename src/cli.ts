@@ -8,8 +8,8 @@ export const DESCRIPTION =
 export const TOP_HELP = `usage: quota-axi [auth] [flags]
 commands[2]:
   (none)=quota, auth
-flags[6]:
-  --provider <claude,codex,cursor,copilot,grok,kimi>, --json, --full, --allow-keychain-prompt, --help, -v/--version
+flags[7]:
+  --provider <claude,codex,cursor,copilot,grok,kimi>, --json, --full, --allow-keychain-prompt, --no-refresh, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude

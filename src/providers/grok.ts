@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readCachedProvider } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
+import { refreshOAuthJsonFile, OAuthRefreshError } from "../lib/oauth.js";
 import {
   piAuthFilePath,
   piGrantExpired,
@@ -33,6 +34,9 @@ const RESPONSE_LIMIT_BYTES = 64 * 1024;
 const GRPC_MESSAGE_LIMIT_CHARS = 1_024;
 const EMPTY_GRPC_REQUEST = Uint8Array.from([0, 0, 0, 0, 0]);
 const GROK_SOURCE = "web" as const;
+const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+const GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+const GROK_EXPIRY_SKEW_MS = 30_000;
 
 const PRODUCT_NAMES: Record<number, { id: string; label: string }> = {
   0: { id: "unspecified", label: "Other" },
@@ -62,12 +66,14 @@ type CredentialState =
       status: "expired";
       source: AuthSourceReport;
       refreshable: boolean;
+      refreshError?: string;
     };
 
 type CredentialCandidate = GrokCredentials & {
   scope?: string;
   raw: Record<string, unknown>;
   hasRefreshToken: boolean;
+  storageKey?: string;
 };
 
 const GROK_SIGN_IN_REQUIRED_ERROR = "Grok sign-in required";
@@ -93,13 +99,13 @@ export const grokAdapter: ProviderAdapter = {
 };
 
 export async function fetchQuota(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
   let finalError: string;
   let retryAfter: string | undefined;
 
-  const credentialState = readCredentialState();
+  const credentialState = await readCredentialState(options);
   if (credentialState.status === "available") {
     attempts.push({ source: GROK_SOURCE, status: "failed" });
     try {
@@ -134,18 +140,21 @@ export async function fetchQuota(
       status: "skipped",
       error: `credentials_${credentialState.status}`,
     });
-    // Whoever owns the credential owns the refresh: `grok` refreshes its own
-    // auth.json session, while pi refreshes its `xai` grant on its next use.
     finalError =
-      credentialState.status === "expired" && credentialState.refreshable
+      (credentialState.status === "expired"
+        ? credentialState.refreshError
+        : undefined) ??
+      (credentialState.status === "expired" && credentialState.refreshable
         ? credentialState.source.source === PI_XAI_SOURCE
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
           : GROK_ACCESS_TOKEN_EXPIRED_ERROR
-        : GROK_SIGN_IN_REQUIRED_ERROR;
+        : GROK_SIGN_IN_REQUIRED_ERROR);
   }
 
+  const refreshFailed =
+    credentialState.status === "expired" && credentialState.refreshError;
   const cached = readCachedProvider("grok");
-  if (cached?.source === GROK_SOURCE) {
+  if (!refreshFailed && cached?.source === GROK_SOURCE) {
     return staleFromCache(cached, finalError, sourceNames(attempts), attempts);
   }
 
@@ -161,9 +170,9 @@ export async function fetchQuota(
 }
 
 export async function inspectAuth(
-  _options: ProviderOptions,
+  options: ProviderOptions,
 ): Promise<AuthProviderReport> {
-  const credentialState = readCredentialState();
+  const credentialState = await readCredentialState(options);
   return { provider: "grok", sources: [credentialState.source] };
 }
 
@@ -565,12 +574,16 @@ function clampExactPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function readCredentialState(): CredentialState {
+async function readCredentialState(
+  options: ProviderOptions,
+): Promise<CredentialState> {
   const explicitAuthFile = stringValue(process.env.GROK_AUTH_JSON);
   if (explicitAuthFile) {
-    return extractCredentialState(
+    return refreshCredentialState(
       readJsonFileResult(explicitAuthFile),
       explicitAuthFile,
+      "auth-json",
+      options,
     );
   }
   const inlineAuth = stringValue(process.env.GROK_AUTH);
@@ -582,11 +595,17 @@ function readCredentialState(): CredentialState {
     );
   }
   const authFile = grokAuthFile();
-  const fromAuthFile = extractCredentialState(
+  const fromAuthFile = await refreshCredentialState(
     readJsonFileResult(authFile),
     authFile,
+    "auth-json",
+    options,
   );
   if (fromAuthFile.status !== "missing" || hasExplicitGrokAuthPath()) {
+    if (fromAuthFile.status === "expired" && !hasExplicitGrokAuthPath()) {
+      const fromPi = await piXaiCredentialState(options);
+      if (fromPi && fromPi.status !== "missing") return fromPi;
+    }
     return fromAuthFile;
   }
 
@@ -594,7 +613,7 @@ function readCredentialState(): CredentialState {
   // stores an `xai` OAuth grant of its own. Without this fallback a box that
   // authenticates Grok solely through pi reports "sign-in required", because
   // the only source ever tried was a ~/.grok/auth.json that never existed.
-  return piXaiCredentialState() ?? fromAuthFile;
+  return (await piXaiCredentialState(options)) ?? fromAuthFile;
 }
 
 const PI_XAI_PROVIDER_ID = "xai";
@@ -607,7 +626,9 @@ function hasExplicitGrokAuthPath(): boolean {
   );
 }
 
-function piXaiCredentialState(): CredentialState | undefined {
+async function piXaiCredentialState(
+  options: ProviderOptions,
+): Promise<CredentialState | undefined> {
   const path = piAuthFilePath();
   const raw = readPiAuthFile(path);
   if (raw.status !== "success") return undefined;
@@ -618,10 +639,46 @@ function piXaiCredentialState(): CredentialState | undefined {
   const grant = piOAuthGrant(entry);
   if (!grant) return undefined;
 
-  // Read-only: the refresh token is never used and never surfaced. pi refreshes
-  // on its own next use, so a lapsed token is reported as refreshable rather
-  // than as a dead credential.
   if (piGrantExpired(grant, Date.now())) {
+    if (options.refreshCredentials !== false && grant.refreshable) {
+      try {
+        const token = await refreshOAuthJsonFile({
+          filePath: path,
+          tokenUrl: GROK_TOKEN_URL,
+          clientId:
+            stringValue(entry.client_id) ??
+            stringValue(entry.clientId) ??
+            GROK_CLIENT_ID,
+          fetch: globalThis.fetch,
+          readRefreshToken: (document) =>
+            stringValue(
+              objectValue(objectValue(document)?.[PI_XAI_PROVIDER_ID])?.refresh,
+            ),
+          updateDocument: (document, refreshed) => {
+            const root = objectValue(document);
+            const current = objectValue(root?.[PI_XAI_PROVIDER_ID]);
+            if (!root || !current) return document;
+            current.access = refreshed.accessToken;
+            current.expires = refreshed.expiresAtMs;
+            if (refreshed.refreshToken)
+              current.refresh = refreshed.refreshToken;
+            return root;
+          },
+        });
+        return extractCredentialState(
+          { status: "success", value: inlineTokenAuth(token.accessToken) },
+          path,
+          PI_XAI_SOURCE,
+        );
+      } catch (error) {
+        return {
+          status: "expired",
+          source: authSource(PI_XAI_SOURCE, path, "expired"),
+          refreshable: true,
+          refreshError: grokRefreshError(error),
+        };
+      }
+    }
     return {
       status: "expired",
       source: authSource(PI_XAI_SOURCE, path, "expired"),
@@ -634,6 +691,59 @@ function piXaiCredentialState(): CredentialState | undefined {
     path,
     PI_XAI_SOURCE,
   );
+}
+
+async function refreshCredentialState(
+  raw: JsonFileReadResult,
+  path: string,
+  source: string,
+  options: ProviderOptions,
+): Promise<CredentialState> {
+  const state = extractCredentialState(raw, path, source);
+  if (
+    state.status !== "expired" ||
+    options.refreshCredentials === false ||
+    raw.status !== "success"
+  )
+    return state;
+  const data = objectValue(raw.value);
+  const candidate = data
+    ? selectedCredentialCandidates(data).find(
+        (item) => item.hasRefreshToken && isExpired(item.expiresAt),
+      )
+    : undefined;
+  if (!candidate) return state;
+
+  try {
+    await refreshOAuthJsonFile({
+      filePath: path,
+      tokenUrl: GROK_TOKEN_URL,
+      clientId: grokClientId(candidate.scope),
+      fetch: globalThis.fetch,
+      readRefreshToken: (document) => {
+        const current = findGrokCandidate(document, candidate);
+        return (
+          stringValue(current?.refresh_token) ??
+          stringValue(current?.refreshToken)
+        );
+      },
+      updateDocument: (document, refreshed) => {
+        const current = findGrokCandidate(document, candidate);
+        if (!current) return document;
+        current.key = refreshed.accessToken;
+        current.expires_at = new Date(refreshed.expiresAtMs).toISOString();
+        if (refreshed.refreshToken)
+          current.refresh_token = refreshed.refreshToken;
+        return document;
+      },
+    });
+    return extractCredentialState(readJsonFileResult(path), path, source);
+  } catch (error) {
+    return {
+      ...state,
+      refreshError: grokRefreshError(error),
+    };
+  }
 }
 
 function readInlineAuth(value: string): JsonFileReadResult {
@@ -650,7 +760,7 @@ function normalizeInlineAuth(value: unknown): unknown {
 }
 
 function inlineTokenAuth(key: string): Record<string, unknown> {
-  return { "https://accounts.x.ai/sign-in": { key } };
+  return { [`https://auth.x.ai::${GROK_CLIENT_ID}`]: { key } };
 }
 
 function extractCredentialState(
@@ -716,7 +826,7 @@ function grokAuthFile(): string {
 }
 
 function grokHomeDir(): string {
-  return process.env.GROK_HOME || join(homedir(), ".grok");
+  return process.env.GROK_HOME || join(process.env.HOME || homedir(), ".grok");
 }
 
 function rejectUnusableUsageResponse(response: Response): void {
@@ -734,7 +844,44 @@ function rejectUnusableUsageResponse(response: Response): void {
 function isExpired(value: string | undefined): boolean {
   if (!value) return false;
   const parsed = Date.parse(value);
-  return !Number.isNaN(parsed) && parsed <= Date.now();
+  return !Number.isNaN(parsed) && parsed <= Date.now() + GROK_EXPIRY_SKEW_MS;
+}
+
+function grokClientId(scope: string | undefined): string {
+  const clientId = scope?.match(/::([^/]+)$/)?.[1];
+  return clientId || GROK_CLIENT_ID;
+}
+
+function findGrokCandidate(
+  document: unknown,
+  candidate: CredentialCandidate,
+): Record<string, unknown> | undefined {
+  const root = objectValue(document);
+  if (!root) return undefined;
+  if (candidate.storageKey && objectValue(root[candidate.storageKey]))
+    return objectValue(root[candidate.storageKey]);
+  if (stringValue(root.key) === candidate.key) return root;
+  return Object.entries(root).reduce<Record<string, unknown> | undefined>(
+    (found, [scope, value]) => {
+      if (found) return found;
+      const item = objectValue(value);
+      return item &&
+        stringValue(item.key) === candidate.key &&
+        credentialScope(scope, item) === candidate.scope
+        ? item
+        : undefined;
+    },
+    undefined,
+  );
+}
+
+function grokRefreshError(error: unknown): string {
+  if (error instanceof OAuthRefreshError) {
+    return error.code === "invalid_grant" || error.code === "unauthorized"
+      ? "Grok access token expired; OAuth refresh was rejected"
+      : "Grok access token expired; OAuth refresh failed";
+  }
+  return "Grok access token expired; OAuth refresh failed";
 }
 
 function authSource(
@@ -782,6 +929,7 @@ function credentialCandidate(
     key,
     scope: credentialScope(scope, item),
     raw: item,
+    storageKey: scope,
     email: stringValue(item.email),
     teamId: stringValue(item.team_id) ?? stringValue(item.teamId),
     expiresAt: stringValue(item.expires_at) ?? stringValue(item.expiresAt),

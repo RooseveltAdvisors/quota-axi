@@ -35,8 +35,8 @@ export function piOAuthGrant(
       typeof expires === "number" && Number.isFinite(expires)
         ? expires
         : undefined,
-    // Read-only: the refresh token is never used and never surfaced. Its mere
-    // presence tells the caller pi can recover the grant on its own next use.
+    // Keep only presence in the grant summary; the refresh token stays private
+    // and is read again under the shared file lock only when renewal is enabled.
     refreshable: typeof entry.refresh === "string" && entry.refresh !== "",
   };
 }
