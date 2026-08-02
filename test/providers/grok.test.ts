@@ -1411,6 +1411,33 @@ describe("Grok expired access-token classification", () => {
 });
 
 describe("Grok cache provenance", () => {
+  it("uses the web cache when OAuth refresh is transiently unavailable", async () => {
+    writeAuth({
+      "https://auth.x.ai::fixture-client": {
+        key: "expired-access-token",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: "fixture-refresh-token",
+      },
+    });
+    writeCachedProviders([cachedGrok("web")]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("offline"))),
+    );
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "cache",
+      state: {
+        status: "stale",
+        stale: true,
+        error: "Grok access token expired; OAuth refresh failed",
+      },
+    });
+  });
+
   it("rejects a legacy CLI-proxy cache entry after exact-source failure", async () => {
     writeValidAuth();
     writeCachedProviders([cachedGrok("api")]);

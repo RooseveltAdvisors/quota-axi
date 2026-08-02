@@ -135,6 +135,52 @@ describe("Kimi renew-on-read", () => {
     expect(JSON.stringify(result)).not.toContain("synthetic-kimi-refresh");
   });
 
+  it("uses cached quota when OAuth refresh is transiently unavailable", async () => {
+    writePiCredential({
+      type: "oauth",
+      access: "synthetic-kimi-expired-transient-034",
+      refresh: "synthetic-kimi-refresh-transient-035",
+      expires: Date.now() - 1,
+    });
+    const deleteCachedProvider = vi.fn();
+    const fetchMock = vi.fn(async () => Promise.reject(new Error("offline")));
+    const adapter = createKimiAdapter({
+      fetch: fetchMock,
+      now: () => NOW,
+      readCachedProvider: () => ({
+        provider: "kimi",
+        label: "Kimi",
+        source: "api",
+        windows: [
+          {
+            id: "five_hour",
+            label: "session",
+            kind: "session",
+            percentUsed: 20,
+            percentRemaining: 80,
+            resetsAt: "2099-01-08T00:00:00Z",
+          },
+        ],
+        state: {
+          status: "fresh",
+          stale: false,
+          refreshedAt: new Date(NOW - 1_000).toISOString(),
+          sourcesTried: ["api"],
+        },
+      }),
+      deleteCachedProvider,
+    });
+
+    const result = await adapter.fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "cache",
+      state: { status: "stale", stale: true },
+    });
+    expect(deleteCachedProvider).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("keeps read-only mode from refreshing or writing auth", async () => {
     const authPath = writePiCredential({
       type: "oauth",

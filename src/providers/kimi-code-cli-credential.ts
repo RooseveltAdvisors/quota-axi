@@ -1,7 +1,10 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { refreshOAuthJsonFile } from "../lib/oauth.js";
+import {
+  isDefinitiveOAuthRefreshError,
+  refreshOAuthJsonFile,
+} from "../lib/oauth.js";
 
 export const KIMI_CODE_CLI_CREDENTIAL_SOURCE = "kimi-code-cli";
 
@@ -11,7 +14,11 @@ const MINIMUM_FRESHNESS_SECONDS = 60;
 export type KimiCodeCliCredentialResolution =
   | { status: "available"; accessToken: string }
   | { status: "missing" | "invalid" | "error" }
-  | { status: "expired"; refreshFailed?: boolean };
+  | {
+      status: "expired";
+      refreshFailed?: boolean;
+      refreshDefinitive?: boolean;
+    };
 
 export type KimiCodeCliCredentialInspection =
   KimiCodeCliCredentialResolution["status"];
@@ -102,6 +109,7 @@ async function resolveCredential(
         clientId: "17e5f671-d194-4dfb-9706-5516cb48c098",
         fetch: options.fetch,
         signal: options.signal,
+        minimumFreshnessMs: MINIMUM_FRESHNESS_SECONDS * 1_000,
         now: dependencies.now,
         readRefreshToken: (document) =>
           stringValue(objectValue(document)?.refresh_token),
@@ -116,8 +124,12 @@ async function resolveCredential(
         },
       });
       return { status: "available", accessToken: token.accessToken };
-    } catch {
-      return { status: "expired", refreshFailed: true };
+    } catch (error) {
+      return {
+        status: "expired",
+        refreshFailed: true,
+        refreshDefinitive: isDefinitiveOAuthRefreshError(error),
+      };
     }
   }
   return { status: "available", accessToken };

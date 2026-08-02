@@ -2,7 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readCachedProvider } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
-import { refreshOAuthJsonFile, OAuthRefreshError } from "../lib/oauth.js";
+import {
+  isDefinitiveOAuthRefreshError,
+  refreshOAuthJsonFile,
+  OAuthRefreshError,
+} from "../lib/oauth.js";
 import {
   piAuthFilePath,
   piGrantExpired,
@@ -67,6 +71,7 @@ type CredentialState =
       source: AuthSourceReport;
       refreshable: boolean;
       refreshError?: string;
+      refreshDefinitive?: boolean;
     };
 
 type CredentialCandidate = GrokCredentials & {
@@ -151,10 +156,11 @@ export async function fetchQuota(
         : GROK_SIGN_IN_REQUIRED_ERROR);
   }
 
-  const refreshFailed =
-    credentialState.status === "expired" && credentialState.refreshError;
+  const refreshDefinitive =
+    credentialState.status === "expired" &&
+    credentialState.refreshDefinitive === true;
   const cached = readCachedProvider("grok");
-  if (!refreshFailed && cached?.source === GROK_SOURCE) {
+  if (!refreshDefinitive && cached?.source === GROK_SOURCE) {
     return staleFromCache(cached, finalError, sourceNames(attempts), attempts);
   }
 
@@ -650,6 +656,7 @@ async function piXaiCredentialState(
             stringValue(entry.clientId) ??
             GROK_CLIENT_ID,
           fetch: globalThis.fetch,
+          minimumFreshnessMs: GROK_EXPIRY_SKEW_MS,
           readRefreshToken: (document) =>
             stringValue(
               objectValue(objectValue(document)?.[PI_XAI_PROVIDER_ID])?.refresh,
@@ -666,7 +673,10 @@ async function piXaiCredentialState(
           },
         });
         return extractCredentialState(
-          { status: "success", value: inlineTokenAuth(token.accessToken) },
+          {
+            status: "success",
+            value: inlineTokenAuth(token.accessToken, token.expiresAtMs),
+          },
           path,
           PI_XAI_SOURCE,
         );
@@ -676,6 +686,7 @@ async function piXaiCredentialState(
           source: authSource(PI_XAI_SOURCE, path, "expired"),
           refreshable: true,
           refreshError: grokRefreshError(error),
+          refreshDefinitive: isDefinitiveOAuthRefreshError(error),
         };
       }
     }
@@ -687,7 +698,10 @@ async function piXaiCredentialState(
   }
 
   return extractCredentialState(
-    { status: "success", value: inlineTokenAuth(grant.accessToken) },
+    {
+      status: "success",
+      value: inlineTokenAuth(grant.accessToken, grant.expiresAtMs),
+    },
     path,
     PI_XAI_SOURCE,
   );
@@ -720,6 +734,7 @@ async function refreshCredentialState(
       tokenUrl: GROK_TOKEN_URL,
       clientId: grokClientId(candidate.scope),
       fetch: globalThis.fetch,
+      minimumFreshnessMs: GROK_EXPIRY_SKEW_MS,
       readRefreshToken: (document) => {
         const current = findGrokCandidate(document, candidate);
         return (
@@ -742,6 +757,7 @@ async function refreshCredentialState(
     return {
       ...state,
       refreshError: grokRefreshError(error),
+      refreshDefinitive: isDefinitiveOAuthRefreshError(error),
     };
   }
 }
@@ -759,8 +775,18 @@ function normalizeInlineAuth(value: unknown): unknown {
   return typeof value === "string" ? inlineTokenAuth(value) : value;
 }
 
-function inlineTokenAuth(key: string): Record<string, unknown> {
-  return { [`https://auth.x.ai::${GROK_CLIENT_ID}`]: { key } };
+function inlineTokenAuth(
+  key: string,
+  expiresAtMs?: number,
+): Record<string, unknown> {
+  return {
+    [`https://auth.x.ai::${GROK_CLIENT_ID}`]: {
+      key,
+      ...(expiresAtMs === undefined
+        ? {}
+        : { expires_at: new Date(expiresAtMs).toISOString() }),
+    },
+  };
 }
 
 function extractCredentialState(

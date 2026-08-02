@@ -368,13 +368,16 @@ function credentialFailureFor(
     });
   }
   if (resolution.status === "expired") {
+    const refreshFailed = resolution.refreshFailed === true;
+    const refreshDefinitive = resolution.refreshDefinitive === true;
     return new KimiFailure(
       resolution.refreshFailed
         ? "kimi_credential_refresh_failed"
         : "pi_credential_expired",
       {
         status: "auth_required",
-        definitiveAuth: resolution.refreshFailed,
+        staleEligible: refreshFailed && !refreshDefinitive,
+        definitiveAuth: refreshFailed ? refreshDefinitive : false,
       },
     );
   }
@@ -398,13 +401,16 @@ function cliCredentialFailureFor(
     });
   }
   if (resolution.status === "expired") {
+    const refreshFailed = resolution.refreshFailed === true;
+    const refreshDefinitive = resolution.refreshDefinitive === true;
     return new KimiFailure(
       resolution.refreshFailed
         ? "kimi_code_cli_credential_refresh_failed"
         : "kimi_code_cli_credential_expired",
       {
         status: "auth_required",
-        definitiveAuth: true,
+        staleEligible: refreshFailed && !refreshDefinitive,
+        definitiveAuth: refreshFailed ? refreshDefinitive : true,
       },
     );
   }

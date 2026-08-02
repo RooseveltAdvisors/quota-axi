@@ -11,6 +11,7 @@ import {
 const JSON_LIMIT_BYTES = 64 * 1024;
 const LOCK_ATTEMPTS = 40;
 const LOCK_WAIT_MS = 25;
+const OAUTH_REFRESH_TIMEOUT_MS = 15_000;
 
 export type OAuthRefreshToken = {
   accessToken: string;
@@ -24,6 +25,7 @@ export type OAuthJsonRefreshOptions = {
   clientId: string;
   fetch: typeof globalThis.fetch;
   signal?: AbortSignal;
+  minimumFreshnessMs?: number;
   now?: () => number;
   readRefreshToken(document: unknown): string | undefined;
   updateDocument(document: unknown, token: OAuthRefreshToken): unknown;
@@ -43,11 +45,20 @@ export class OAuthRefreshError extends Error {
   }
 }
 
+export function isDefinitiveOAuthRefreshError(error: unknown): boolean {
+  return (
+    error instanceof OAuthRefreshError &&
+    (error.code === "invalid_grant" || error.code === "unauthorized")
+  );
+}
+
 export async function refreshOAuthJsonFile(
   options: OAuthJsonRefreshOptions,
 ): Promise<OAuthRefreshToken> {
-  const lock = await acquireLock(options.filePath);
+  const deadline = createRefreshDeadline(options.signal);
+  let lock: OAuthLock | undefined;
   try {
+    lock = await acquireLock(options.filePath, deadline.signal);
     const document = parseJson(await readFile(options.filePath, "utf8"));
     const refreshToken = options.readRefreshToken(document);
     if (!refreshToken) throw new OAuthRefreshError("missing_refresh_token");
@@ -55,6 +66,7 @@ export async function refreshOAuthJsonFile(
     const token = await requestRefreshToken({
       ...options,
       refreshToken,
+      signal: deadline.signal,
     });
     await writeJsonAtomically(
       options.filePath,
@@ -62,7 +74,11 @@ export async function refreshOAuthJsonFile(
     );
     return token;
   } finally {
-    await releaseLock(lock);
+    try {
+      if (lock) await releaseLock(lock);
+    } finally {
+      deadline.dispose();
+    }
   }
 }
 
@@ -72,6 +88,7 @@ async function requestRefreshToken(options: {
   refreshToken: string;
   fetch: typeof globalThis.fetch;
   signal?: AbortSignal;
+  minimumFreshnessMs?: number;
   now?: () => number;
 }): Promise<OAuthRefreshToken> {
   let response: Response;
@@ -95,7 +112,14 @@ async function requestRefreshToken(options: {
     throw new OAuthRefreshError("unavailable");
   }
 
-  const body = await readResponseObject(response);
+  let body: Record<string, unknown> | undefined;
+  try {
+    body = await readResponseObject(response);
+  } catch (error) {
+    if (!response.ok && (response.status === 401 || response.status === 403))
+      throw new OAuthRefreshError("unauthorized");
+    throw error;
+  }
   if (!response.ok) {
     if (response.status === 401 || response.status === 403)
       throw new OAuthRefreshError("unauthorized");
@@ -106,11 +130,18 @@ async function requestRefreshToken(options: {
 
   const accessToken = stringValue(body?.access_token);
   const now = options.now ?? Date.now;
+  const nowMs = now();
   const expiresAtMs =
     expiryMs(body?.expires_at) ??
-    expiresInMs(body?.expires_in, now()) ??
+    expiresInMs(body?.expires_in, nowMs) ??
     undefined;
-  if (!accessToken || expiresAtMs === undefined || expiresAtMs <= now())
+  const minimumFreshnessMs = options.minimumFreshnessMs ?? 0;
+  if (
+    !accessToken ||
+    expiresAtMs === undefined ||
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= nowMs + minimumFreshnessMs
+  )
     throw new OAuthRefreshError("invalid_response");
   const refreshToken = stringValue(body?.refresh_token);
   return {
@@ -138,34 +169,148 @@ async function readResponseObject(
   }
 }
 
-async function acquireLock(filePath: string): Promise<{
+type OAuthLock = {
   handle: Awaited<ReturnType<typeof open>>;
   path: string;
-}> {
+  contents: string;
+};
+
+async function acquireLock(
+  filePath: string,
+  signal: AbortSignal,
+): Promise<OAuthLock> {
   const path = `${filePath}.quota-axi.lock`;
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
+    if (signal.aborted) throw new OAuthRefreshError("unavailable");
+    let handle: Awaited<ReturnType<typeof open>>;
     try {
-      const handle = await open(path, "wx", 0o600);
-      return { handle, path };
+      handle = await open(path, "wx", 0o600);
     } catch (error) {
       if (errorCode(error) !== "EEXIST")
         throw new OAuthRefreshError("lock_unavailable");
-      await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_MS));
+      if (await recoverStaleLock(path)) continue;
+      await waitForLock(signal);
+      continue;
+    }
+    const contents = `${JSON.stringify({
+      pid: process.pid,
+      token: randomUUID(),
+      createdAtMs: Date.now(),
+    })}\n`;
+    try {
+      await handle.writeFile(contents, "utf8");
+      return { handle, path, contents };
+    } catch {
+      try {
+        await handle.close();
+      } catch {
+        throw new OAuthRefreshError("lock_unavailable");
+      }
+      try {
+        await unlink(path);
+      } catch (error) {
+        if (errorCode(error) !== "ENOENT")
+          throw new OAuthRefreshError("lock_unavailable");
+      }
+      throw new OAuthRefreshError("lock_unavailable");
     }
   }
   throw new OAuthRefreshError("lock_unavailable");
 }
 
-async function releaseLock(lock: {
-  handle: Awaited<ReturnType<typeof open>>;
-  path: string;
-}): Promise<void> {
+async function releaseLock(lock: OAuthLock): Promise<void> {
   await lock.handle.close();
   try {
+    const contents = await readFile(lock.path, "utf8");
+    if (contents !== lock.contents) return;
     await unlink(lock.path);
   } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
   }
+}
+
+async function recoverStaleLock(path: string): Promise<boolean> {
+  let contents: string;
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (error) {
+    return errorCode(error) === "ENOENT";
+  }
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(contents) as unknown;
+  } catch {
+    return false;
+  }
+  const lock = objectValue(metadata);
+  const pid = lock?.pid;
+  const token = lock?.token;
+  const createdAtMs = lock?.createdAtMs;
+  if (
+    typeof pid !== "number" ||
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    typeof token !== "string" ||
+    token.length === 0 ||
+    typeof createdAtMs !== "number" ||
+    !Number.isFinite(createdAtMs)
+  )
+    return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    if (errorCode(error) !== "ESRCH") return false;
+  }
+  try {
+    await unlink(path);
+    return true;
+  } catch (error) {
+    return errorCode(error) === "ENOENT";
+  }
+}
+
+function waitForLock(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new OAuthRefreshError("unavailable"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(new OAuthRefreshError("unavailable"));
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, LOCK_WAIT_MS);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function createRefreshDeadline(parentSignal?: AbortSignal): {
+  signal: AbortSignal;
+  dispose(): void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    OAUTH_REFRESH_TIMEOUT_MS,
+  );
+  const abort = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) controller.abort();
+    else parentSignal.addEventListener("abort", abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timer);
+      parentSignal?.removeEventListener("abort", abort);
+    },
+  };
 }
 
 async function writeJsonAtomically(filePath: string, document: unknown) {
@@ -221,9 +366,9 @@ function expiresInMs(value: unknown, now: number): number | undefined {
       : typeof value === "string" && value.trim() !== ""
         ? Number(value)
         : Number.NaN;
-  return Number.isFinite(seconds) && seconds > 0
-    ? now + seconds * 1_000
-    : undefined;
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  const expiresAtMs = now + seconds * 1_000;
+  return Number.isFinite(expiresAtMs) ? expiresAtMs : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

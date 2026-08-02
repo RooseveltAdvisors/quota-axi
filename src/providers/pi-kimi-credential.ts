@@ -2,13 +2,17 @@ import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   PI_AUTH_FILE_LIMIT_BYTES,
+  PI_EXPIRY_SKEW_MS,
   piAuthFilePath,
   piGrantExpired,
   piOAuthGrant,
   usablePiCredential,
   type PiEnvironment,
 } from "./pi-auth.js";
-import { refreshOAuthJsonFile } from "../lib/oauth.js";
+import {
+  isDefinitiveOAuthRefreshError,
+  refreshOAuthJsonFile,
+} from "../lib/oauth.js";
 
 const PI_PROVIDER_ID = "kimi-coding";
 const KIMI_TOKEN_URL = "https://auth.kimi.com/api/oauth/token";
@@ -18,7 +22,11 @@ export type KimiCredentialResolution =
   | { status: "available"; apiKey: string }
   | { status: "missing" }
   | { status: "unsupported" }
-  | { status: "expired"; refreshFailed?: boolean }
+  | {
+      status: "expired";
+      refreshFailed?: boolean;
+      refreshDefinitive?: boolean;
+    }
   | { status: "error" };
 
 export type KimiCredentialInspection =
@@ -89,7 +97,7 @@ async function resolveCredential(
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents.toString("utf8")) as unknown;
-  } catch {
+  } catch (error) {
     return { status: "missing" };
   }
 
@@ -170,6 +178,7 @@ async function oauthAccessToken(
       clientId: stringValue(entry.client_id) ?? KIMI_CLIENT_ID,
       fetch: options.fetch,
       signal: options.signal,
+      minimumFreshnessMs: PI_EXPIRY_SKEW_MS,
       now: dependencies.now,
       readRefreshToken: (document) =>
         stringValue(
@@ -186,8 +195,12 @@ async function oauthAccessToken(
       },
     });
     return { status: "available", apiKey: token.accessToken };
-  } catch {
-    return { status: "expired", refreshFailed: true };
+  } catch (error) {
+    return {
+      status: "expired",
+      refreshFailed: true,
+      refreshDefinitive: isDefinitiveOAuthRefreshError(error),
+    };
   }
 }
 
