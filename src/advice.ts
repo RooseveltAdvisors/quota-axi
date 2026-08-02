@@ -76,8 +76,8 @@ function needsKeychainAccessAdvice(provider: ProviderQuota): boolean {
   );
 }
 
-// The remedy depends on which credential lapsed: only a Grok-CLI session is
-// refreshed by running `grok`. A Pi-sourced grant is refreshed by Pi itself.
+// The remedy depends on which local credential lapsed. The default quota path
+// renews refreshable grants; these messages remain useful for --no-refresh.
 function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   if (provider.provider !== "grok" || provider.state.status === "fresh") {
     return undefined;
@@ -141,9 +141,9 @@ function keychainAccessHelpLine(provider: ProviderQuota): string {
 }
 
 function grokTokenRefreshHelpLine(): string {
-  return `Tell your user: open the Grok CLI (\`${GROK_TOKEN_REFRESH_REMEDY_COMMAND}\`) once so it can refresh Grok's local session token. quota-axi does not refresh credentials.`;
+  return `Tell your user: rerun quota-axi without \`--no-refresh\` so it can renew Grok's local session token, or open the Grok CLI (\`${GROK_TOKEN_REFRESH_REMEDY_COMMAND}\`).`;
 }
 
 function piTokenRefreshHelpLine(): string {
-  return `Tell your user: run Pi (\`${PI_TOKEN_REFRESH_REMEDY_COMMAND}\`) once so it refreshes its own Grok OAuth grant on next use. quota-axi does not refresh credentials.`;
+  return `Tell your user: rerun quota-axi without \`--no-refresh\` so it can renew Pi's Grok OAuth grant, or run Pi (\`${PI_TOKEN_REFRESH_REMEDY_COMMAND}\`).`;
 }

@@ -7,6 +7,7 @@ export type QuotaFlags = {
   json: boolean;
   full: boolean;
   allowKeychainPrompt: boolean;
+  noRefresh: boolean;
 };
 
 /**
@@ -19,6 +20,7 @@ export function parseFlags(args: string[]): QuotaFlags {
   let json = false;
   let full = false;
   let allowKeychainPrompt = false;
+  let noRefresh = process.env.QUOTA_AXI_NO_REFRESH === "1";
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -35,6 +37,10 @@ export function parseFlags(args: string[]): QuotaFlags {
     }
     if (arg === "--allow-keychain-prompt") {
       allowKeychainPrompt = true;
+      continue;
+    }
+    if (arg === "--no-refresh") {
+      noRefresh = true;
       continue;
     }
     if (arg === "--provider") {
@@ -64,6 +70,7 @@ export function parseFlags(args: string[]): QuotaFlags {
     json,
     full,
     allowKeychainPrompt,
+    noRefresh,
   };
 }
 

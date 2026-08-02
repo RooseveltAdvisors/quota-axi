@@ -167,6 +167,8 @@ export type QuotaAxiResponse = {
 
 export type ProviderOptions = {
   allowKeychainPrompt: boolean;
+  /** Defaults to enabled when omitted for direct adapter callers. */
+  refreshCredentials?: boolean;
 };
 
 export type ProviderAdapter = {

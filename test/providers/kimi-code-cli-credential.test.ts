@@ -135,6 +135,114 @@ describe("Kimi Code CLI credential discovery", () => {
     });
   });
 
+  it("renews an expired credential and atomically stores rotated tokens", async () => {
+    const home = temporaryDirectory();
+    const refreshToken = "synthetic-kimi-cli-refresh-012";
+    const credential = writeCredential(home, {
+      access_token: "synthetic-kimi-cli-expired-013",
+      refresh_token: refreshToken,
+      expires_at: NOW / 1_000 - 1,
+    });
+    const rotatedRefreshToken = "synthetic-kimi-cli-refresh-rotated-014";
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe("https://auth.kimi.com/api/oauth/token");
+        expect(init?.method).toBe("POST");
+        expect(
+          new URLSearchParams(String(init?.body)).get("refresh_token"),
+        ).toBe(refreshToken);
+        return new Response(
+          JSON.stringify({
+            access_token: "synthetic-kimi-cli-fresh-015",
+            refresh_token: rotatedRefreshToken,
+            expires_in: 900,
+          }),
+          { status: 200 },
+        );
+      },
+    );
+    const source = createKimiCodeCliCredentialSource({
+      environment: { KIMI_CODE_HOME: home },
+      now: () => NOW,
+    });
+
+    const resolution = await source.resolve({
+      refresh: true,
+      fetch: fetchMock,
+    });
+    const stored = JSON.parse(readFileSync(credential, "utf8")) as Record<
+      string,
+      string | number
+    >;
+
+    expect(resolution).toEqual({
+      status: "available",
+      accessToken: "synthetic-kimi-cli-fresh-015",
+    });
+    expect(stored).toMatchObject({
+      access_token: "synthetic-kimi-cli-fresh-015",
+      refresh_token: rotatedRefreshToken,
+      expires_at: NOW / 1_000 + 900,
+    });
+    expect(JSON.stringify(resolution)).not.toContain(refreshToken);
+  });
+
+  it("fails closed on invalid_grant without half-writing the credential", async () => {
+    const home = temporaryDirectory();
+    const refreshToken = "synthetic-kimi-cli-refresh-invalid-016";
+    const credential = writeCredential(home, {
+      access_token: "synthetic-kimi-cli-expired-017",
+      refresh_token: refreshToken,
+      expires_at: NOW / 1_000 - 1,
+    });
+    const before = readFileSync(credential);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+        }),
+    );
+    const source = createKimiCodeCliCredentialSource({
+      environment: { KIMI_CODE_HOME: home },
+      now: () => NOW,
+    });
+
+    const resolution = await source.resolve({
+      refresh: true,
+      fetch: fetchMock,
+    });
+
+    expect(resolution).toEqual({
+      status: "expired",
+      refreshFailed: true,
+      refreshDefinitive: true,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(readFileSync(credential)).toEqual(before);
+    expect(JSON.stringify(resolution)).not.toContain(refreshToken);
+  });
+
+  it("does not refresh or write when refresh is disabled", async () => {
+    const home = temporaryDirectory();
+    const credential = writeCredential(home, {
+      access_token: "synthetic-kimi-cli-expired-018",
+      refresh_token: "synthetic-kimi-cli-refresh-disabled-019",
+      expires_at: NOW / 1_000 - 1,
+    });
+    const before = readFileSync(credential);
+    const fetchMock = vi.fn();
+    const source = createKimiCodeCliCredentialSource({
+      environment: { KIMI_CODE_HOME: home },
+      now: () => NOW,
+    });
+
+    await expect(
+      source.resolve({ refresh: false, fetch: fetchMock }),
+    ).resolves.toEqual({ status: "expired" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readFileSync(credential)).toEqual(before);
+  });
+
   it("performs only a read and leaves credential storage unchanged", async () => {
     const home = temporaryDirectory();
     const credential = writeCredential(home, {
@@ -159,7 +267,7 @@ describe("Kimi Code CLI credential discovery", () => {
     expect(readdirSync(home).sort()).toEqual(["credentials", "device_id"]);
   });
 
-  it("has no credential-write, process-launch, refresh, or Pi-auth surface", () => {
+  it("uses the shared refresh helper without a process-launch or Pi-auth surface", () => {
     const implementation = readFileSync(
       new URL(
         "../../src/providers/kimi-code-cli-credential.ts",
@@ -169,8 +277,9 @@ describe("Kimi Code CLI credential discovery", () => {
     );
 
     expect(implementation).not.toMatch(
-      /node:child_process|\b(?:spawn|execFile|writeFile|mkdir|rename|unlink)\b|refresh_token|device_id|\.pi\/agent\/auth\.json/,
+      /node:child_process|\b(?:spawn|execFile)\b|device_id|\.pi\/agent\/auth\.json/,
     );
+    expect(implementation).toContain("refreshOAuthJsonFile");
   });
 
   it("bounds malformed credential files without returning their contents", async () => {

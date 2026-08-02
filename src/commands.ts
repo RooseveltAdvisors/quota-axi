@@ -25,6 +25,7 @@ export async function quotaCommand(
   const flags = parseFlags(args);
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
+    refreshCredentials: !flags.noRefresh,
   };
 
   const response = await fetchQuota(flags.providers, options);
@@ -48,6 +49,7 @@ export async function authCommand(
   const flags = parseFlags(args);
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
+    refreshCredentials: !flags.noRefresh,
   };
 
   const reports = await inspectAuth(flags.providers, options);

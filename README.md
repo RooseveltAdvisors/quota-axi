@@ -16,7 +16,7 @@ Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
 quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows in one [AXI](https://axi.md)-shaped call.
-It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or mutates provider state.
+It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or changes provider-side state. By default, it may renew short-lived OAuth access tokens in local auth files when those refresh tokens are already present; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` when the credential files must remain read-only.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
 - **Local first** - quota and auth reports run on the machine that holds the credentials; their network calls go to first-party provider endpoints, never a third-party relay.
@@ -30,6 +30,8 @@ quota-axi pins that lookup to the same current-user Keychain item Claude Code se
 Run `quota-axi --allow-keychain-prompt` once and approve Keychain access with "Always Allow".
 After a successful Keychain read, future non-interactive quota reads use that profile-and-account-scoped grant and refresh live Claude data without requiring the flag.
 Legacy markers created before account-pinned lookup are not reused, so an upgrade may require this one-time grant again.
+
+Grok and Kimi OAuth access tokens are renewed on read when they are near expiry. Renewal is locked and atomically persisted to the local auth file; refresh tokens never appear in quota output. `--no-refresh` (or `QUOTA_AXI_NO_REFRESH=1`) disables those writes and sends no refresh request. A separate timer can remain as an optional backup for multi-process races, but is not required for normal freshness.
 
 ```sh
 $ npx -y quota-axi
@@ -307,6 +309,7 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 | `--json`                                           | Emit normalized JSON instead of TOON for quota or auth |
 | `--full`                                           | Include quota account identity and source attempts     |
 | `--allow-keychain-prompt`                          | Permit macOS Claude Keychain access that could prompt  |
+| `--no-refresh`                                     | Disable local OAuth renewal and credential-file writes |
 | `-h`, `--help`                                     | Print terse [AXI](https://axi.md) help                 |
 | `-v`, `-V`, `--version`                            | Print version                                          |
 
@@ -341,8 +344,8 @@ Claude `identityStatus` is `verified` only when Anthropic returns an authoritati
 | `untrustedWindowIds` | Optional identifiers for limits that could not be parsed authoritatively |
 
 When stale or unavailable quota is likely fixable by a one-time macOS Keychain grant, `state.reason` is `keychain_access_required`, `state.remedyCommand` is `quota-axi --allow-keychain-prompt`, and JSON includes an agent-directed `help` entry.
-When Grok's local OIDC session still has a refreshable record but the access token's `expires_at` is past, `state.error` is `Grok access token expired`, `state.reason` is `credentials_expired`, `state.remedyCommand` is `grok`, and JSON includes an agent-directed `help` entry telling the user to open the Grok CLI once so Grok can refresh its local session token. Default JSON exposes that `reason` and `remedyCommand` without requiring `--full`; full output still includes `attempts[].error: credentials_expired`.
-The remedy follows whichever credential lapsed. When the expired refreshable grant came from the `pi:xai` source instead, `state.error` is `Grok access token expired in Pi` and `state.remedyCommand` is `pi`, and the `help` entry tells the user to run Pi once so Pi refreshes its own grant on next use; running the Grok CLI would not recover a Pi-sourced grant. quota-axi never refreshes either credential itself.
+When Grok's local OIDC session is near expiry, quota-axi renews it on read using the local refresh grant and atomically updates the auth file. If `--no-refresh` is set, the expired-token report retains `state.error: Grok access token expired`, `state.reason: credentials_expired`, and `state.remedyCommand: grok`; rerun without `--no-refresh` or use the provider CLI. A rejected renewal reports `auth_required` with a non-secret error, does not send the dead access token, and does not use stale cache as a substitute.
+The same behavior applies to Pi's `pi:xai` source, using `state.error: Grok access token expired in Pi` when renewal is disabled. Default JSON exposes `reason` and `remedyCommand` without requiring `--full`; full output still includes source-attempt details.
 Default TOON output includes the same conditions in an `advice` block with `provider`, `reason`, and `remedyCommand`, plus the agent-directed help line.
 
 Claude credential failures without a usable access token preserve the precise `credentials_missing` or `credentials_invalid` error. A usage response with HTTP 401/403 reports `Claude sign-in required`. These definitive failures return no windows and retire the Claude cache instead of masking current authentication state with stale quota.
@@ -449,14 +452,14 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 ### Provider credential sources
 
-| Provider       | Credential sources read                                                                                                                                                                                                                                                                                                              |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls |
-| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                    |
-| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                               |
-| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                             |
-| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; only when none of those is configured and the default `~/.grok/auth.json` is absent, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth grant                                           |
-| Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a `kimi-coding` API key or unexpired OAuth access token first, then a fresh official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`)                                |
+| Provider       | Credential sources read                                                                                                                                                                                                                                                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls      |
+| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                         |
+| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                                    |
+| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                                  |
+| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; only when none of those is configured and the default session is missing or expired, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth grant                                                |
+| Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a `kimi-coding` API key or OAuth access token first, then an official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`); near-expiry OAuth grants renew on read by default |
 
 ### Provider notes
 
@@ -474,6 +477,7 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 **Codex**
 
 - Codex `auth.json` support is OAuth-token only; API key values such as `OPENAI_API_KEY` are treated as invalid for quota usage calls and are not sent to ChatGPT usage endpoints.
+- A valid access token remains usable when only the JWT `id_token` metadata is expired. Codex access-token renewal is not enabled because its refresh endpoint is not a stable supported path here; an expired access grant falls through to the read-only CLI-RPC probe.
 - It may run `codex -s read-only -a untrusted app-server` for Codex JSON-RPC fallback.
 - Set `QUOTA_AXI_CODEX_BINARY` to an absolute executable path when the fallback must use a specific Codex installation. Auth inspection and the app-server probe resolve the same path, and an invalid override fails closed instead of consulting `PATH`.
 
@@ -489,20 +493,19 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 **Grok**
 
-- It selects session-scoped auth instead of API-key entries and sends a read-only gRPC-web request to Grok's consumer `grok_api_v2.GrokBuildBilling.GetGrokCreditsConfig` operation.
 - Session-scoped Grok auth includes web/session scopes and OIDC records scoped to `auth.x.ai` with `auth_mode` or `authMode` set to `oidc`, including scope keys with `::<client id>` suffixes.
-- The Grok CLI owns OIDC access-token refresh and rewrites `~/.grok/auth.json`; quota-axi only reads the resulting session and never refreshes tokens itself. Expired-session classification and recovery fields are documented under [Provider `state`](#provider-state).
-- When no Grok auth location is configured at all (`$GROK_AUTH_JSON`, `$GROK_AUTH`, `$GROK_AUTH_PATH`, and `$GROK_HOME` all unset) and the default `~/.grok/auth.json` is absent, it reads Pi's `auth.json` `xai` entry as the `pi:xai` source, accepting only `type: "oauth"` with a nonempty, control-byte-free literal `access` token that is more than 30 seconds from its `expires` instant. An explicitly configured Grok auth location is never silently replaced by Pi's credential; a lapsed Pi grant is reported as expired-but-refreshable and is never sent. The same 64 KiB cap, unsafe-shape rejection, and read-only guarantees as the Kimi Pi source apply, and the Pi `refresh` token is never used or surfaced.
-- It does not send browser cookies, launch the Grok CLI, refresh credentials, perform OAuth, retain raw response bodies, or derive usage from monetary fields.
+- It selects session-scoped auth instead of API-key entries and sends a read-only gRPC-web request to Grok's consumer `grok_api_v2.GrokBuildBilling.GetGrokCreditsConfig` operation. Near-expiry OIDC grants are renewed with `https://auth.x.ai/oauth2/token` and atomically written back under a file lock; the real session scope is `https://auth.x.ai::<client_id>`.
+- When no Grok auth location is configured at all (`$GROK_AUTH_JSON`, `$GROK_AUTH`, `$GROK_AUTH_PATH`, and `$GROK_HOME` all unset), a default expired `~/.grok/auth.json` can fall through to Pi's `auth.json` `xai` source. Both sources accept only safe literal OAuth values, never send a dead access token, and never surface refresh tokens.
+- It does not send browser cookies, launch the Grok CLI, retain raw response bodies, or derive usage from monetary fields. `--no-refresh` disables its OAuth renewal path.
 
 **Kimi**
 
-- It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) read-only with a strict 64 KiB cap and guaranteed descriptor cleanup. It accepts only the exact `kimi-coding` entry, either with `type: "api_key"` and a nonempty, control-byte-free literal string `key`, or with `type: "oauth"` and an equally constrained literal `access` token; any other `type` remains `unsupported_credential_type`. Malformed or oversized files, unsafe shapes, and environment, template, or command references are unavailable without resolving or executing their values. Auth and quota inspection do not create, rewrite, or otherwise manage Pi provider state.
-- An OAuth `access` token whose `expires` instant is within 30 seconds is reported as `pi_credential_expired` and is never sent, so a token cannot lapse between the check and the request. That result is not a definitive credential rejection — Pi refreshes the grant on its own next use — so it neither retires nor serves Kimi cache, and `auth` reports the `pi:kimi-coding` source as `expired`. The Pi `refresh` token is never read for refresh, sent, or surfaced.
-- If Pi has no supported credential, it reads the official Kimi Code CLI credential at `$KIMI_CODE_HOME/credentials/kimi-code.json`, defaulting to `$HOME/.kimi-code/credentials/kimi-code.json`. It accepts only a non-empty `access_token` whose Unix-seconds `expires_at` (a JSON number or numeric string) is more than 60 seconds in the future.
+- It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) with a strict 64 KiB cap and guaranteed descriptor cleanup. It accepts only the exact `kimi-coding` entry, either with `type: "api_key"` and a nonempty, control-byte-free literal string `key`, or with `type: "oauth"` and an equally constrained literal `access` token; any other `type` remains `unsupported_credential_type`.
+- An OAuth `access` token whose `expires` instant is within 30 seconds is renewed through `https://auth.kimi.com/api/oauth/token` when a refresh grant is present, using the shared lock-and-atomic-write path. Invalid or revoked grants fail closed as `auth_required`; the dead token is never sent and stale Kimi cache is not substituted. `--no-refresh` reports the expired source without reading the refresh token.
+- If Pi has no supported credential, it reads the official Kimi Code CLI credential at `$KIMI_CODE_HOME/credentials/kimi-code.json`, defaulting to `$HOME/.kimi-code/credentials/kimi-code.json`. Its OAuth access token is renewed within its 60-second freshness window by the same token endpoint and atomic persistence path, unless refresh is disabled.
 - The Pi source always has priority. Ambient API-key environment variables are not a credential source. Transport, decoding, timeout, cancellation, and server failures do not trigger credential switching.
 - It sends one redirect-disabled `GET` to the fixed `https://api.kimi.com/coding/v1/usages` endpoint with a 15 second total deadline and a 262,144-byte decoded-body cap.
-- It never uses `refresh_token`, accepts a custom Kimi origin, launches Pi or Kimi, makes a model request, refreshes or writes credentials, creates a device ID, imports cookies, sends device identity, retains raw responses, or exposes account, plan, token, or fingerprint data.
+- It never accepts a custom Kimi origin, launches Pi or Kimi, makes a model request, creates a device ID, imports cookies, sends device identity, retains raw responses, or exposes account, plan, token, or fingerprint data. Refresh tokens are sent only to the fixed first-party token endpoint and are never returned in reports.
 - Definitive credential absence or rejection retires Kimi cache data. Transient fallback drops reset-expired windows and applies five-hour or seven-day age bounds to windows without resets.
 
 ### Safety guarantees
@@ -511,7 +514,7 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 - The user-initiated `update` command is the only non-provider network surface, and it is not part of quota measurement.
 - It sends credential values only to the first-party provider request they authenticate.
 - It never prints, logs, or caches credential values.
-- It never launches the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend quota or mutate provider credentials while measuring them.
+- It never launches the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend quota while measuring it. Default OAuth renewal only rewrites the local credential file; `--no-refresh` keeps the entire quota read path credential-file read-only.
 
 ### Cache
 

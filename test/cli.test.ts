@@ -68,8 +68,13 @@ describe("CLI flag parsing", () => {
         json: true,
         full: true,
         allowKeychainPrompt: true,
+        noRefresh: false,
       },
     );
+  });
+
+  it("disables OAuth renewal when requested", () => {
+    expect(parseFlags(["--no-refresh"]).noRefresh).toBe(true);
   });
 
   it("rejects unsupported providers", () => {

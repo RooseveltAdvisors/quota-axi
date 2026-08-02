@@ -179,6 +179,40 @@ describe("Codex credential-state reporting", () => {
     });
   });
 
+  it("uses a valid access token when only id_token metadata is expired", async () => {
+    writeAuth({
+      tokens: {
+        access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3_600 }),
+        id_token: jwt({ exp: 1 }),
+      },
+    });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            rate_limit: {
+              primary_window: { used_percent: 20 },
+              secondary_window: { used_percent: 40 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota, inspectAuth } =
+      await import("../../src/providers/codex.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(auth.sources[0]).toMatchObject({
+      source: "auth-json",
+      status: "available",
+    });
+    expect(result.source).toBe("oauth");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("surfaces malformed auth JSON as invalid", async () => {
     writeAuth("{not-json");
 
