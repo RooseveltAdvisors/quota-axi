@@ -84,6 +84,19 @@ describe("Pi Alibaba Coding Plan credentials", () => {
     expect(readFileSync(file, "utf8")).toContain("near-expiry-alibaba");
   });
 
+  it.each([Number.MAX_VALUE, -Number.MAX_VALUE])(
+    "rejects out-of-range expiry %s",
+    async (expires) => {
+      writeAuth({
+        type: "oauth",
+        access: "out-of-range-alibaba-access-token",
+        expires,
+      });
+
+      await expect(broker().resolve()).resolves.toEqual({ status: "invalid" });
+    },
+  );
+
   it.each([
     [{ type: "api_key", key: "wrong-kind" }, "unsupported"],
     [{ type: "oauth", access: "missing-expiry" }, "invalid"],

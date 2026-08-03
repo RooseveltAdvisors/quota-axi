@@ -10,6 +10,7 @@ import {
 } from "./pi-auth.js";
 
 const PI_PROVIDER_ID = "alibaba-plan";
+const MAX_EPOCH_MILLISECONDS = 8_640_000_000_000_000;
 
 export type AlibabaCredentialResolution =
   | { status: "available"; accessToken: string; expiresAtMs: number }
@@ -100,7 +101,12 @@ async function resolveCredential(
   }
 
   const grant = piOAuthGrant(entry);
-  if (!grant || grant.expiresAtMs === undefined) return { status: "invalid" };
+  if (
+    !grant ||
+    grant.expiresAtMs === undefined ||
+    Math.abs(grant.expiresAtMs) > MAX_EPOCH_MILLISECONDS
+  )
+    return { status: "invalid" };
   if (piGrantExpired(grant, dependencies.now(), PI_EXPIRY_SKEW_MS)) {
     // pi-alibaba-models stores endpoint configuration JSON in `refresh`; it is
     // not an OAuth refresh grant and no Alibaba refresh exchange is documented.
