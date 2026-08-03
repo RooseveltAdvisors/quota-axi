@@ -345,6 +345,10 @@ describe("Alibaba Coding Plan quota", () => {
               status: "ACTIVE",
             },
           ],
+          codingPlanQuotaInfo: {
+            per5HourUsedQuota: 25,
+            per5HourTotalQuota: 100,
+          },
         },
       },
       NOW,
@@ -353,6 +357,35 @@ describe("Alibaba Coding Plan quota", () => {
     expect(normalized).toMatchObject({
       plan: "Active Plan",
       windows: [],
+    });
+  });
+
+  it("uses account-level quota when all selected instances are inactive", () => {
+    const normalized = normalizeAlibabaPayload(
+      {
+        data: {
+          codingPlanInstanceInfos: [
+            {
+              instanceId: "expired-instance",
+              status: "EXPIRED",
+              codingPlanQuotaInfo: {
+                per5HourUsedQuota: 90,
+                per5HourTotalQuota: 100,
+              },
+            },
+            { instanceId: "inactive-instance", status: "INACTIVE" },
+          ],
+          codingPlanQuotaInfo: {
+            per5HourUsedQuota: 25,
+            per5HourTotalQuota: 100,
+          },
+        },
+      },
+      NOW,
+    );
+
+    expect(normalized).toMatchObject({
+      windows: [{ id: "five_hour", used: 25, limit: 100 }],
     });
   });
 
@@ -563,6 +596,53 @@ describe("Alibaba Coding Plan quota", () => {
     expect(fetch).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
     expect(releaseLock).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a declared oversized response without awaiting cancellation", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const oversizedResponse = {
+      status: 200,
+      headers: new Headers({ "content-length": "17" }),
+      body: { cancel },
+    } as unknown as Response;
+    const report = await Promise.race([
+      createAlibabaAdapter({
+        broker: brokerFor(availableCredential()),
+        fetch: vi.fn(async () => oversizedResponse),
+        environment: {},
+        responseLimitBytes: 16,
+        now: () => NOW,
+      }).fetchQuota(OPTIONS),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("oversized cancellation awaited")),
+          100,
+        ),
+      ),
+    ]);
+
+    expect(report.state.error).toBe("alibaba_response_too_large");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a candidate error when Pi expiry is only credential metadata", async () => {
+    const report = await createAlibabaAdapter({
+      broker: brokerFor({ status: "expired", expiresAtMs: NOW - 1 }),
+      fetch: vi.fn(async () => response({}, 401)),
+      environment: { ALIBABA_CODING_PLAN_API_KEY: "synthetic-api-key" },
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      state: {
+        status: "auth_required",
+        error: "alibaba_api_key_rejected",
+        reason: "alibaba_api_key_rejected",
+      },
+      credential: { status: "expired", remainingSeconds: 0 },
+    });
+    expect(report.state.reason).not.toBe("credentials_expired");
+    expect(report.state.remedyCommand).toContain("ALIBABA_CODING_PLAN_API_KEY");
   });
 
   it.each([

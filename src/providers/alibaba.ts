@@ -569,12 +569,15 @@ export function normalizeAlibabaPayload(
     .filter((value): value is Record<string, unknown> => Boolean(value));
   const instanceRecords = instances ?? [];
   const instance = chooseActiveInstance(instanceRecords, now);
-  const quota =
-    instanceRecords.length > 1
-      ? instance
-        ? findQuotaInfo(instance)
-        : undefined
-      : ((instance && findQuotaInfo(instance)) ?? findQuotaInfo(root));
+  let quota: Record<string, unknown> | undefined;
+  if (instance && isActiveInstance(instance, now)) {
+    quota = findQuotaInfo(instance);
+    if (!quota && instanceRecords.length <= 1) {
+      quota = findQuotaInfo(root);
+    }
+  } else {
+    quota = findQuotaInfo(root);
+  }
   const windows = quota ? normalizeWindows(quota) : [];
   const plan = findPlanName(instance) ?? findPlanName(root);
   const active = isActiveInstance(instance, now) || activeSignal(root, now);
@@ -666,6 +669,7 @@ async function requestResponse(
     Number.isFinite(declaredLength) &&
     declaredLength > dependencies.responseLimitBytes
   ) {
+    cancelResponseBody(response);
     throw new AlibabaUsageError("alibaba_response_too_large");
   }
   let body: Uint8Array;
@@ -692,18 +696,26 @@ async function requestResponse(
   return { status: response.status, headers: response.headers, body };
 }
 
+function cancelResponseBody(response: Response): void {
+  if (!response.body) return;
+  try {
+    void response.body.cancel().catch(() => undefined);
+  } catch {
+    return;
+  }
+}
+
 async function readBoundedBody(
   response: Response,
   limit: number,
   signal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
   if (!response.body) {
-    const body = new Uint8Array(
-      await withAbortSignal(
-        Promise.resolve().then(() => response.arrayBuffer()),
-        signal,
-      ),
+    const arrayBuffer = await withAbortSignal(
+      Promise.resolve().then(() => response.arrayBuffer()),
+      signal,
     );
+    const body = new Uint8Array(arrayBuffer);
     if (body.byteLength > limit)
       throw new AlibabaUsageError("alibaba_response_too_large");
     return body;
@@ -888,7 +900,8 @@ function failedReport(
             remedyCommand: "set ALIBABA_CODING_PLAN_COOKIE",
           }
         : {}),
-      ...(resolution.status === "expired"
+      ...(resolution.status === "expired" &&
+      error === credentialError(resolution)
         ? { reason: "credentials_expired" }
         : {}),
       sourcesTried: attempts.map(({ source }) => source),
