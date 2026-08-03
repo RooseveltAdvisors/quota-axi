@@ -49,10 +49,7 @@ const QUOTA_FIELD_ALIASES = {
   fiveHour: {
     used: ["per5HourUsedQuota", "perFiveHourUsedQuota"],
     limit: ["per5HourTotalQuota", "perFiveHourTotalQuota"],
-    reset: [
-      "per5HourQuotaNextRefreshTime",
-      "perFiveHourQuotaNextRefreshTime",
-    ],
+    reset: ["per5HourQuotaNextRefreshTime", "perFiveHourQuotaNextRefreshTime"],
   },
   weekly: {
     used: ["perWeekUsedQuota"],
@@ -62,10 +59,7 @@ const QUOTA_FIELD_ALIASES = {
   monthly: {
     used: ["perBillMonthUsedQuota", "perMonthUsedQuota"],
     limit: ["perBillMonthTotalQuota", "perMonthTotalQuota"],
-    reset: [
-      "perBillMonthQuotaNextRefreshTime",
-      "perMonthQuotaNextRefreshTime",
-    ],
+    reset: ["perBillMonthQuotaNextRefreshTime", "perMonthQuotaNextRefreshTime"],
   },
 } as const;
 const QUOTA_DISCOVERY_FIELDS = Object.values(QUOTA_FIELD_ALIASES).flatMap(

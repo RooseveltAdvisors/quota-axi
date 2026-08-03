@@ -444,8 +444,7 @@ describe("Alibaba Coding Plan quota", () => {
               status: "ACTIVE",
               perFiveHourUsedQuota: 25,
               perFiveHourTotalQuota: 100,
-              perFiveHourQuotaNextRefreshTime:
-                "2030-01-01T05:00:00.000Z",
+              perFiveHourQuotaNextRefreshTime: "2030-01-01T05:00:00.000Z",
               perWeekUsedQuota: 200,
               perWeekTotalQuota: 1_000,
               perMonthUsedQuota: 300,
