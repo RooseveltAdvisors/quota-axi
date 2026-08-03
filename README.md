@@ -15,7 +15,7 @@ Quota CLI for agents - designed with [AXI](https://axi.md) (Agent eXperience Int
 Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
-quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows in one [AXI](https://axi.md)-shaped call.
+quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows plus Alibaba Coding Plan entitlement state in one [AXI](https://axi.md)-shaped call. See the Alibaba notes in [Security Posture](#security-posture) for its console-only usage boundary.
 It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or changes provider-side state. By default, it may renew short-lived OAuth access tokens in local auth files when those refresh tokens are already present; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` when the credential files must remain read-only.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
@@ -38,13 +38,14 @@ $ npx -y quota-axi
 bin: ~/.npm/_npx/.../quota-axi
 description: Report local agent-provider quota windows for routing-aware agents
 generatedAt: "2026-03-15T16:42:00.000Z"
-providers[6]{provider,plan,source,status,refreshedAt}:
+providers[7]{provider,plan,source,status,refreshedAt}:
   claude,pro,oauth,fresh,"2026-03-15T16:41:55.000Z"
   codex,plus,cli-rpc,fresh,"2026-03-15T16:41:58.000Z"
   cursor,pro,api,fresh,"2026-03-15T16:41:59.000Z"
   copilot,individual,api,fresh,"2026-03-15T16:42:00.000Z"
   grok,unknown,web,fresh,"2026-03-15T16:42:00.000Z"
   kimi,unknown,api,fresh,"2026-03-15T16:42:00.000Z"
+  alibaba,"Alibaba Coding Plan",oauth,fresh,"2026-03-15T16:42:00.000Z"
 windows[15]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:
   claude,five_hour,session,82,"2026-03-15T20:10:48.000Z",behind,12.4,fresh
   claude,seven_day,week,64,"2026-03-20T17:59:45.600Z",ahead,-8.2,fresh
@@ -61,7 +62,7 @@ windows[15]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:
   grok,credits,credits,67,"2026-04-01T00:00:00.000Z",behind,3.6,fresh
   kimi,weekly,week,74,"2026-03-20T12:17:02.400Z",behind,5.2,fresh
   kimi,five_hour,session,88,"2026-03-15T20:45:00.000Z",behind,7.0,fresh
-effective[9]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,unresolvedWindowIds,relationshipStatus}:
+effective[10]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,unresolvedWindowIds,relationshipStatus}:
   claude,all_models,64,"five_hour + seven_day",seven_day,mixed,seven_day,none,-8.2,none,known
   claude,"model:fable",64,"five_hour + seven_day + model:fable",seven_day,mixed,seven_day,none,-8.2,none,known
   claude,seven_day_opus,64,"five_hour + seven_day + seven_day_opus",seven_day,mixed,seven_day,none,-8.2,none,known
@@ -71,6 +72,7 @@ effective[9]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowId
   copilot,unresolved,unknown,none,unknown,unknown,none,none,unknown,"chat + premium_interactions",unknown
   grok,all_products,67,credits,credits,behind,none,none,3.6,none,known
   kimi,all_models,74,"weekly + five_hour",weekly,behind,none,none,5.2,none,known
+  alibaba,unresolved,unknown,none,unknown,unknown,none,none,unknown,none,unknown
 help[3]:
   Run `quota-axi --provider claude --json` for JSON output
   Run `quota-axi --full` to include account and source-attempt details
@@ -204,7 +206,7 @@ $ quota-axi --provider claude --json
 $ quota-axi auth
 bin: ~/.npm/_npx/.../quota-axi
 description: Inspect local quota auth sources without printing secret values
-auth[9]{provider,source,path,status,error}:
+auth[10]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
@@ -214,6 +216,7 @@ auth[9]{provider,source,path,status,error}:
   grok,auth-json,~/.grok/auth.json,available,none
   kimi,pi:kimi-coding,none,available,none
   kimi,kimi-code-cli,none,available,none
+  alibaba,pi:alibaba-plan,~/.pi/agent/auth.json,available,none
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access
 ```
@@ -294,24 +297,24 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ## CLI Reference
 
-| Command          | Description                                       |
-| ---------------- | ------------------------------------------------- |
-| `quota-axi`      | Report supported local quota windows              |
-| `auth`           | Report local auth-source availability, no values  |
-| `update`         | Upgrade quota-axi to the latest published version |
-| `update --check` | Report current vs. latest without installing      |
+| Command          | Description                                                |
+| ---------------- | ---------------------------------------------------------- |
+| `quota-axi`      | Report supported local quota windows and entitlement state |
+| `auth`           | Report local auth-source availability, no values           |
+| `update`         | Upgrade quota-axi to the latest published version          |
+| `update --check` | Report current vs. latest without installing               |
 
 ### Flags
 
-| Flag                                               | Description                                            |
-| -------------------------------------------------- | ------------------------------------------------------ |
-| `--provider claude,codex,cursor,copilot,grok,kimi` | Scope providers                                        |
-| `--json`                                           | Emit normalized JSON instead of TOON for quota or auth |
-| `--full`                                           | Include quota account identity and source attempts     |
-| `--allow-keychain-prompt`                          | Permit macOS Claude Keychain access that could prompt  |
-| `--no-refresh`                                     | Disable local OAuth renewal and credential-file writes |
-| `-h`, `--help`                                     | Print terse [AXI](https://axi.md) help                 |
-| `-v`, `-V`, `--version`                            | Print version                                          |
+| Flag                                                       | Description                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
+| `--provider claude,codex,cursor,copilot,grok,kimi,alibaba` | Scope providers                                        |
+| `--json`                                                   | Emit normalized JSON instead of TOON for quota or auth |
+| `--full`                                                   | Include quota account identity and source attempts     |
+| `--allow-keychain-prompt`                                  | Permit macOS Claude Keychain access that could prompt  |
+| `--no-refresh`                                             | Disable local OAuth renewal and credential-file writes |
+| `-h`, `--help`                                             | Print terse [AXI](https://axi.md) help                 |
+| `-v`, `-V`, `--version`                                    | Print version                                          |
 
 ## Output Model
 
