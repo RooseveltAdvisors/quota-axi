@@ -389,6 +389,29 @@ describe("Alibaba Coding Plan quota", () => {
     });
   });
 
+  it("does not reuse inactive instance quota without account-level quota", () => {
+    expect(() =>
+      normalizeAlibabaPayload(
+        {
+          data: {
+            codingPlanInstanceInfos: [
+              {
+                instanceId: "expired-instance",
+                status: "EXPIRED",
+                codingPlanQuotaInfo: {
+                  per5HourUsedQuota: 90,
+                  per5HourTotalQuota: 100,
+                },
+              },
+              { instanceId: "inactive-instance", status: "INACTIVE" },
+            ],
+          },
+        },
+        NOW,
+      ),
+    ).toThrow("alibaba_quota_missing");
+  });
+
   it("uses account-level quota for a single active plan instance", () => {
     const normalized = normalizeAlibabaPayload(
       {

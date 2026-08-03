@@ -71,6 +71,14 @@ const QUOTA_FIELD_ALIASES = {
 const QUOTA_DISCOVERY_FIELDS = Object.values(QUOTA_FIELD_ALIASES).flatMap(
   ({ used, limit }) => [...used, ...limit],
 );
+const INSTANCE_INFO_KEYS = [
+  "codingPlanInstanceInfos",
+  "coding_plan_instance_infos",
+] as const;
+const QUOTA_INFO_KEYS = [
+  "codingPlanQuotaInfo",
+  "coding_plan_quota_info",
+] as const;
 const COOKIE_LIMIT_CHARS = 128 * 1024;
 const DASHBOARD_URL =
   "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan#/efm/coding_plan";
@@ -587,10 +595,7 @@ export function normalizeAlibabaPayload(
   if (!root) throw new AlibabaUsageError("alibaba_response_invalid");
   validateServerStatus(root, authMode, retryInChina);
 
-  const instances = findFirstArray(root, [
-    "codingPlanInstanceInfos",
-    "coding_plan_instance_infos",
-  ])
+  const instances = findFirstArray(root, INSTANCE_INFO_KEYS)
     ?.map(objectValue)
     .filter((value): value is Record<string, unknown> => Boolean(value));
   const instanceRecords = instances ?? [];
@@ -599,10 +604,10 @@ export function normalizeAlibabaPayload(
   if (instance && isActiveInstance(instance, now)) {
     quota = findQuotaInfo(instance);
     if (!quota && instanceRecords.length <= 1) {
-      quota = findQuotaInfo(root);
+      quota = findQuotaInfo(root, INSTANCE_INFO_KEYS);
     }
   } else {
-    quota = findQuotaInfo(root);
+    quota = findQuotaInfo(root, INSTANCE_INFO_KEYS);
   }
   const windows = quota ? normalizeWindows(quota) : [];
   const plan = findPlanName(instance) ?? findPlanName(root);
@@ -1068,13 +1073,11 @@ function activeSignal(value: Record<string, unknown>, now: number): boolean {
 
 function findQuotaInfo(
   value: Record<string, unknown>,
+  excludedKeys: readonly string[] = [],
 ): Record<string, unknown> | undefined {
-  const direct = findFirstObject(value, [
-    "codingPlanQuotaInfo",
-    "coding_plan_quota_info",
-  ]);
+  const direct = findFirstObject(value, QUOTA_INFO_KEYS, excludedKeys);
   if (direct) return direct;
-  return findFirstObjectByFields(value, QUOTA_DISCOVERY_FIELDS);
+  return findFirstObjectByFields(value, QUOTA_DISCOVERY_FIELDS, excludedKeys);
 }
 
 function findPlanName(
@@ -1303,7 +1306,8 @@ function expandEmbeddedJson(value: unknown, depth = 0): unknown {
 
 function findFirstObject(
   value: unknown,
-  keys: string[],
+  keys: readonly string[],
+  excludedKeys: readonly string[] = [],
 ): Record<string, unknown> | undefined {
   const object = objectValue(value);
   if (object) {
@@ -1311,13 +1315,14 @@ function findFirstObject(
       const nested = objectValue(object[key]);
       if (nested) return nested;
     }
-    for (const nested of Object.values(object)) {
-      const found = findFirstObject(nested, keys);
+    for (const [key, nested] of Object.entries(object)) {
+      if (excludedKeys.includes(key)) continue;
+      const found = findFirstObject(nested, keys, excludedKeys);
       if (found) return found;
     }
   } else if (Array.isArray(value)) {
     for (const nested of value) {
-      const found = findFirstObject(nested, keys);
+      const found = findFirstObject(nested, keys, excludedKeys);
       if (found) return found;
     }
   }
@@ -1326,25 +1331,30 @@ function findFirstObject(
 
 function findFirstObjectByFields(
   value: unknown,
-  keys: string[],
+  keys: readonly string[],
+  excludedKeys: readonly string[] = [],
 ): Record<string, unknown> | undefined {
   const object = objectValue(value);
   if (object) {
     if (keys.some((key) => object[key] !== undefined)) return object;
-    for (const nested of Object.values(object)) {
-      const found = findFirstObjectByFields(nested, keys);
+    for (const [key, nested] of Object.entries(object)) {
+      if (excludedKeys.includes(key)) continue;
+      const found = findFirstObjectByFields(nested, keys, excludedKeys);
       if (found) return found;
     }
   } else if (Array.isArray(value)) {
     for (const nested of value) {
-      const found = findFirstObjectByFields(nested, keys);
+      const found = findFirstObjectByFields(nested, keys, excludedKeys);
       if (found) return found;
     }
   }
   return undefined;
 }
 
-function findFirstArray(value: unknown, keys: string[]): unknown[] | undefined {
+function findFirstArray(
+  value: unknown,
+  keys: readonly string[],
+): unknown[] | undefined {
   const object = objectValue(value);
   if (object) {
     for (const key of keys) {
