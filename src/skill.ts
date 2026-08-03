@@ -3,8 +3,8 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 // Trigger string Claude Code (and other agents) match against to auto-load the skill.
 // Kept terse and outcome-focused so it fires on "check quota/rate limits" intents.
 export const SKILL_DESCRIPTION =
-  "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows plus Alibaba Coding Plan entitlement data via the quota-axi CLI - remaining " +
-  "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan identity, expiry, models, and credential validity read from local auth sources. Alibaba usage is console-only, so quota-axi reports no numeric Alibaba quota or fabricated token metrics. " +
+  "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan quota windows via the quota-axi CLI - remaining " +
+  "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan/instance/model metadata, request-quota counters, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable and never fabricates token-plan metrics. " +
   "Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
@@ -122,12 +122,29 @@ or when comparing supported local provider headroom side by side.
    \`~/.grok/auth.json\`. That fallback is used only when no Grok auth location is configured;
    setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
    to that location instead.
-13. Alibaba Coding Plan is reported as an entitlement-only provider. Its Pi source is
-   \`pi:alibaba-plan\` in \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`).
-   The report includes plan identity, period, region, expiry, models, and credential validity,
-   but no fabricated numeric quota windows: Alibaba exposes Coding Plan usage only in its
-   console. Alibaba's Pi \`refresh\` value stores endpoint configuration, not a refresh grant;
-   expired credentials therefore fail closed, and \`--no-refresh\` remains a read-only escape hatch.
+13. Alibaba Coding Plan prefers an explicit CodexBar-compatible
+   \`$ALIBABA_CODING_PLAN_COOKIE\` for the configured region's console RPC: international Model
+   Studio by default, or China Bailian when \`$ALIBABA_CODING_PLAN_REGION\` is \`cn-beijing\`
+   (also \`cn\` or \`china\`). It discovers \`sec_token\`
+   from dashboard HTML, user-info JSON, or the cookie, and never imports or persists browser
+   cookies. If no cookie is configured, quota-axi tries the Pi
+   \`pi:alibaba-plan\` entry in \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`)
+   through Alibaba's API-key-compatible path, then the documented
+   \`$ALIBABA_CODING_PLAN_API_KEY\`, \`$ALIBABA_QWEN_API_KEY\`, or \`$DASHSCOPE_API_KEY\` aliases.
+   Set \`$ALIBABA_CODING_PLAN_REGION=cn-beijing\` for the China API and console configuration;
+   international is the default.
+14. Alibaba windows are server-reported request quotas: 5-hour, weekly, and billing-month
+   counters, reset timestamps, raw used/limit values, and optional plan/instance/model labels
+   and multipliers. Read \`accounting: request_quota\` explicitly; quota-axi does not convert
+   credit/token-plan data into request windows, hard-code a 16x multiplier, infer Qwen economics,
+   or estimate usage locally. The coding catalog metadata includes \`qwen3.8-max\`,
+   \`qwen3.8-max-preview\`, \`qwen3.7-plus\`, \`qwen3.7-max\`, \`qwen3.6-flash\`,
+   \`deepseek-v4-pro\`, \`deepseek-v4-flash-0731\`, and \`glm-5.2\`; Wan and HappyHorse media
+   models are not coding routes. \`Qwen 3.8 Max — Limited-time Night 50% Off\` is metadata only.
+   When the source is absent, expired, login-gated, malformed, oversized, or unavailable, the
+   report is an actionable non-fresh error or an explicit active-plan-without-windows state;
+   it never substitutes 0% or 100%. Alibaba's Pi \`refresh\` value stores endpoint configuration,
+   not a refresh grant; expired credentials fail closed, and \`--no-refresh\` remains read-only.
 
 ## Usage
 

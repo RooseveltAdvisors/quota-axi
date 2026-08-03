@@ -15,7 +15,7 @@ Quota CLI for agents - designed with [AXI](https://axi.md) (Agent eXperience Int
 Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
-quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows plus Alibaba Coding Plan entitlement state in one [AXI](https://axi.md)-shaped call. See the Alibaba notes in [Security Posture](#security-posture) for its console-only usage boundary.
+quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan quota windows in one [AXI](https://axi.md)-shaped call. Alibaba uses a first-party console/API path when configured and remains honest entitlement-only when no authoritative usage source is available.
 It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or changes provider-side state. By default, it may renew short-lived OAuth access tokens in local auth files when those refresh tokens are already present; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` when the credential files must remain read-only.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
@@ -45,7 +45,7 @@ providers[7]{provider,plan,source,status,refreshedAt}:
   copilot,individual,api,fresh,"2026-03-15T16:42:00.000Z"
   grok,unknown,web,fresh,"2026-03-15T16:42:00.000Z"
   kimi,unknown,api,fresh,"2026-03-15T16:42:00.000Z"
-  alibaba,"Alibaba Coding Plan",oauth,fresh,"2026-03-15T16:42:00.000Z"
+  alibaba,"Alibaba Coding Plan",api,fresh,"2026-03-15T16:42:00.000Z"
 windows[15]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:
   claude,five_hour,session,82,"2026-03-15T20:10:48.000Z",behind,12.4,fresh
   claude,seven_day,week,64,"2026-03-20T17:59:45.600Z",ahead,-8.2,fresh
@@ -206,7 +206,7 @@ $ quota-axi --provider claude --json
 $ quota-axi auth
 bin: ~/.npm/_npx/.../quota-axi
 description: Inspect local quota auth sources without printing secret values
-auth[10]{provider,source,path,status,error}:
+auth[11]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
@@ -216,6 +216,7 @@ auth[10]{provider,source,path,status,error}:
   grok,auth-json,~/.grok/auth.json,available,none
   kimi,pi:kimi-coding,none,available,none
   kimi,kimi-code-cli,none,available,none
+  alibaba,cookie:alibaba-coding-plan,none,missing,alibaba_cookie_unavailable
   alibaba,pi:alibaba-plan,~/.pi/agent/auth.json,available,none
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access
@@ -322,12 +323,12 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                                                                                                  |
-| Provider report               | `provider`, `label`, `source`, `windows`, `quotaSemantics`, `state`, optional `plan`, entitlement metadata (`period`, `expiresAt`, `region`, `models`, `credential`), and optional `credits` |
-| Provider report with `--full` | Optional `account` identity and per-source `attempts`                                                                                                                                        |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                          |
+| Object                        | Fields                                                                                                                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                                                                                                               |
+| Provider report               | `provider`, `label`, `source`, `windows`, `quotaSemantics`, `state`, optional `plan`, `period`, `expiresAt`, `region`, `models`, `instance`, `multiplier`, `modelMultipliers`, `modelLabels`, `credential`, and `credits` |
+| Provider report with `--full` | Optional `account` identity and per-source `attempts`                                                                                                                                                                     |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                                                       |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
@@ -351,16 +352,22 @@ When Grok's local OIDC session is near expiry, quota-axi renews it on read using
 The same behavior applies to Pi's `pi:xai` source, using `state.error: Grok access token expired in Pi` when renewal is disabled. Default JSON exposes `reason` and `remedyCommand` without requiring `--full`; full output still includes source-attempt details.
 Default TOON output includes the same conditions in an `advice` block with `provider`, `reason`, and an optional `remedyCommand`, plus the agent-directed help line.
 
-Alibaba Coding Plan is intentionally entitlement-only: `state.reason` is `usage is console-only per Alibaba Coding Plan FAQ; no quota API`, `windows` is empty, and no numeric quota is inferred. The `pi:alibaba-plan` source reads the OAuth-shaped `alibaba-plan` entry from Pi's auth file and reports the configured plan period, region, models, access-token expiry, and remaining credential validity. Its `refresh` value is endpoint configuration rather than a refresh grant, so expired credentials fail closed; `--no-refresh` remains a read-only escape hatch.
+Alibaba Coding Plan uses `pi:alibaba-plan` as an API-key-compatible first-party credential when Alibaba accepts it. An explicit `ALIBABA_CODING_PLAN_COOKIE` (a CodexBar-compatible `Cookie` header) takes precedence and uses the configured regional console RPC: international Model Studio by default, or China Bailian when `ALIBABA_CODING_PLAN_REGION=cn-beijing` (also `cn` or `china`). It discovers `sec_token` from the dashboard HTML, user-info response, or cookie; endpoint details are documented in the [Alibaba Coding Plan provider notes](#provider-notes). If the Pi credential is unavailable, quota-axi may use `ALIBABA_CODING_PLAN_API_KEY`, `ALIBABA_QWEN_API_KEY`, or `DASHSCOPE_API_KEY`. International is the default.
+
+Successful Alibaba responses normalize server-reported 5-hour, weekly, and billing-month request-quota windows, reset timestamps, plan/instance identity, model labels, and multiplier fields. Raw counters are retained alongside percentages, and windows are marked `accounting: request_quota`; quota-axi never turns credit/token-plan data into request quotas or invents a multiplier. The published `Qwen 3.8 Max` label, including `Limited-time Night 50% Off`, is plan/model metadata only and does not imply a 16x multiplier or any local usage estimate.
+
+The coding catalog metadata includes `qwen3.8-max` (Limited-time Night 50% Off; text/reasoning/visual), `qwen3.8-max-preview` (Limited-time 10x Boost and Night 20% Off; text/reasoning/visual), `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `deepseek-v4-pro`, `deepseek-v4-flash-0731`, and `glm-5.2`. Wan and HappyHorse media models are intentionally not included as crew coding routes.
+
+When no authoritative source is configured, authentication is missing/expired, the console requires login, or a response is unavailable/malformed, Alibaba reports an actionable non-fresh error or an explicit active-plan-without-windows state. It never substitutes `0%`, `100%`, or a locally estimated number. The `pi:alibaba-plan` `refresh` value remains endpoint configuration rather than a refresh grant, so expired credentials fail closed; `--no-refresh` remains a read-only escape hatch.
 
 Claude credential failures without a usable access token preserve the precise `credentials_missing` or `credentials_invalid` error. A usage response with HTTP 401/403 reports `Claude sign-in required`. These definitive failures return no windows and retire the Claude cache instead of masking current authentication state with stale quota.
 
 ### Quota windows
 
-| Field set | Fields                                                                                          |
-| --------- | ----------------------------------------------------------------------------------------------- |
-| Required  | `id`, `label`, `kind`                                                                           |
-| Optional  | Percentages, `startsAt`, reset fields, `windowSeconds`, credit-spend fields, and derived `pace` |
+| Field set | Fields                                                                                                                                         |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Required  | `id`, `label`, `kind`                                                                                                                          |
+| Optional  | `accounting`, raw `used`/`limit`/`multiplier`, percentages, `startsAt`, reset fields, `windowSeconds`, credit-spend fields, and derived `pace` |
 
 Do not interpret a model window's percentage in isolation. `quotaSemantics.effectiveAvailability` reports the effective percentage for each understood scope, the complete `boundedBy` window set used to compute it, and the currently limiting window IDs. `all_models` applies to any model without a more specific scope; a matching `model:*` scope includes both account and model-specific bounds. Grok uses the analogous `all_products` and `product:*` scopes.
 
@@ -434,7 +441,7 @@ Source attempts can include `credentialPresent` when a non-secret probe confirms
 | Codex                  | Identifies exact 18,000-second and 604,800-second periods as `five_hour` and `weekly`, regardless of source slot; periods without a duration retain their positional identity. Additional model- or feature-scoped limits use `model:<id>:5h` / `model:<id>:7d`, and code-review limits use `code_review_five_hour` / `code_review_weekly`. Unfamiliar durations remain honest `<hours>h` windows instead of being classified as known periods. Duplicate derived IDs are preserved with `_2`, `_3`, and later suffixes. Optional credit balance data can also appear. |
 | Cursor                 | Can report `included_usage`, `auto_usage`, `api_usage`, and optional `spend_limit` windows. Monthly labels alone are not trusted cycle evidence, so pace stays `unknown` unless a future provider duration appears.                                                                                                                                                                                                                                                                                                                                                    |
 | GitHub Copilot         | Can report quota snapshot windows such as `chat`, `completions`, and `premium_interactions`; when the first-party endpoint exposes entitlement but no numeric quota windows, quota-axi reports a fresh provider state with an empty `windows` list rather than inventing percentages. Pace stays `unknown` without trusted cycle boundaries.                                                                                                                                                                                                                           |
-| Alibaba Coding Plan    | Reports `Alibaba Coding Plan` entitlement metadata (annual period, Singapore region, configured model list, auth expiry, and remaining credential validity) through `pi:alibaba-plan`; Alibaba exposes Coding Plan usage only in the console, so `windows` and numeric metrics remain omitted.                                                                                                                                                                                                                                                                         |
+| Alibaba Coding Plan    | Uses the configured regional cookie console path (`web`) first, then `pi:alibaba-plan` or documented API-key aliases (`api`). Reports server-defined `five_hour`, `weekly`, and `monthly` request-quota windows, reset timestamps, raw counters, plan/instance/model metadata, and multipliers when present. Credit/token-plan accounting is not treated as request quota; unavailable sources remain explicit and windowless.                                                                                                                                         |
 | Grok                   | Reports the shared `credits` window, optional product-scoped `product:<slug>` windows, the current-period `startsAt` and reset, and optional prepaid credit balance from the consumer Usage-page operation. Top-level `credits.remaining` is prepaid/on-demand balance, distinct from the shared period `windows` credits percentage used for effective availability. Pace prefers the startsAt/resetsAt pair.                                                                                                                                                         |
 | Grok proto3 zero       | For the exact consumer operation only, an omitted usage float is the official proto3 zero when a valid weekly or monthly current period proves the config is present; quota-axi reports `0` used and `100` remaining rather than deriving usage from money.                                                                                                                                                                                                                                                                                                            |
 | Kimi                   | Reports the principal `weekly` subscription window (with trusted 604,800s duration) plus every valid self-described limit in wire order. Only a limit whose normalized duration is exactly 18,000 seconds is identified as `five_hour`; future limits remain `limit:<index>` unknown windows.                                                                                                                                                                                                                                                                          |
@@ -449,24 +456,24 @@ Source attempts can include `credentialPresent` when a non-secret probe confirms
 
 Auth source entries can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 
-| Name                 | Values                                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth source statuses | `available`, `missing`, `invalid`, `expired`, or `skipped`                                                                                                   |
-| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cli-rpc`, `pi:xai`, `pi:kimi-coding`, `kimi-code-cli`, and `pi:alibaba-plan` |
+| Name                 | Values                                                                                                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth source statuses | `available`, `missing`, `invalid`, `expired`, or `skipped`                                                                                                                                                        |
+| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cli-rpc`, `pi:xai`, `pi:kimi-coding`, `kimi-code-cli`, `cookie:alibaba-coding-plan`, `env:alibaba-api-key`, and `pi:alibaba-plan` |
 
 ## Security Posture
 
 ### Provider credential sources
 
-| Provider       | Credential sources read                                                                                                                                                                                                                                                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls      |
-| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                         |
-| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                                    |
-| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                                  |
-| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; only when none of those is configured and the default session is missing or expired, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth grant                                                |
-| Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a `kimi-coding` API key or OAuth access token first, then an official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`); near-expiry OAuth grants renew on read by default |
-| Alibaba        | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for the exact `alibaba-plan` OAuth entry; access expiry is reported, but Alibaba's endpoint configuration JSON in `refresh` is not treated as a refresh grant                                                                                                     |
+| Provider       | Credential sources read                                                                                                                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls                                            |
+| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                                                               |
+| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                                                                          |
+| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                                                                        |
+| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; only when none of those is configured and the default session is missing or expired, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth grant                                                                                      |
+| Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a `kimi-coding` API key or OAuth access token first, then an official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`); near-expiry OAuth grants renew on read by default                                       |
+| Alibaba        | `$ALIBABA_CODING_PLAN_COOKIE` first when set, then Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for the exact `alibaba-plan` OAuth entry, then `$ALIBABA_CODING_PLAN_API_KEY`, `$ALIBABA_QWEN_API_KEY`, or `$DASHSCOPE_API_KEY`; access expiry is reported, but Alibaba's endpoint configuration JSON in `refresh` is not treated as a refresh grant |
 
 ### Provider notes
 
@@ -517,15 +524,17 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 **Alibaba Coding Plan**
 
-- It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) with the same bounded-file and literal-token validation used by the Pi providers, and accepts only the exact `alibaba-plan` OAuth entry.
+- It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) with the same bounded-file and literal-token validation used by the Pi providers, and accepts only the exact `alibaba-plan` OAuth entry. A live access token is sent only to Alibaba's first-party Coding Plan API when that path accepts it.
+- The console path is opt-in through `$ALIBABA_CODING_PLAN_COOKIE`, a user-local semicolon-separated `Cookie` header compatible with CodexBar's manual cookie source. quota-axi does not import browser cookies, launch a browser, persist the header, persist `sec_token`, or print either value. It performs bounded dashboard/user-info discovery and posts the regional form RPC with `params`, `region`, and `sec_token`: the international Model Studio gateway at `bailian-singapore-cs.alibabacloud.com` using `IntlBroadScopeAspnGateway` by default, or the China Bailian gateway at `bailian-cs.console.aliyun.com` using `BroadScopeAspnGateway` when `ALIBABA_CODING_PLAN_REGION` is `cn-beijing`, `cn`, or `china`.
+- Source precedence is cookie, Pi credential, then the documented API-key aliases. `ALIBABA_CODING_PLAN_REGION=cn-beijing` (also `cn` or `china`) selects the China API and console configuration; international is the default. The API-key path sends only the first-party Alibaba request headers and JSON body documented by CodexBar.
 - The current `pi-alibaba-models` integration stores `{openai, anthropic}` endpoint configuration in the OAuth-shaped `refresh` field; no Alibaba refresh-token exchange is available. Near-expiry and expired access tokens therefore fail closed, without sending the access or refresh values anywhere. `--no-refresh` disables the shared refresh intent and keeps the file read-only.
-- Alibaba Coding Plan usage and remaining quota are console-only according to Alibaba's FAQ. quota-axi reports plan identity, annual period, Singapore region, configured models, expiry, and credential validity, with no fabricated quota windows or cached entitlement snapshot.
+- Alibaba's server counters are request quotas, not a token-plan balance. Raw used/limit values, reset times, plan/instance identity, model labels, and server multipliers are preserved when present; no 16x multiplier, Qwen economics, or local estimator is inferred. `Qwen 3.8 Max — Limited-time Night 50% Off` is a published label/metadata note only.
 
 ### Safety guarantees
 
 - Quota and auth HTTP requests go only to first-party provider usage, quota, billing, or entitlement endpoints with the user's local credentials.
 - The user-initiated `update` command is the only non-provider network surface, and it is not part of quota measurement.
-- It sends credential values only to the first-party provider request they authenticate.
+- It sends credential values only to the first-party provider request they authenticate. Alibaba cookie and `sec_token` values are held in memory for one bounded read and never appear in diagnostics, cache, or source attempts.
 - It never prints, logs, or caches credential values.
 - It never launches the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend quota while measuring it. Default OAuth renewal only rewrites supported local credential files; `--no-refresh` keeps the entire quota read path credential-file read-only.
 
