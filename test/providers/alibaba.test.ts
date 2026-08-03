@@ -356,9 +356,54 @@ describe("Alibaba Coding Plan quota", () => {
     });
   });
 
+  it("uses account-level quota for a single active plan instance", () => {
+    const normalized = normalizeAlibabaPayload(
+      {
+        data: {
+          codingPlanInstanceInfos: [
+            { planName: "Active Plan", status: "ACTIVE" },
+          ],
+          codingPlanQuotaInfo: {
+            per5HourUsedQuota: 25,
+            per5HourTotalQuota: 100,
+          },
+        },
+      },
+      NOW,
+    );
+
+    expect(normalized).toMatchObject({
+      plan: "Active Plan",
+      windows: [{ id: "five_hour", used: 25, limit: 100 }],
+    });
+  });
+
   it("surfaces API-mode console login as a regional API limitation", async () => {
     const fetch = vi.fn(async () =>
       response({ code: "0", statusMessage: "ConsoleNeedLogin" }),
+    );
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {},
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      windows: [],
+      state: {
+        status: "error",
+        error: "alibaba_api_key_unavailable_in_region",
+        reason: "alibaba_api_key_unavailable_in_region",
+        remedyCommand: "set ALIBABA_CODING_PLAN_COOKIE",
+      },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces API key availability as a regional API limitation", async () => {
+    const fetch = vi.fn(async () =>
+      response({ code: "0", message: "API key mode may be unavailable" }),
     );
     const report = await createAlibabaAdapter({
       broker: brokerFor(availableCredential()),
@@ -480,13 +525,25 @@ describe("Alibaba Coding Plan quota", () => {
   });
 
   it("bounds a response body that ignores the operation signal", async () => {
+    let resolveRead:
+      | ((result: { done: true; value: undefined }) => void)
+      | undefined;
+    const releaseLock = vi.fn();
+    const cancel = vi.fn(() => {
+      resolveRead?.({ done: true, value: undefined });
+      return Promise.resolve();
+    });
     const hangingResponse = {
       status: 200,
       headers: new Headers(),
       body: {
         getReader: () => ({
-          read: () => new Promise<never>(() => {}),
-          releaseLock: vi.fn(),
+          read: () =>
+            new Promise<{ done: true; value: undefined }>((resolve) => {
+              resolveRead = resolve;
+            }),
+          cancel,
+          releaseLock,
         }),
       },
     } as unknown as Response;
@@ -504,6 +561,8 @@ describe("Alibaba Coding Plan quota", () => {
       error: "alibaba_quota_timeout",
     });
     expect(fetch).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 
   it.each([

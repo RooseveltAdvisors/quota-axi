@@ -570,11 +570,11 @@ export function normalizeAlibabaPayload(
   const instanceRecords = instances ?? [];
   const instance = chooseActiveInstance(instanceRecords, now);
   const quota =
-    instanceRecords.length > 0
+    instanceRecords.length > 1
       ? instance
         ? findQuotaInfo(instance)
         : undefined
-      : findQuotaInfo(root);
+      : ((instance && findQuotaInfo(instance)) ?? findQuotaInfo(root));
   const windows = quota ? normalizeWindows(quota) : [];
   const plan = findPlanName(instance) ?? findPlanName(root);
   const active = isActiveInstance(instance, now) || activeSignal(root, now);
@@ -711,25 +711,58 @@ async function readBoundedBody(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  let readPending = false;
+  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+  let cleanupStarted = false;
+  let released = false;
+  const releaseReader = () => {
+    if (released) return;
+    try {
+      reader.releaseLock();
+      released = true;
+    } catch {
+      return;
+    }
+  };
+  const cancelReader = () => {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    let cancellation: Promise<unknown>;
+    try {
+      cancellation = reader.cancel();
+    } catch {
+      if (!pendingRead) releaseReader();
+      return;
+    }
+    void cancellation.then(
+      () => {
+        if (!pendingRead) releaseReader();
+      },
+      () => {
+        if (!pendingRead) releaseReader();
+      },
+    );
+    if (!pendingRead) releaseReader();
+  };
   try {
     while (true) {
-      readPending = true;
-      const { done, value } = await withAbortSignal(
-        Promise.resolve().then(() => reader.read()),
-        signal,
-      );
-      readPending = false;
+      pendingRead = Promise.resolve().then(() => reader.read());
+      const { done, value } = await withAbortSignal(pendingRead, signal);
+      pendingRead = undefined;
       if (done) break;
       size += value.byteLength;
       if (size > limit) {
-        await reader.cancel();
+        cancelReader();
         throw new AlibabaUsageError("alibaba_response_too_large");
       }
       chunks.push(value);
     }
   } finally {
-    if (!readPending) reader.releaseLock();
+    if (pendingRead) {
+      cancelReader();
+      void pendingRead.then(releaseReader, releaseReader);
+    } else if (!cleanupStarted) {
+      releaseReader();
+    }
   }
   const body = new Uint8Array(size);
   let offset = 0;
@@ -1178,6 +1211,15 @@ function validateServerStatus(
   ]);
   for (const value of [statusText, messageText]) {
     const normalized = value?.toLowerCase() ?? "";
+    if (
+      authMode === "api-key" &&
+      normalized.includes("api key mode may be unavailable")
+    ) {
+      throw new AlibabaUsageError(
+        "alibaba_api_key_unavailable_in_region",
+        retryInChina,
+      );
+    }
     if (
       normalized.includes("api key") ||
       normalized.includes("apikey") ||
