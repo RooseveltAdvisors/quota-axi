@@ -206,7 +206,7 @@ $ quota-axi --provider claude --json
 $ quota-axi auth
 bin: ~/.npm/_npx/.../quota-axi
 description: Inspect local quota auth sources without printing secret values
-auth[11]{provider,source,path,status,error}:
+auth[13]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
@@ -216,8 +216,10 @@ auth[11]{provider,source,path,status,error}:
   grok,auth-json,~/.grok/auth.json,available,none
   kimi,pi:kimi-coding,none,available,none
   kimi,kimi-code-cli,none,available,none
+  alibaba,cookie:alibaba-token-plan,none,missing,alibaba_token_plan_cookie_unavailable
   alibaba,cookie:alibaba-coding-plan,none,missing,alibaba_cookie_unavailable
   alibaba,pi:alibaba-plan,~/.pi/agent/auth.json,available,none
+  alibaba,env:alibaba-api-key,none,missing,alibaba_api_key_unavailable
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access
 ```
@@ -528,12 +530,12 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 **Alibaba plans**
 
 - It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) with the same bounded-file and literal-token validation used by the Pi providers, and accepts only the exact `alibaba-plan` OAuth entry. A live access token is sent only to Alibaba's first-party Coding Plan API when that path accepts it.
-- Token Plan is opt-in through `$ALIBABA_TOKEN_PLAN_COOKIE`, a user-local semicolon-separated `Cookie` header. It calls the Personal Token Plan usage operation at the Singapore Model Studio gateway and reports source `cookie:alibaba-token-plan`, plan `Alibaba Token Plan (Personal)`, and `accounting: token_plan`. Fractional server percentages are scaled to 0–100; authoritative reset timestamps are retained.
-- The legacy Coding Plan console path remains opt-in through `$ALIBABA_CODING_PLAN_COOKIE`, compatible with CodexBar's manual cookie source, and reports `cookie:alibaba-coding-plan`. quota-axi never uses Coding Plan cookies, Pi grants, or API keys as Token Plan credentials.
+- Token Plan is opt-in through `$ALIBABA_TOKEN_PLAN_COOKIE`, a user-local semicolon-separated `Cookie` header. It calls the Personal Token Plan usage operation through the configured regional console gateway (Singapore by default), identifies the source attempt as `cookie:alibaba-token-plan`, and reports plan `Alibaba Token Plan (Personal)` with `accounting: token_plan`. Fractional server percentages are scaled to 0–100; authoritative reset timestamps are retained.
+- The legacy Coding Plan console path remains opt-in through `$ALIBABA_CODING_PLAN_COOKIE`, compatible with CodexBar's manual cookie source, and identifies the source attempt as `cookie:alibaba-coding-plan`. quota-axi never uses Coding Plan cookies, Pi grants, or API keys as Token Plan credentials.
 - Source precedence is Token Plan cookie, Coding Plan cookie, Pi credential, then the documented API-key aliases. `ALIBABA_CODING_PLAN_REGION=cn-beijing` (also `cn` or `china`) selects the existing China API and console configuration; Singapore/international is the default. The API-key path remains Coding Plan only.
 - Both cookie paths use one 15-second operation deadline and 262,144-byte response cap across bounded dashboard/user-info discovery and the form RPC. quota-axi does not import browser cookies, launch a browser, persist either cookie, persist `sec_token`, or print those values.
 - The current `pi-alibaba-models` integration stores `{openai, anthropic}` endpoint configuration in the OAuth-shaped `refresh` field; no Alibaba refresh-token exchange is available. Near-expiry and expired access tokens therefore fail closed, without sending the access or refresh values anywhere. `--no-refresh` disables the shared refresh intent and keeps the file read-only.
-- Coding Plan server counters remain request quotas. Raw used/limit values, reset times, plan/instance identity, model labels, and server multipliers are preserved when present; no 16x multiplier, Qwen economics, or local estimator is inferred. `Qwen 3.8 Max — Limited-time Night 50% Off` is a published label/metadata note only.
+- Coding Plan server counters remain request quotas. Raw used/limit values, reset times, plan/instance identity, model labels, and server multipliers are preserved when present; when all selected instances are inactive, only account-level counters are considered and instance counters are never borrowed. No 16x multiplier, Qwen economics, or local estimator is inferred. `Qwen 3.8 Max — Limited-time Night 50% Off` is a published label/metadata note only.
 
 ### Safety guarantees
 
