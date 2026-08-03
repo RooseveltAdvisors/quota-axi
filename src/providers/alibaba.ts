@@ -47,17 +47,23 @@ const FIVE_HOURS_SECONDS = 18_000;
 const WEEK_SECONDS = 604_800;
 const COOKIE_LIMIT_CHARS = 128 * 1024;
 const DASHBOARD_URL =
-  "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=globalset#/efm/coding_plan";
+  "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan#/efm/coding_plan";
 const INTERNATIONAL_GATEWAY_URL =
-  "https://bailian-singapore-cs.alibabacloud.com";
+  "https://modelstudio.console.alibabacloud.com";
 const INTERNATIONAL_API_URL =
-  "https://modelstudio.console.alibabacloud.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2";
+  "https://modelstudio.console.alibabacloud.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2&currentRegionId=ap-southeast-1";
 const INTERNATIONAL_CONSOLE_RPC_URL =
   "https://bailian-singapore-cs.alibabacloud.com/data/api.json?action=IntlBroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&_v=undefined";
 const CHINA_API_URL =
-  "https://bailian.console.aliyun.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2";
+  "https://bailian.console.aliyun.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2&currentRegionId=cn-beijing";
+const CHINA_DASHBOARD_URL =
+  "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/efm/coding_plan";
+const CHINA_GATEWAY_URL = "https://bailian.console.aliyun.com";
+const CHINA_CONSOLE_RPC_URL =
+  "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&_v=undefined";
 
 type AlibabaEnvironment = Readonly<Record<string, string | undefined>>;
+type AlibabaAuthMode = "console" | "api-key";
 
 type AlibabaDependencies = {
   broker: AlibabaCredentialBroker;
@@ -74,9 +80,12 @@ type RegionConfig = {
   id: AlibabaRegion;
   currentRegionId: string;
   apiURL: string;
-  consoleRPCURL?: string;
-  dashboardURL?: string;
-  gatewayURL?: string;
+  consoleRPCURL: string;
+  dashboardURL: string;
+  gatewayURL: string;
+  originURL: string;
+  consoleDomain: string;
+  consoleSite: string;
   commodityCode: string;
 };
 
@@ -88,13 +97,22 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
     consoleRPCURL: INTERNATIONAL_CONSOLE_RPC_URL,
     dashboardURL: DASHBOARD_URL,
     gatewayURL: INTERNATIONAL_GATEWAY_URL,
+    originURL: INTERNATIONAL_GATEWAY_URL,
+    consoleDomain: "modelstudio.console.alibabacloud.com",
+    consoleSite: "MODELSTUDIO_ALIBABACLOUD",
     commodityCode: "sfm_codingplan_public_intl",
   },
   "china-mainland": {
     id: "china-mainland",
     currentRegionId: "cn-beijing",
     apiURL: CHINA_API_URL,
-    commodityCode: "sfm_codingplan_public",
+    consoleRPCURL: CHINA_CONSOLE_RPC_URL,
+    dashboardURL: CHINA_DASHBOARD_URL,
+    gatewayURL: CHINA_GATEWAY_URL,
+    originURL: CHINA_GATEWAY_URL,
+    consoleDomain: "bailian.console.aliyun.com",
+    consoleSite: "BAILIAN_ALIYUN",
+    commodityCode: "sfm_codingplan_public_cn",
   },
 };
 
@@ -215,41 +233,54 @@ async function fetchQuota(
   }
 
   let lastError = "alibaba_usage_unavailable";
-  for (const candidate of candidates) {
-    attempts.push({ source: candidate.source, status: "failed" });
-    try {
-      const region = configuredRegion(dependencies.environment);
-      const usage = await fetchCandidateUsage(candidate, region, dependencies);
-      attempts[attempts.length - 1] = {
-        source: candidate.source,
-        status: "success",
-      };
-      return usageReport(
-        candidate,
-        usage,
-        region,
-        dependencies.now(),
-        attempts,
-      );
-    } catch (error) {
-      lastError = safeAlibabaError(error);
-      attempts[attempts.length - 1] = {
-        source: candidate.source,
-        status: "failed",
-        error: lastError,
-      };
+  const operationController = new AbortController();
+  const operationTimer = setTimeout(
+    () => operationController.abort(),
+    dependencies.deadlineMs,
+  );
+  try {
+    for (const candidate of candidates) {
+      if (operationController.signal.aborted) {
+        lastError = "alibaba_quota_timeout";
+        break;
+      }
+      attempts.push({ source: candidate.source, status: "failed" });
+      try {
+        const region = configuredRegion(dependencies.environment);
+        const result = await fetchCandidateUsageAcrossRegions(
+          candidate,
+          region,
+          dependencies,
+          operationController.signal,
+        );
+        attempts[attempts.length - 1] = {
+          source: candidate.source,
+          status: "success",
+        };
+        return usageReport(
+          candidate,
+          result.usage,
+          result.region,
+          dependencies.now(),
+          attempts,
+        );
+      } catch (error) {
+        lastError = safeAlibabaError(error);
+        attempts[attempts.length - 1] = {
+          source: candidate.source,
+          status: "failed",
+          error: lastError,
+        };
+        if (operationController.signal.aborted) break;
+      }
     }
+  } finally {
+    clearTimeout(operationTimer);
   }
 
-  const status: ProviderStatus =
-    lastError.includes("auth") || lastError.includes("login")
-      ? "auth_required"
-      : lastError.includes("rate")
-        ? "rate_limited"
-        : "error";
   return failedReport(
     lastError,
-    status,
+    providerStatusFor(lastError),
     attempts,
     resolution,
     dependencies.environment,
@@ -302,71 +333,104 @@ async function fetchCandidateUsage(
   candidate: AlibabaCandidate,
   region: RegionConfig,
   dependencies: AlibabaDependencies,
+  signal: AbortSignal,
 ): Promise<NormalizedAlibabaUsage> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), dependencies.deadlineMs);
-  try {
-    if (candidate.kind === "cookie") {
-      if (!region.consoleRPCURL || !region.dashboardURL || !region.gatewayURL) {
-        throw new AlibabaUsageError("alibaba_console_region_unsupported");
-      }
-      const secToken = await resolveSecToken(
-        candidate.value,
-        region,
-        dependencies,
-        controller.signal,
-      );
-      const response = await requestResponse(
-        region.consoleRPCURL,
-        {
-          method: "POST",
-          headers: {
-            Accept: "*/*",
-            "Content-Type": "application/x-www-form-urlencoded",
-            Cookie: candidate.value,
-            "X-Requested-With": "XMLHttpRequest",
-            "User-Agent": "Mozilla/5.0 quota-axi",
-            Origin: "https://modelstudio.console.alibabacloud.com",
-            Referer: region.dashboardURL,
-            ...csrfHeaders(candidate.value),
-          },
-          body: consoleRequestBody(
-            region,
-            secToken,
-            cookieValue("cna", candidate.value),
-          ),
-          signal: controller.signal,
-        },
-        dependencies,
-        true,
-      );
-      return parseUsageResponse(response, "console", dependencies.now());
-    }
-
+  throwIfAborted(signal);
+  if (candidate.kind === "cookie") {
+    const secToken = await resolveSecToken(
+      candidate.value,
+      region,
+      dependencies,
+      signal,
+    );
     const response = await requestResponse(
-      region.apiURL,
+      region.consoleRPCURL,
       {
         method: "POST",
         headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${candidate.value}`,
-          "x-api-key": candidate.value,
-          "X-DashScope-API-Key": candidate.value,
-          "User-Agent": "quota-axi",
+          Accept: "*/*",
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: candidate.value,
+          "X-Requested-With": "XMLHttpRequest",
+          "User-Agent": "Mozilla/5.0 quota-axi",
+          Origin: region.originURL,
+          Referer: region.dashboardURL,
+          ...csrfHeaders(candidate.value),
         },
-        body: JSON.stringify({
-          queryCodingPlanInstanceInfoRequest: {
-            commodityCode: region.commodityCode,
-          },
-        }),
-        signal: controller.signal,
+        body: consoleRequestBody(
+          region,
+          secToken,
+          cookieValue("cna", candidate.value),
+        ),
+        signal,
       },
       dependencies,
+      true,
     );
-    return parseUsageResponse(response, "api-key", dependencies.now());
-  } finally {
-    clearTimeout(timer);
+    return parseUsageResponse(
+      response,
+      "console",
+      dependencies.now(),
+      region.id === "international",
+    );
+  }
+
+  const response = await requestResponse(
+    region.apiURL,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${candidate.value}`,
+        "x-api-key": candidate.value,
+        "X-DashScope-API-Key": candidate.value,
+        "User-Agent": "quota-axi",
+        Origin: region.originURL,
+        Referer: region.dashboardURL,
+      },
+      body: JSON.stringify({
+        queryCodingPlanInstanceInfoRequest: {
+          commodityCode: region.commodityCode,
+        },
+      }),
+      signal,
+    },
+    dependencies,
+    true,
+  );
+  return parseUsageResponse(
+    response,
+    "api-key",
+    dependencies.now(),
+    region.id === "international",
+  );
+}
+
+async function fetchCandidateUsageAcrossRegions(
+  candidate: AlibabaCandidate,
+  region: RegionConfig,
+  dependencies: AlibabaDependencies,
+  signal: AbortSignal,
+): Promise<{ usage: NormalizedAlibabaUsage; region: RegionConfig }> {
+  try {
+    return {
+      usage: await fetchCandidateUsage(candidate, region, dependencies, signal),
+      region,
+    };
+  } catch (error) {
+    if (
+      !(error instanceof AlibabaUsageError) ||
+      !error.retryInChina ||
+      region.id !== "international"
+    ) {
+      throw error;
+    }
+    const china = REGIONS["china-mainland"];
+    return {
+      usage: await fetchCandidateUsage(candidate, china, dependencies, signal),
+      region: china,
+    };
   }
 }
 
@@ -376,9 +440,10 @@ async function resolveSecToken(
   dependencies: AlibabaDependencies,
   signal: AbortSignal,
 ): Promise<string> {
+  let lastError: AlibabaUsageError | undefined;
   try {
     const dashboard = await requestResponse(
-      region.dashboardURL!,
+      region.dashboardURL,
       {
         method: "GET",
         headers: {
@@ -395,20 +460,31 @@ async function resolveSecToken(
     if (dashboard.status === 200) {
       const token = extractSecTokenFromHtml(decodeUtf8(dashboard.body));
       if (token) return token;
+    } else {
+      try {
+        assertUsableStatus(
+          dashboard.status,
+          "console",
+          region.id === "international",
+        );
+      } catch (error) {
+        lastError = asAlibabaUsageError(error);
+      }
     }
   } catch (error) {
-    if (isHardTransportError(error)) throw error;
+    lastError = asAlibabaUsageError(error);
   }
 
+  throwIfAborted(signal);
   try {
     const userInfo = await requestResponse(
-      `${region.gatewayURL!}/tool/user/info.json`,
+      `${region.gatewayURL}/tool/user/info.json`,
       {
         method: "GET",
         headers: {
           Accept: "application/json, text/plain, */*",
           Cookie: cookie,
-          Referer: `${region.gatewayURL!}/`,
+          Referer: `${region.gatewayURL}/`,
           "User-Agent": "Mozilla/5.0 quota-axi",
         },
         signal,
@@ -425,16 +501,30 @@ async function resolveSecToken(
         ]);
         if (token) return token;
       } catch {
-        // A malformed discovery response can still have a cookie token.
+        lastError = new AlibabaUsageError("alibaba_response_invalid");
+      }
+    } else {
+      try {
+        assertUsableStatus(
+          userInfo.status,
+          "console",
+          region.id === "international",
+        );
+      } catch (error) {
+        lastError = asAlibabaUsageError(error);
       }
     }
   } catch (error) {
-    if (isHardTransportError(error)) throw error;
+    lastError = asAlibabaUsageError(error);
   }
 
   const cookieToken = cookieValue("sec_token", cookie);
   if (cookieToken) return cookieToken;
-  throw new AlibabaUsageError("alibaba_console_login_required");
+  if (lastError) throw lastError;
+  throw new AlibabaUsageError(
+    "alibaba_console_login_required",
+    region.id === "international",
+  );
 }
 
 export function extractSecTokenFromHtml(html: string): string | undefined {
@@ -456,11 +546,13 @@ export function extractSecTokenFromHtml(html: string): string | undefined {
 export function normalizeAlibabaPayload(
   payload: unknown,
   now = Date.now(),
+  authMode: AlibabaAuthMode = "console",
+  retryInChina = false,
 ): NormalizedAlibabaUsage {
   const expanded = expandEmbeddedJson(payload);
   const root = objectValue(expanded);
   if (!root) throw new AlibabaUsageError("alibaba_response_invalid");
-  validateServerStatus(root);
+  validateServerStatus(root, authMode, retryInChina);
 
   const instances = findFirstArray(root, [
     "codingPlanInstanceInfos",
@@ -474,7 +566,7 @@ export function normalizeAlibabaPayload(
   const plan = findPlanName(instance) ?? findPlanName(root);
   const active = isActiveInstance(instance, now) || activeSignal(root, now);
   if (windows.length === 0 && !active) {
-    throw new AlibabaUsageError("alibaba_quota_missing");
+    throw new AlibabaUsageError("alibaba_quota_missing", retryInChina);
   }
 
   const modelData = collectModels(instance ?? root);
@@ -502,22 +594,24 @@ export function normalizeAlibabaPayload(
 
 function parseUsageResponse(
   response: ResponseData,
-  authMode: "console" | "api-key",
+  authMode: AlibabaAuthMode,
   now: number,
+  retryInChina: boolean,
 ): NormalizedAlibabaUsage {
-  assertUsableStatus(response.status, authMode);
+  assertUsableStatus(response.status, authMode, retryInChina);
   let payload: unknown;
   try {
     payload = JSON.parse(decodeUtf8(response.body)) as unknown;
   } catch {
     throw new AlibabaUsageError("alibaba_response_invalid");
   }
-  return normalizeAlibabaPayload(payload, now);
+  return normalizeAlibabaPayload(payload, now, authMode, retryInChina);
 }
 
 function assertUsableStatus(
   status: number,
-  authMode: "console" | "api-key",
+  authMode: AlibabaAuthMode,
+  retryInChina: boolean,
 ): void {
   if (status === 200) return;
   if (status === 401 || status === 403) {
@@ -525,13 +619,13 @@ function assertUsableStatus(
       authMode === "console"
         ? "alibaba_console_login_required"
         : "alibaba_api_key_rejected",
-      authMode === "api-key",
+      retryInChina,
     );
   }
   if (status === 429) throw new AlibabaUsageError("alibaba_rate_limited");
   throw new AlibabaUsageError(
     "alibaba_quota_http_error",
-    authMode === "api-key",
+    authMode === "api-key" && retryInChina,
   );
 }
 
@@ -553,6 +647,7 @@ async function requestResponse(
     }
     throw new AlibabaUsageError("alibaba_quota_network_error");
   }
+  throwIfAborted(init.signal as AbortSignal | undefined);
   const declaredLength = Number(response.headers.get("content-length"));
   if (
     Number.isFinite(declaredLength) &&
@@ -561,8 +656,9 @@ async function requestResponse(
     throw new AlibabaUsageError("alibaba_response_too_large");
   }
   const body = await readBoundedBody(response, dependencies.responseLimitBytes);
+  throwIfAborted(init.signal as AbortSignal | undefined);
   if (!allowNon200 && response.status !== 200) {
-    assertUsableStatus(response.status, "api-key");
+    assertUsableStatus(response.status, "api-key", false);
   }
   return { status: response.status, headers: response.headers, body };
 }
@@ -705,6 +801,19 @@ function failedReport(
               "set ALIBABA_CODING_PLAN_COOKIE or ALIBABA_CODING_PLAN_API_KEY",
           }
         : {}),
+      ...(error === "alibaba_api_key_rejected"
+        ? {
+            reason: "alibaba_api_key_rejected",
+            remedyCommand:
+              "set ALIBABA_CODING_PLAN_API_KEY or ALIBABA_CODING_PLAN_COOKIE",
+          }
+        : {}),
+      ...(error === "alibaba_api_key_unavailable_in_region"
+        ? {
+            reason: "alibaba_api_key_unavailable_in_region",
+            remedyCommand: "set ALIBABA_CODING_PLAN_COOKIE",
+          }
+        : {}),
       ...(resolution.status === "expired"
         ? { reason: "credentials_expired" }
         : {}),
@@ -712,6 +821,18 @@ function failedReport(
     },
     attempts,
   };
+}
+
+function providerStatusFor(error: string): ProviderStatus {
+  if (
+    ["alibaba_console_login_required", "alibaba_api_key_rejected"].includes(
+      error,
+    )
+  ) {
+    return "auth_required";
+  }
+  if (error === "alibaba_rate_limited") return "rate_limited";
+  return "error";
 }
 
 function normalizeWindows(quota: Record<string, unknown>): QuotaWindow[] {
@@ -977,15 +1098,31 @@ function collectModels(value: Record<string, unknown>): {
   };
 }
 
-function validateServerStatus(root: Record<string, unknown>): void {
-  const statusCode = firstNumber(root, ["statusCode", "status_code", "code"]);
+function validateServerStatus(
+  root: Record<string, unknown>,
+  authMode: AlibabaAuthMode,
+  retryInChina: boolean,
+): void {
+  const statusCode = findFirstNumber(root, [
+    "statusCode",
+    "status_code",
+    "code",
+  ]);
   if (statusCode !== undefined && statusCode !== 0 && statusCode !== 200) {
     if (statusCode === 401 || statusCode === 403) {
-      throw new AlibabaUsageError("alibaba_api_key_rejected");
+      throw new AlibabaUsageError(
+        authMode === "console"
+          ? "alibaba_console_login_required"
+          : "alibaba_api_key_rejected",
+        retryInChina,
+      );
     }
-    throw new AlibabaUsageError("alibaba_quota_http_error");
+    throw new AlibabaUsageError(
+      "alibaba_quota_http_error",
+      authMode === "api-key" && retryInChina,
+    );
   }
-  const statusText = firstString(root, [
+  const statusText = findFirstString(root, [
     "code",
     "status",
     "statusCode",
@@ -996,11 +1133,28 @@ function validateServerStatus(root: Record<string, unknown>): void {
   ]);
   const normalized = statusText?.toLowerCase() ?? "";
   if (
-    normalized.includes("login") ||
-    normalized.includes("needlogin") ||
+    normalized.includes("api key") ||
+    normalized.includes("apikey") ||
     normalized.includes("unauthorized")
   ) {
-    throw new AlibabaUsageError("alibaba_console_login_required");
+    throw new AlibabaUsageError(
+      authMode === "console"
+        ? "alibaba_console_login_required"
+        : "alibaba_api_key_rejected",
+      retryInChina,
+    );
+  }
+  if (
+    normalized.includes("login") ||
+    normalized.includes("needlogin") ||
+    normalized.includes("console session")
+  ) {
+    throw new AlibabaUsageError(
+      authMode === "console"
+        ? "alibaba_console_login_required"
+        : "alibaba_api_key_unavailable_in_region",
+      retryInChina,
+    );
   }
 }
 
@@ -1109,6 +1263,24 @@ function findFirstString(value: unknown, keys: string[]): string | undefined {
     for (const nested of value) {
       const found = findFirstString(nested, keys);
       if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function findFirstNumber(value: unknown, keys: string[]): number | undefined {
+  const object = objectValue(value);
+  if (object) {
+    const direct = firstNumber(object, keys);
+    if (direct !== undefined) return direct;
+    for (const nested of Object.values(object)) {
+      const found = findFirstNumber(nested, keys);
+      if (found !== undefined) return found;
+    }
+  } else if (Array.isArray(value)) {
+    for (const nested of value) {
+      const found = findFirstNumber(nested, keys);
+      if (found !== undefined) return found;
     }
   }
   return undefined;
@@ -1237,12 +1409,12 @@ function consoleRequestBody(
 ): string {
   const cornerstoneParam: Record<string, unknown> = {
     feTraceId: randomUUID().toLowerCase(),
-    feURL: DASHBOARD_URL,
+    feURL: region.dashboardURL,
     protocol: "V2",
     console: "ONE_CONSOLE",
     productCode: "p_efm",
-    domain: "modelstudio.console.alibabacloud.com",
-    consoleSite: "intl",
+    domain: region.consoleDomain,
+    consoleSite: region.consoleSite,
     userNickName: "",
     userPrincipalName: "",
     xsp_lang: "en-US",
@@ -1304,11 +1476,14 @@ function safeAlibabaError(error: unknown): string {
     : "alibaba_quota_unavailable";
 }
 
-function isHardTransportError(error: unknown): boolean {
-  return (
-    error instanceof AlibabaUsageError &&
-    ["alibaba_response_too_large", "alibaba_quota_timeout"].includes(error.code)
-  );
+function asAlibabaUsageError(error: unknown): AlibabaUsageError {
+  return error instanceof AlibabaUsageError
+    ? error
+    : new AlibabaUsageError("alibaba_quota_network_error");
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new AlibabaUsageError("alibaba_quota_timeout");
 }
 
 function isAbortError(error: unknown): boolean {

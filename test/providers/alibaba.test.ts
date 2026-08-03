@@ -128,6 +128,41 @@ describe("Alibaba Coding Plan quota", () => {
     expect(String(init.body)).toContain("sfm_codingplan_public_intl");
   });
 
+  it("retries API failures against China with the matching region contract", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response({}, 401))
+      .mockResolvedValueOnce(response(FIXTURE));
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {},
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      region: "cn-beijing",
+      state: { status: "fresh" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [internationalURL, internationalInit] = fetch.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    const [chinaURL, chinaInit] = fetch.mock.calls[1] as [string, RequestInit];
+    expect(internationalURL).toContain(
+      "modelstudio.console.alibabacloud.com/data/api.json",
+    );
+    expect(String(internationalInit.body)).toContain(
+      "sfm_codingplan_public_intl",
+    );
+    expect(chinaURL).toContain("bailian.console.aliyun.com/data/api.json");
+    expect(String(chinaInit.body)).toContain("sfm_codingplan_public_cn");
+    expect((chinaInit.headers as Record<string, string>).Origin).toBe(
+      "https://bailian.console.aliyun.com",
+    );
+  });
+
   it("prefers a configured CodexBar-compatible cookie and discovers sec_token from the dashboard", async () => {
     const fetch = vi
       .fn()
@@ -159,6 +194,46 @@ describe("Alibaba Coding Plan quota", () => {
     expect(params.get("region")).toBe("ap-southeast-1");
     expect(params.get("sec_token")).toBe("synthetic-sec-token");
     expect(params.get("params")).toContain("onlyLatestOne");
+  });
+
+  it("uses the China console RPC and dashboard paths for cookie authentication", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(
+          '<script>window.CONFIG={SEC_TOKEN: "synthetic-cn-token"}</script>',
+        ),
+      )
+      .mockResolvedValueOnce(response(FIXTURE));
+    const report = await createAlibabaAdapter({
+      broker: brokerFor({ status: "missing" }),
+      fetch,
+      environment: {
+        ALIBABA_CODING_PLAN_COOKIE: "session=synthetic-session",
+        ALIBABA_CODING_PLAN_REGION: "cn-beijing",
+      },
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "web",
+      region: "cn-beijing",
+      state: { status: "fresh" },
+    });
+    const [dashboardURL] = fetch.mock.calls[0] as [string, RequestInit];
+    const [rpcURL, rpcInit] = fetch.mock.calls[1] as [string, RequestInit];
+    expect(dashboardURL).toContain(
+      "https://bailian.console.aliyun.com/cn-beijing/",
+    );
+    expect(rpcURL).toContain("bailian-cs.console.aliyun.com");
+    expect(rpcURL).toContain("action=BroadScopeAspnGateway");
+    const params = new URLSearchParams(String(rpcInit.body));
+    expect(params.get("region")).toBe("cn-beijing");
+    expect(params.get("params")).toContain("sfm_codingplan_public_cn");
+    expect(params.get("params")).toContain("BAILIAN_ALIYUN");
+    expect((rpcInit.headers as Record<string, string>).Origin).toBe(
+      "https://bailian.console.aliyun.com",
+    );
   });
 
   it("falls back to user-info and then a cookie sec_token without exposing it", async () => {
@@ -245,6 +320,103 @@ describe("Alibaba Coding Plan quota", () => {
       windows: [],
       state: { status: "fresh", reason: ALIBABA_USAGE_CONSOLE_ONLY_REASON },
     });
+  });
+
+  it("surfaces API-mode console login as a regional API limitation", async () => {
+    const fetch = vi.fn(async () => response({ code: "ConsoleNeedLogin" }));
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {},
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      windows: [],
+      state: {
+        status: "error",
+        error: "alibaba_api_key_unavailable_in_region",
+        reason: "alibaba_api_key_unavailable_in_region",
+        remedyCommand: "set ALIBABA_CODING_PLAN_COOKIE",
+      },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps rejected API credentials to auth_required with remediation", async () => {
+    const fetch = vi.fn(async () => response({}, 401));
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {},
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      windows: [],
+      state: {
+        status: "auth_required",
+        error: "alibaba_api_key_rejected",
+        reason: "alibaba_api_key_rejected",
+      },
+    });
+    expect(report.state.remedyCommand).toContain("ALIBABA_CODING_PLAN_API_KEY");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps console discovery HTTP failures distinct from login", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response("dashboard unavailable", 503))
+      .mockResolvedValueOnce(response("user info unavailable", 503));
+    const report = await createAlibabaAdapter({
+      broker: brokerFor({ status: "missing" }),
+      fetch,
+      environment: {
+        ALIBABA_CODING_PLAN_COOKIE: "session=synthetic-session",
+        ALIBABA_CODING_PLAN_REGION: "cn-beijing",
+      },
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      windows: [],
+      state: { status: "error", error: "alibaba_quota_http_error" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("enforces one deadline across all configured candidate sources", async () => {
+    const fetch = vi.fn(
+      async (_input: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              ),
+            { once: true },
+          );
+        }),
+    );
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {
+        ALIBABA_CODING_PLAN_COOKIE: "session=synthetic-session",
+        ALIBABA_CODING_PLAN_API_KEY: "synthetic-api-key",
+      },
+      deadlineMs: 20,
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "alibaba_quota_timeout",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it.each([
