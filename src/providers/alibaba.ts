@@ -48,6 +48,8 @@ const WEEK_SECONDS = 604_800;
 const COOKIE_LIMIT_CHARS = 128 * 1024;
 const DASHBOARD_URL =
   "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan#/efm/coding_plan";
+const CONSOLE_REFERER_URL =
+  "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan";
 const INTERNATIONAL_GATEWAY_URL =
   "https://modelstudio.console.alibabacloud.com";
 const INTERNATIONAL_API_URL =
@@ -58,6 +60,8 @@ const CHINA_API_URL =
   "https://bailian.console.aliyun.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2&currentRegionId=cn-beijing";
 const CHINA_DASHBOARD_URL =
   "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/efm/coding_plan";
+const CHINA_CONSOLE_REFERER_URL =
+  "https://bailian.console.aliyun.com/cn-beijing/?tab=model";
 const CHINA_GATEWAY_URL = "https://bailian.console.aliyun.com";
 const CHINA_CONSOLE_RPC_URL =
   "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&_v=undefined";
@@ -82,6 +86,7 @@ type RegionConfig = {
   apiURL: string;
   consoleRPCURL: string;
   dashboardURL: string;
+  consoleRefererURL: string;
   gatewayURL: string;
   originURL: string;
   consoleDomain: string;
@@ -96,6 +101,7 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
     apiURL: INTERNATIONAL_API_URL,
     consoleRPCURL: INTERNATIONAL_CONSOLE_RPC_URL,
     dashboardURL: DASHBOARD_URL,
+    consoleRefererURL: CONSOLE_REFERER_URL,
     gatewayURL: INTERNATIONAL_GATEWAY_URL,
     originURL: INTERNATIONAL_GATEWAY_URL,
     consoleDomain: "modelstudio.console.alibabacloud.com",
@@ -108,6 +114,7 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
     apiURL: CHINA_API_URL,
     consoleRPCURL: CHINA_CONSOLE_RPC_URL,
     dashboardURL: CHINA_DASHBOARD_URL,
+    consoleRefererURL: CHINA_CONSOLE_REFERER_URL,
     gatewayURL: CHINA_GATEWAY_URL,
     originURL: CHINA_GATEWAY_URL,
     consoleDomain: "bailian.console.aliyun.com",
@@ -354,7 +361,7 @@ async function fetchCandidateUsage(
           "X-Requested-With": "XMLHttpRequest",
           "User-Agent": "Mozilla/5.0 quota-axi",
           Origin: region.originURL,
-          Referer: region.dashboardURL,
+          Referer: region.consoleRefererURL,
           ...csrfHeaders(candidate.value),
         },
         body: consoleRequestBody(
@@ -560,8 +567,14 @@ export function normalizeAlibabaPayload(
   ])
     ?.map(objectValue)
     .filter((value): value is Record<string, unknown> => Boolean(value));
-  const instance = chooseActiveInstance(instances ?? [], now);
-  const quota = (instance && findQuotaInfo(instance)) ?? findQuotaInfo(root);
+  const instanceRecords = instances ?? [];
+  const instance = chooseActiveInstance(instanceRecords, now);
+  const quota =
+    instanceRecords.length > 0
+      ? instance
+        ? findQuotaInfo(instance)
+        : undefined
+      : findQuotaInfo(root);
   const windows = quota ? normalizeWindows(quota) : [];
   const plan = findPlanName(instance) ?? findPlanName(root);
   const active = isActiveInstance(instance, now) || activeSignal(root, now);
@@ -655,7 +668,23 @@ async function requestResponse(
   ) {
     throw new AlibabaUsageError("alibaba_response_too_large");
   }
-  const body = await readBoundedBody(response, dependencies.responseLimitBytes);
+  let body: Uint8Array;
+  try {
+    body = await readBoundedBody(
+      response,
+      dependencies.responseLimitBytes,
+      init.signal as AbortSignal | undefined,
+    );
+  } catch (error) {
+    if (error instanceof AlibabaUsageError) throw error;
+    if (
+      isAbortError(error) ||
+      (init.signal as AbortSignal | undefined)?.aborted
+    ) {
+      throw new AlibabaUsageError("alibaba_quota_timeout");
+    }
+    throw new AlibabaUsageError("alibaba_quota_network_error");
+  }
   throwIfAborted(init.signal as AbortSignal | undefined);
   if (!allowNon200 && response.status !== 200) {
     assertUsableStatus(response.status, "api-key", false);
@@ -666,9 +695,15 @@ async function requestResponse(
 async function readBoundedBody(
   response: Response,
   limit: number,
+  signal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
   if (!response.body) {
-    const body = new Uint8Array(await response.arrayBuffer());
+    const body = new Uint8Array(
+      await withAbortSignal(
+        Promise.resolve().then(() => response.arrayBuffer()),
+        signal,
+      ),
+    );
     if (body.byteLength > limit)
       throw new AlibabaUsageError("alibaba_response_too_large");
     return body;
@@ -676,9 +711,15 @@ async function readBoundedBody(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let readPending = false;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      readPending = true;
+      const { done, value } = await withAbortSignal(
+        Promise.resolve().then(() => reader.read()),
+        signal,
+      );
+      readPending = false;
       if (done) break;
       size += value.byteLength;
       if (size > limit) {
@@ -688,7 +729,7 @@ async function readBoundedBody(
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock();
+    if (!readPending) reader.releaseLock();
   }
   const body = new Uint8Array(size);
   let offset = 0;
@@ -1128,33 +1169,39 @@ function validateServerStatus(
     "statusCode",
     "errorCode",
     "error_code",
+  ]);
+  const messageText = findFirstString(root, [
+    "statusMessage",
+    "status_msg",
     "message",
     "msg",
   ]);
-  const normalized = statusText?.toLowerCase() ?? "";
-  if (
-    normalized.includes("api key") ||
-    normalized.includes("apikey") ||
-    normalized.includes("unauthorized")
-  ) {
-    throw new AlibabaUsageError(
-      authMode === "console"
-        ? "alibaba_console_login_required"
-        : "alibaba_api_key_rejected",
-      retryInChina,
-    );
-  }
-  if (
-    normalized.includes("login") ||
-    normalized.includes("needlogin") ||
-    normalized.includes("console session")
-  ) {
-    throw new AlibabaUsageError(
-      authMode === "console"
-        ? "alibaba_console_login_required"
-        : "alibaba_api_key_unavailable_in_region",
-      retryInChina,
-    );
+  for (const value of [statusText, messageText]) {
+    const normalized = value?.toLowerCase() ?? "";
+    if (
+      normalized.includes("api key") ||
+      normalized.includes("apikey") ||
+      normalized.includes("unauthorized")
+    ) {
+      throw new AlibabaUsageError(
+        authMode === "console"
+          ? "alibaba_console_login_required"
+          : "alibaba_api_key_rejected",
+        retryInChina,
+      );
+    }
+    if (
+      normalized.includes("login") ||
+      normalized.includes("needlogin") ||
+      normalized.includes("console session")
+    ) {
+      throw new AlibabaUsageError(
+        authMode === "console"
+          ? "alibaba_console_login_required"
+          : "alibaba_api_key_unavailable_in_region",
+        retryInChina,
+      );
+    }
   }
 }
 
@@ -1480,6 +1527,33 @@ function asAlibabaUsageError(error: unknown): AlibabaUsageError {
   return error instanceof AlibabaUsageError
     ? error
     : new AlibabaUsageError("alibaba_quota_network_error");
+}
+
+function withAbortSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted)
+    return Promise.reject(new AlibabaUsageError("alibaba_quota_timeout"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new AlibabaUsageError("alibaba_quota_timeout"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

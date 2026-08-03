@@ -194,6 +194,9 @@ describe("Alibaba Coding Plan quota", () => {
     expect(params.get("region")).toBe("ap-southeast-1");
     expect(params.get("sec_token")).toBe("synthetic-sec-token");
     expect(params.get("params")).toContain("onlyLatestOne");
+    expect((rpcInit.headers as Record<string, string>).Referer).toBe(
+      "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan",
+    );
   });
 
   it("uses the China console RPC and dashboard paths for cookie authentication", async () => {
@@ -322,8 +325,41 @@ describe("Alibaba Coding Plan quota", () => {
     });
   });
 
+  it("does not borrow quota counters from a different plan instance", () => {
+    const normalized = normalizeAlibabaPayload(
+      {
+        data: {
+          codingPlanInstanceInfos: [
+            {
+              instanceId: "expired-instance",
+              planName: "Expired Plan",
+              status: "EXPIRED",
+              codingPlanQuotaInfo: {
+                per5HourUsedQuota: 90,
+                per5HourTotalQuota: 100,
+              },
+            },
+            {
+              instanceId: "active-instance",
+              planName: "Active Plan",
+              status: "ACTIVE",
+            },
+          ],
+        },
+      },
+      NOW,
+    );
+
+    expect(normalized).toMatchObject({
+      plan: "Active Plan",
+      windows: [],
+    });
+  });
+
   it("surfaces API-mode console login as a regional API limitation", async () => {
-    const fetch = vi.fn(async () => response({ code: "ConsoleNeedLogin" }));
+    const fetch = vi.fn(async () =>
+      response({ code: "0", statusMessage: "ConsoleNeedLogin" }),
+    );
     const report = await createAlibabaAdapter({
       broker: brokerFor(availableCredential()),
       fetch,
@@ -408,6 +444,57 @@ describe("Alibaba Coding Plan quota", () => {
         ALIBABA_CODING_PLAN_COOKIE: "session=synthetic-session",
         ALIBABA_CODING_PLAN_API_KEY: "synthetic-api-key",
       },
+      deadlineMs: 20,
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "alibaba_quota_timeout",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("classifies response body stream failures as network errors", async () => {
+    const failedResponse = {
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: () => Promise.reject(new Error("stream failed")),
+          releaseLock: vi.fn(),
+        }),
+      },
+    } as unknown as Response;
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch: vi.fn(async () => failedResponse),
+      environment: {},
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "alibaba_quota_network_error",
+    });
+  });
+
+  it("bounds a response body that ignores the operation signal", async () => {
+    const hangingResponse = {
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: () => new Promise<never>(() => {}),
+          releaseLock: vi.fn(),
+        }),
+      },
+    } as unknown as Response;
+    const fetch = vi.fn(async () => hangingResponse);
+    const report = await createAlibabaAdapter({
+      broker: brokerFor(availableCredential()),
+      fetch,
+      environment: {},
       deadlineMs: 20,
       now: () => NOW,
     }).fetchQuota(OPTIONS);
