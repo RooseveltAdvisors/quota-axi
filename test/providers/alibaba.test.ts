@@ -224,6 +224,33 @@ describe("Alibaba Token Plan quota", () => {
     expect(codingURL).not.toContain("/tokenplan/");
   });
 
+  it("uses the final failed fallback source for degraded report metadata", async () => {
+    const report = await createAlibabaAdapter({
+      broker: brokerFor({ status: "missing" }),
+      fetch: vi.fn(async () => response({}, 401)),
+      environment: {
+        ALIBABA_TOKEN_PLAN_COOKIE:
+          "session=synthetic-token-session; sec_token=synthetic-token",
+        ALIBABA_CODING_PLAN_COOKIE:
+          "session=synthetic-coding-session; sec_token=synthetic-token",
+      },
+      now: () => NOW,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      label: "Alibaba Coding Plan",
+      source: "unavailable",
+      plan: "Alibaba Coding Plan",
+      period: "annual",
+      models: expect.arrayContaining(["qwen3.8-max"]),
+      state: {
+        status: "auth_required",
+        error: "alibaba_console_login_required",
+        sourcesTried: [ALIBABA_TOKEN_PLAN_COOKIE_SOURCE, ALIBABA_COOKIE_SOURCE],
+      },
+    });
+  });
+
   it("normalizes fractions, direct percentages, resets, and additional server periods", () => {
     const normalized = normalizeAlibabaTokenPlanPayload({
       code: "200",

@@ -318,6 +318,7 @@ async function fetchQuota(
   }
 
   let lastError = "alibaba_usage_unavailable";
+  let failedCandidate: AlibabaCandidate | undefined;
   const operationController = new AbortController();
   const operationTimer = setTimeout(
     () => operationController.abort(),
@@ -329,6 +330,7 @@ async function fetchQuota(
         lastError = "alibaba_quota_timeout";
         break;
       }
+      failedCandidate = candidate;
       attempts.push({ source: candidate.source, status: "failed" });
       try {
         const region = configuredRegion(dependencies.environment);
@@ -369,6 +371,7 @@ async function fetchQuota(
     attempts,
     resolution,
     dependencies.environment,
+    failedCandidate,
   );
 }
 
@@ -1013,9 +1016,10 @@ function failedReport(
   attempts: SourceAttempt[],
   resolution: AlibabaCredentialResolution,
   environment: AlibabaEnvironment,
+  failedCandidate?: AlibabaCandidate,
 ): ProviderQuota {
-  const tokenPlanConfigured = Boolean(configuredTokenPlanCookie(environment));
-  const label = tokenPlanConfigured ? TOKEN_PLAN_LABEL : LABEL;
+  const tokenPlanFailed = failedCandidate?.kind === "token-plan-cookie";
+  const label = tokenPlanFailed ? TOKEN_PLAN_LABEL : LABEL;
   const expiresAt =
     resolution.status === "expired"
       ? new Date(resolution.expiresAtMs).toISOString()
@@ -1025,7 +1029,7 @@ function failedReport(
     label,
     source: "unavailable",
     plan: label,
-    ...(tokenPlanConfigured ? {} : { period: DEFAULT_PERIOD }),
+    ...(tokenPlanFailed ? {} : { period: DEFAULT_PERIOD }),
     region: configuredRegion(environment).currentRegionId,
     ...(expiresAt ? { expiresAt } : {}),
     ...(expiresAt
@@ -1037,7 +1041,7 @@ function failedReport(
           },
         }
       : {}),
-    ...(tokenPlanConfigured ? {} : { models: [...ALIBABA_MODELS] }),
+    ...(tokenPlanFailed ? {} : { models: [...ALIBABA_MODELS] }),
     windows: [],
     state: {
       status,
