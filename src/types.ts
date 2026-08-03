@@ -4,7 +4,8 @@ export type ProviderId =
   | "cursor"
   | "copilot"
   | "grok"
-  | "kimi";
+  | "kimi"
+  | "alibaba";
 
 export const PROVIDER_IDS = [
   "claude",
@@ -13,6 +14,7 @@ export const PROVIDER_IDS = [
   "copilot",
   "grok",
   "kimi",
+  "alibaba",
 ] as const satisfies readonly ProviderId[];
 
 export type ProviderSource =
@@ -31,9 +33,8 @@ export type ProviderStatus =
   | "rate_limited"
   | "error";
 
-export type ProviderStateReason =
-  | "keychain_access_required"
-  | "credentials_expired";
+/** Provider-specific diagnostic text; known values remain stable where useful. */
+export type ProviderStateReason = string;
 
 export type QuotaPaceStatus = "ahead" | "on_pace" | "behind" | "unknown";
 
@@ -131,6 +132,15 @@ export type ProviderQuota = {
   label: string;
   source: ProviderSource;
   plan?: string;
+  period?: string;
+  expiresAt?: string;
+  region?: string;
+  models?: string[];
+  credential?: {
+    status: "fresh" | "expiring" | "expired";
+    expiresAt?: string;
+    remainingSeconds?: number;
+  };
   account?: {
     email?: string;
     organization?: string;

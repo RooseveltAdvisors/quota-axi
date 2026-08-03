@@ -18,6 +18,7 @@ const originalCursorProvider = PROVIDERS.cursor;
 const originalCopilotProvider = PROVIDERS.copilot;
 const originalGrokProvider = PROVIDERS.grok;
 const originalKimiProvider = PROVIDERS.kimi;
+const originalAlibabaProvider = PROVIDERS.alibaba;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 let tempDir: string | undefined;
 
@@ -28,6 +29,7 @@ afterEach(() => {
   PROVIDERS.copilot = originalCopilotProvider;
   PROVIDERS.grok = originalGrokProvider;
   PROVIDERS.kimi = originalKimiProvider;
+  PROVIDERS.alibaba = originalAlibabaProvider;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
@@ -44,14 +46,15 @@ describe("CLI flag parsing", () => {
       "copilot",
       "grok",
       "kimi",
+      "alibaba",
     ]);
   });
 
   it("scopes comma-separated providers", () => {
     expect(parseFlags(["--provider", "claude"]).providers).toEqual(["claude"]);
     expect(
-      parseFlags(["--provider=cursor,copilot,grok,kimi"]).providers,
-    ).toEqual(["cursor", "copilot", "grok", "kimi"]);
+      parseFlags(["--provider=cursor,copilot,grok,kimi,alibaba"]).providers,
+    ).toEqual(["cursor", "copilot", "grok", "kimi", "alibaba"]);
   });
 
   it("ignores a standalone argument separator", () => {
@@ -64,7 +67,15 @@ describe("CLI flag parsing", () => {
   it("collects the boolean flags", () => {
     expect(parseFlags(["--json", "--full", "--allow-keychain-prompt"])).toEqual(
       {
-        providers: ["claude", "codex", "cursor", "copilot", "grok", "kimi"],
+        providers: [
+          "claude",
+          "codex",
+          "cursor",
+          "copilot",
+          "grok",
+          "kimi",
+          "alibaba",
+        ],
         json: true,
         full: true,
         allowKeychainPrompt: true,
@@ -527,6 +538,7 @@ describe("CLI plumbing via the axi SDK", () => {
     PROVIDERS.copilot = providerWithAuth("copilot", "GitHub Copilot");
     PROVIDERS.grok = providerWithAuth("grok", "Grok");
     PROVIDERS.kimi = providerWithAuth("kimi", "Kimi");
+    PROVIDERS.alibaba = providerWithAuth("alibaba", "Alibaba Coding Plan");
 
     const output = await capture(["--allow-keychain-prompt", "auth"]);
     expect(output).toContain(
