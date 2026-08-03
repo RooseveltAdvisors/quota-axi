@@ -18,6 +18,7 @@ import {
 import { piAuthFilePath } from "./pi-auth.js";
 
 export const PI_ALIBABA_CREDENTIAL_SOURCE = "pi:alibaba-plan";
+export const ALIBABA_TOKEN_PLAN_COOKIE_SOURCE = "cookie:alibaba-token-plan";
 export const ALIBABA_COOKIE_SOURCE = "cookie:alibaba-coding-plan";
 export const ALIBABA_API_KEY_SOURCE = "env:alibaba-api-key";
 export const ALIBABA_USAGE_CONSOLE_ONLY_REASON =
@@ -39,6 +40,7 @@ export const ALIBABA_MODEL_LABELS: Readonly<Record<string, string>> = {
 };
 
 const LABEL = "Alibaba Coding Plan";
+const TOKEN_PLAN_LABEL = "Alibaba Token Plan (Personal)";
 const DEFAULT_PERIOD = "annual";
 const DEFAULT_REGION = "ap-southeast-1";
 const OPERATION_DEADLINE_MS = 15_000;
@@ -78,24 +80,32 @@ const DASHBOARD_URL =
   "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan#/efm/coding_plan";
 const CONSOLE_REFERER_URL =
   "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan";
+const TOKEN_PLAN_DASHBOARD_URL =
+  "https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan";
 const INTERNATIONAL_GATEWAY_URL =
   "https://modelstudio.console.alibabacloud.com";
 const INTERNATIONAL_API_URL =
   "https://modelstudio.console.alibabacloud.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2&currentRegionId=ap-southeast-1";
 const INTERNATIONAL_CONSOLE_RPC_URL =
   "https://bailian-singapore-cs.alibabacloud.com/data/api.json?action=IntlBroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&_v=undefined";
+const INTERNATIONAL_TOKEN_PLAN_RPC_URL =
+  "https://bailian-singapore-cs.alibabacloud.com/data/api.json?action=IntlBroadScopeAspnGateway&product=sfm_bailian&api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage&_v=undefined";
 const CHINA_API_URL =
   "https://bailian.console.aliyun.com/data/api.json?action=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&product=broadscope-bailian&api=queryCodingPlanInstanceInfoV2&currentRegionId=cn-beijing";
 const CHINA_DASHBOARD_URL =
   "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/efm/coding_plan";
 const CHINA_CONSOLE_REFERER_URL =
   "https://bailian.console.aliyun.com/cn-beijing/?tab=model";
+const CHINA_TOKEN_PLAN_DASHBOARD_URL =
+  "https://bailian.console.aliyun.com/cn-beijing/?tab=plan";
 const CHINA_GATEWAY_URL = "https://bailian.console.aliyun.com";
 const CHINA_CONSOLE_RPC_URL =
   "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2&_v=undefined";
+const CHINA_TOKEN_PLAN_RPC_URL =
+  "https://bailian-cs.console.aliyun.com/data/api.json?action=BroadScopeAspnGateway&product=sfm_bailian&api=zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage&_v=undefined";
 
 type AlibabaEnvironment = Readonly<Record<string, string | undefined>>;
-type AlibabaAuthMode = "console" | "api-key";
+type AlibabaAuthMode = "console" | "token-plan-console" | "api-key";
 
 type AlibabaDependencies = {
   broker: AlibabaCredentialBroker;
@@ -113,8 +123,10 @@ type RegionConfig = {
   currentRegionId: string;
   apiURL: string;
   consoleRPCURL: string;
+  tokenPlanRPCURL: string;
   dashboardURL: string;
   consoleRefererURL: string;
+  tokenPlanDashboardURL: string;
   gatewayURL: string;
   originURL: string;
   consoleDomain: string;
@@ -128,8 +140,10 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
     currentRegionId: DEFAULT_REGION,
     apiURL: INTERNATIONAL_API_URL,
     consoleRPCURL: INTERNATIONAL_CONSOLE_RPC_URL,
+    tokenPlanRPCURL: INTERNATIONAL_TOKEN_PLAN_RPC_URL,
     dashboardURL: DASHBOARD_URL,
     consoleRefererURL: CONSOLE_REFERER_URL,
+    tokenPlanDashboardURL: TOKEN_PLAN_DASHBOARD_URL,
     gatewayURL: INTERNATIONAL_GATEWAY_URL,
     originURL: INTERNATIONAL_GATEWAY_URL,
     consoleDomain: "modelstudio.console.alibabacloud.com",
@@ -141,8 +155,10 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
     currentRegionId: "cn-beijing",
     apiURL: CHINA_API_URL,
     consoleRPCURL: CHINA_CONSOLE_RPC_URL,
+    tokenPlanRPCURL: CHINA_TOKEN_PLAN_RPC_URL,
     dashboardURL: CHINA_DASHBOARD_URL,
     consoleRefererURL: CHINA_CONSOLE_REFERER_URL,
+    tokenPlanDashboardURL: CHINA_TOKEN_PLAN_DASHBOARD_URL,
     gatewayURL: CHINA_GATEWAY_URL,
     originURL: CHINA_GATEWAY_URL,
     consoleDomain: "bailian.console.aliyun.com",
@@ -152,7 +168,16 @@ const REGIONS: Record<AlibabaRegion, RegionConfig> = {
 };
 
 type AlibabaCandidate =
-  | { kind: "cookie"; value: string; source: typeof ALIBABA_COOKIE_SOURCE }
+  | {
+      kind: "token-plan-cookie";
+      value: string;
+      source: typeof ALIBABA_TOKEN_PLAN_COOKIE_SOURCE;
+    }
+  | {
+      kind: "coding-plan-cookie";
+      value: string;
+      source: typeof ALIBABA_COOKIE_SOURCE;
+    }
   | {
       kind: "api-key";
       value: string;
@@ -222,14 +247,22 @@ async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
   const resolution = await resolvePiCredential(dependencies, options);
-  const cookie = configuredCookie(dependencies.environment);
+  const tokenPlanCookie = configuredTokenPlanCookie(dependencies.environment);
+  const codingPlanCookie = configuredCodingPlanCookie(dependencies.environment);
   const apiKey = configuredApiKey(dependencies.environment);
   const candidates: AlibabaCandidate[] = [];
 
-  if (cookie) {
+  if (tokenPlanCookie) {
     candidates.push({
-      kind: "cookie",
-      value: cookie,
+      kind: "token-plan-cookie",
+      value: tokenPlanCookie,
+      source: ALIBABA_TOKEN_PLAN_COOKIE_SOURCE,
+    });
+  }
+  if (codingPlanCookie) {
+    candidates.push({
+      kind: "coding-plan-cookie",
+      value: codingPlanCookie,
       source: ALIBABA_COOKIE_SOURCE,
     });
   }
@@ -251,11 +284,28 @@ async function fetchQuota(
 
   const attempts: SourceAttempt[] = [];
   if (candidates.length === 0) {
-    attempts.push({
-      source: PI_ALIBABA_CREDENTIAL_SOURCE,
-      status: "skipped",
-      error: credentialError(resolution),
-    });
+    attempts.push(
+      {
+        source: ALIBABA_TOKEN_PLAN_COOKIE_SOURCE,
+        status: "skipped",
+        error: "alibaba_token_plan_cookie_unavailable",
+      },
+      {
+        source: ALIBABA_COOKIE_SOURCE,
+        status: "skipped",
+        error: "alibaba_cookie_unavailable",
+      },
+      {
+        source: PI_ALIBABA_CREDENTIAL_SOURCE,
+        status: "skipped",
+        error: credentialError(resolution),
+      },
+      {
+        source: ALIBABA_API_KEY_SOURCE,
+        status: "skipped",
+        error: "alibaba_api_key_unavailable",
+      },
+    );
     return failedReport(
       resolution.status === "available"
         ? "alibaba_usage_source_unavailable"
@@ -328,13 +378,21 @@ async function inspectAuth(
 ): Promise<AuthProviderReport> {
   const resolution = await resolvePiCredential(dependencies, options);
   const sources: AuthSourceReport[] = [];
-  const cookie = configuredCookie(dependencies.environment);
+  const tokenPlanCookie = configuredTokenPlanCookie(dependencies.environment);
+  const codingPlanCookie = configuredCodingPlanCookie(dependencies.environment);
   const apiKey = configuredApiKey(dependencies.environment);
 
   sources.push({
+    source: ALIBABA_TOKEN_PLAN_COOKIE_SOURCE,
+    status: tokenPlanCookie ? "available" : "missing",
+    ...(tokenPlanCookie
+      ? {}
+      : { error: "alibaba_token_plan_cookie_unavailable" }),
+  });
+  sources.push({
     source: ALIBABA_COOKIE_SOURCE,
-    status: cookie ? "available" : "missing",
-    ...(cookie ? {} : { error: "alibaba_cookie_unavailable" }),
+    status: codingPlanCookie ? "available" : "missing",
+    ...(codingPlanCookie ? {} : { error: "alibaba_cookie_unavailable" }),
   });
   sources.push({
     source: PI_ALIBABA_CREDENTIAL_SOURCE,
@@ -344,9 +402,11 @@ async function inspectAuth(
       ? { error: credentialError(resolution) }
       : {}),
   });
-  if (apiKey) {
-    sources.push({ source: ALIBABA_API_KEY_SOURCE, status: "available" });
-  }
+  sources.push({
+    source: ALIBABA_API_KEY_SOURCE,
+    status: apiKey ? "available" : "missing",
+    ...(apiKey ? {} : { error: "alibaba_api_key_unavailable" }),
+  });
   return { provider: "alibaba", sources };
 }
 
@@ -371,10 +431,50 @@ async function fetchCandidateUsage(
   signal: AbortSignal,
 ): Promise<NormalizedAlibabaUsage> {
   throwIfAborted(signal);
-  if (candidate.kind === "cookie") {
+  if (candidate.kind === "token-plan-cookie") {
     const secToken = await resolveSecToken(
       candidate.value,
       region,
+      region.tokenPlanDashboardURL,
+      "token-plan-console",
+      false,
+      dependencies,
+      signal,
+    );
+    const response = await requestResponse(
+      region.tokenPlanRPCURL,
+      {
+        method: "POST",
+        headers: {
+          Accept: "*/*",
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: candidate.value,
+          "X-Requested-With": "XMLHttpRequest",
+          "User-Agent": "Mozilla/5.0 quota-axi",
+          Origin: region.originURL,
+          Referer: region.tokenPlanDashboardURL,
+          ...csrfHeaders(candidate.value),
+        },
+        body: tokenPlanConsoleRequestBody(
+          region,
+          secToken,
+          cookieValue("cna", candidate.value),
+        ),
+        signal,
+      },
+      dependencies,
+      true,
+    );
+    return parseTokenPlanUsageResponse(response);
+  }
+
+  if (candidate.kind === "coding-plan-cookie") {
+    const secToken = await resolveSecToken(
+      candidate.value,
+      region,
+      region.dashboardURL,
+      "console",
+      region.id === "international",
       dependencies,
       signal,
     );
@@ -472,13 +572,16 @@ async function fetchCandidateUsageAcrossRegions(
 async function resolveSecToken(
   cookie: string,
   region: RegionConfig,
+  dashboardURL: string,
+  authMode: AlibabaAuthMode,
+  retryInChina: boolean,
   dependencies: AlibabaDependencies,
   signal: AbortSignal,
 ): Promise<string> {
   let lastError: AlibabaUsageError | undefined;
   try {
     const dashboard = await requestResponse(
-      region.dashboardURL,
+      dashboardURL,
       {
         method: "GET",
         headers: {
@@ -497,11 +600,7 @@ async function resolveSecToken(
       if (token) return token;
     } else {
       try {
-        assertUsableStatus(
-          dashboard.status,
-          "console",
-          region.id === "international",
-        );
+        assertUsableStatus(dashboard.status, authMode, retryInChina);
       } catch (error) {
         lastError = asAlibabaUsageError(error);
       }
@@ -540,11 +639,7 @@ async function resolveSecToken(
       }
     } else {
       try {
-        assertUsableStatus(
-          userInfo.status,
-          "console",
-          region.id === "international",
-        );
+        assertUsableStatus(userInfo.status, authMode, retryInChina);
       } catch (error) {
         lastError = asAlibabaUsageError(error);
       }
@@ -556,10 +651,7 @@ async function resolveSecToken(
   const cookieToken = cookieValue("sec_token", cookie);
   if (cookieToken) return cookieToken;
   if (lastError) throw lastError;
-  throw new AlibabaUsageError(
-    "alibaba_console_login_required",
-    region.id === "international",
-  );
+  throw new AlibabaUsageError(authFailure(authMode), retryInChina);
 }
 
 export function extractSecTokenFromHtml(html: string): string | undefined {
@@ -633,6 +725,28 @@ export function normalizeAlibabaPayload(
   };
 }
 
+export function normalizeAlibabaTokenPlanPayload(
+  payload: unknown,
+): NormalizedAlibabaUsage {
+  const expanded = expandEmbeddedJson(payload);
+  const root = objectValue(expanded);
+  if (!root) throw new AlibabaUsageError("alibaba_response_invalid");
+  validateTokenPlanServerStatus(root);
+
+  const usage = findObjectWithTokenPlanPercentages(root);
+  const windows = usage ? normalizeTokenPlanWindows(usage) : [];
+  if (windows.length === 0) {
+    throw new AlibabaUsageError("alibaba_token_plan_usage_missing");
+  }
+  return {
+    plan: findPlanName(usage) ?? findPlanName(root) ?? TOKEN_PLAN_LABEL,
+    ...((findPeriod(usage ?? root) ?? findPeriod(root))
+      ? { period: findPeriod(usage ?? root) ?? findPeriod(root) }
+      : {}),
+    windows,
+  };
+}
+
 function parseUsageResponse(
   response: ResponseData,
   authMode: AlibabaAuthMode,
@@ -649,6 +763,23 @@ function parseUsageResponse(
   return normalizeAlibabaPayload(payload, now, authMode, retryInChina);
 }
 
+function parseTokenPlanUsageResponse(
+  response: ResponseData,
+): NormalizedAlibabaUsage {
+  assertUsableStatus(response.status, "token-plan-console", false);
+  const body = decodeUtf8(response.body);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body) as unknown;
+  } catch {
+    if (/^\s*</.test(body)) {
+      throw new AlibabaUsageError("alibaba_token_plan_login_required");
+    }
+    throw new AlibabaUsageError("alibaba_response_invalid");
+  }
+  return normalizeAlibabaTokenPlanPayload(payload);
+}
+
 function assertUsableStatus(
   status: number,
   authMode: AlibabaAuthMode,
@@ -656,12 +787,7 @@ function assertUsableStatus(
 ): void {
   if (status === 200) return;
   if (status === 401 || status === 403) {
-    throw new AlibabaUsageError(
-      authMode === "console"
-        ? "alibaba_console_login_required"
-        : "alibaba_api_key_rejected",
-      retryInChina,
-    );
+    throw new AlibabaUsageError(authFailure(authMode), retryInChina);
   }
   if (status === 429) throw new AlibabaUsageError("alibaba_rate_limited");
   throw new AlibabaUsageError(
@@ -827,15 +953,23 @@ function usageReport(
     : undefined;
   const report: ProviderQuota = {
     provider: "alibaba",
-    label: LABEL,
-    source: candidate.kind === "cookie" ? "web" : "api",
-    plan: usage.plan ?? LABEL,
-    period: usage.period ?? DEFAULT_PERIOD,
+    label: candidate.kind === "token-plan-cookie" ? TOKEN_PLAN_LABEL : LABEL,
+    source: candidate.kind === "api-key" ? "api" : "web",
+    plan:
+      usage.plan ??
+      (candidate.kind === "token-plan-cookie" ? TOKEN_PLAN_LABEL : LABEL),
+    ...(usage.period
+      ? { period: usage.period }
+      : candidate.kind === "token-plan-cookie"
+        ? {}
+        : { period: DEFAULT_PERIOD }),
     region: region.currentRegionId,
     ...(expiresAt ? { expiresAt } : {}),
     ...(usage.models
       ? { models: usage.models }
-      : { models: [...ALIBABA_MODELS] }),
+      : candidate.kind === "token-plan-cookie"
+        ? {}
+        : { models: [...ALIBABA_MODELS] }),
     ...(usage.instance ? { instance: usage.instance } : {}),
     ...(usage.multiplier !== undefined ? { multiplier: usage.multiplier } : {}),
     ...(usage.modelMultipliers
@@ -843,7 +977,9 @@ function usageReport(
       : {}),
     ...(usage.modelLabels
       ? { modelLabels: usage.modelLabels }
-      : { modelLabels: { ...ALIBABA_MODEL_LABELS } }),
+      : candidate.kind === "token-plan-cookie"
+        ? {}
+        : { modelLabels: { ...ALIBABA_MODEL_LABELS } }),
     ...(credential && remainingMilliseconds !== undefined
       ? {
           credential: {
@@ -878,16 +1014,18 @@ function failedReport(
   resolution: AlibabaCredentialResolution,
   environment: AlibabaEnvironment,
 ): ProviderQuota {
+  const tokenPlanConfigured = Boolean(configuredTokenPlanCookie(environment));
+  const label = tokenPlanConfigured ? TOKEN_PLAN_LABEL : LABEL;
   const expiresAt =
     resolution.status === "expired"
       ? new Date(resolution.expiresAtMs).toISOString()
       : undefined;
   return {
     provider: "alibaba",
-    label: LABEL,
+    label,
     source: "unavailable",
-    plan: LABEL,
-    period: DEFAULT_PERIOD,
+    plan: label,
+    ...(tokenPlanConfigured ? {} : { period: DEFAULT_PERIOD }),
     region: configuredRegion(environment).currentRegionId,
     ...(expiresAt ? { expiresAt } : {}),
     ...(expiresAt
@@ -899,12 +1037,18 @@ function failedReport(
           },
         }
       : {}),
-    models: [...ALIBABA_MODELS],
+    ...(tokenPlanConfigured ? {} : { models: [...ALIBABA_MODELS] }),
     windows: [],
     state: {
       status,
       stale: false,
       error,
+      ...(error === "alibaba_token_plan_login_required"
+        ? {
+            reason: "configure_alibaba_token_plan_cookie",
+            remedyCommand: "set ALIBABA_TOKEN_PLAN_COOKIE",
+          }
+        : {}),
       ...(error === "alibaba_console_login_required"
         ? {
             reason: "configure_alibaba_cookie_or_api_key",
@@ -937,9 +1081,11 @@ function failedReport(
 
 function providerStatusFor(error: string): ProviderStatus {
   if (
-    ["alibaba_console_login_required", "alibaba_api_key_rejected"].includes(
-      error,
-    )
+    [
+      "alibaba_token_plan_login_required",
+      "alibaba_console_login_required",
+      "alibaba_api_key_rejected",
+    ].includes(error)
   ) {
     return "auth_required";
   }
@@ -1002,6 +1148,91 @@ function normalizeWindows(quota: Record<string, unknown>): QuotaWindow[] {
     });
   }
   return windows;
+}
+
+function normalizeTokenPlanWindows(
+  usage: Record<string, unknown>,
+): QuotaWindow[] {
+  const windows = new Map<string, QuotaWindow>();
+  for (const [key, raw] of Object.entries(usage)) {
+    const match = /^per(.+)Percentage$/i.exec(key);
+    if (!match) continue;
+    const numeric =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string" && raw.trim()
+          ? Number(raw)
+          : Number.NaN;
+    if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) continue;
+    const percentUsed = Math.min(
+      100,
+      Math.max(0, numeric <= 1 ? numeric * 100 : numeric),
+    );
+    const period = tokenPlanPeriod(match[1]);
+    if (!period || windows.has(period.id)) continue;
+    const resetsAt = firstTimestamp(usage, [
+      `per${match[1]}ResetTime`,
+      `per${match[1]}NextResetTime`,
+      `per${match[1]}QuotaNextRefreshTime`,
+    ]);
+    windows.set(period.id, {
+      id: period.id,
+      label: period.label,
+      kind: period.kind,
+      accounting: "token_plan",
+      percentUsed,
+      percentRemaining: 100 - percentUsed,
+      ...(period.windowSeconds ? { windowSeconds: period.windowSeconds } : {}),
+      ...(resetsAt ? { resetsAt } : {}),
+    });
+  }
+  return [...windows.values()];
+}
+
+function tokenPlanPeriod(raw: string): {
+  id: string;
+  label: string;
+  kind: QuotaWindow["kind"];
+  windowSeconds?: number;
+} | null {
+  const compact = raw.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  if (["5hour", "fivehour"].includes(compact)) {
+    return {
+      id: "five_hour",
+      label: "5-hour",
+      kind: "session",
+      windowSeconds: FIVE_HOURS_SECONDS,
+    };
+  }
+  if (["1week", "week", "7day"].includes(compact)) {
+    return {
+      id: "weekly",
+      label: "weekly",
+      kind: "weekly",
+      windowSeconds: WEEK_SECONDS,
+    };
+  }
+  if (["1month", "month", "billmonth"].includes(compact)) {
+    return { id: "monthly", label: "monthly", kind: "monthly" };
+  }
+  const id = raw
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/(\d)([A-Za-z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  if (!id) return null;
+  return {
+    id,
+    label: id.replaceAll("_", " "),
+    kind: id.includes("week")
+      ? "weekly"
+      : id.includes("month")
+        ? "monthly"
+        : id.includes("hour")
+          ? "session"
+          : "unknown",
+  };
 }
 
 function chooseActiveInstance(
@@ -1207,12 +1438,7 @@ function validateServerStatus(
   ]);
   if (statusCode !== undefined && statusCode !== 0 && statusCode !== 200) {
     if (statusCode === 401 || statusCode === 403) {
-      throw new AlibabaUsageError(
-        authMode === "console"
-          ? "alibaba_console_login_required"
-          : "alibaba_api_key_rejected",
-        retryInChina,
-      );
+      throw new AlibabaUsageError(authFailure(authMode), retryInChina);
     }
     throw new AlibabaUsageError(
       "alibaba_quota_http_error",
@@ -1248,12 +1474,7 @@ function validateServerStatus(
       normalized.includes("apikey") ||
       normalized.includes("unauthorized")
     ) {
-      throw new AlibabaUsageError(
-        authMode === "console"
-          ? "alibaba_console_login_required"
-          : "alibaba_api_key_rejected",
-        retryInChina,
-      );
+      throw new AlibabaUsageError(authFailure(authMode), retryInChina);
     }
     if (
       normalized.includes("login") ||
@@ -1261,13 +1482,122 @@ function validateServerStatus(
       normalized.includes("console session")
     ) {
       throw new AlibabaUsageError(
-        authMode === "console"
-          ? "alibaba_console_login_required"
-          : "alibaba_api_key_unavailable_in_region",
+        authMode === "api-key"
+          ? "alibaba_api_key_unavailable_in_region"
+          : authFailure(authMode),
         retryInChina,
       );
     }
   }
+}
+
+function authFailure(authMode: AlibabaAuthMode): string {
+  if (authMode === "token-plan-console") {
+    return "alibaba_token_plan_login_required";
+  }
+  return authMode === "console"
+    ? "alibaba_console_login_required"
+    : "alibaba_api_key_rejected";
+}
+
+function validateTokenPlanServerStatus(root: Record<string, unknown>): void {
+  validateServerStatus(root, "token-plan-console", false);
+  const diagnosticText = collectStringsForKeys(root, [
+    "code",
+    "errorCode",
+    "error_code",
+    "message",
+    "msg",
+    "ret",
+  ]).map((value) => value.toLowerCase());
+  if (
+    diagnosticText.some((value) =>
+      ["login", "unauthorized", "forbidden", "notlogin", "not_login"].some(
+        (marker) => value.includes(marker),
+      ),
+    )
+  ) {
+    throw new AlibabaUsageError("alibaba_token_plan_login_required");
+  }
+  const codes = collectStringsForKeys(root, [
+    "code",
+    "errorCode",
+    "error_code",
+  ]);
+  if (
+    codes.some((value) => {
+      const normalized = value.trim().toLowerCase();
+      return !["0", "200", "success"].includes(normalized);
+    }) ||
+    hasFalseForKeys(root, ["success", "successResponse"])
+  ) {
+    throw new AlibabaUsageError("alibaba_quota_http_error");
+  }
+}
+
+function findObjectWithTokenPlanPercentages(
+  value: unknown,
+  depth = 0,
+): Record<string, unknown> | undefined {
+  if (depth > 12) return undefined;
+  const object = objectValue(value);
+  if (object) {
+    if (Object.keys(object).some((key) => /^per.+Percentage$/i.test(key))) {
+      return object;
+    }
+    for (const nested of Object.values(object)) {
+      const found = findObjectWithTokenPlanPercentages(nested, depth + 1);
+      if (found) return found;
+    }
+  } else if (Array.isArray(value)) {
+    for (const nested of value) {
+      const found = findObjectWithTokenPlanPercentages(nested, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function collectStringsForKeys(
+  value: unknown,
+  keys: readonly string[],
+  depth = 0,
+): string[] {
+  if (depth > 12) return [];
+  const values: string[] = [];
+  const object = objectValue(value);
+  if (object) {
+    for (const [key, nested] of Object.entries(object)) {
+      if (keys.includes(key)) {
+        const parsed = stringValue(nested);
+        if (parsed) values.push(parsed);
+      }
+      values.push(...collectStringsForKeys(nested, keys, depth + 1));
+    }
+  } else if (Array.isArray(value)) {
+    for (const nested of value) {
+      values.push(...collectStringsForKeys(nested, keys, depth + 1));
+    }
+  }
+  return values;
+}
+
+function hasFalseForKeys(
+  value: unknown,
+  keys: readonly string[],
+  depth = 0,
+): boolean {
+  if (depth > 12) return false;
+  const object = objectValue(value);
+  if (object) {
+    for (const [key, nested] of Object.entries(object)) {
+      if (keys.includes(key) && nested === false) return true;
+      if (hasFalseForKeys(nested, keys, depth + 1)) return true;
+    }
+  } else if (Array.isArray(value)) {
+    return value.some((nested) => hasFalseForKeys(nested, keys, depth + 1));
+  }
+  return false;
 }
 
 function expandEmbeddedJson(value: unknown, depth = 0): unknown {
@@ -1474,8 +1804,20 @@ function timestamp(value: unknown): string | undefined {
     : undefined;
 }
 
-function configuredCookie(environment: AlibabaEnvironment): string | undefined {
-  const value = environment.ALIBABA_CODING_PLAN_COOKIE?.trim();
+function configuredTokenPlanCookie(
+  environment: AlibabaEnvironment,
+): string | undefined {
+  return configuredCookie(environment.ALIBABA_TOKEN_PLAN_COOKIE);
+}
+
+function configuredCodingPlanCookie(
+  environment: AlibabaEnvironment,
+): string | undefined {
+  return configuredCookie(environment.ALIBABA_CODING_PLAN_COOKIE);
+}
+
+function configuredCookie(raw: string | undefined): string | undefined {
+  const value = raw?.trim();
   if (
     !value ||
     value.length > COOKIE_LIMIT_CHARS ||
@@ -1526,19 +1868,11 @@ function consoleRequestBody(
   secToken: string,
   anonymousID: string | undefined,
 ): string {
-  const cornerstoneParam: Record<string, unknown> = {
-    feTraceId: randomUUID().toLowerCase(),
-    feURL: region.dashboardURL,
-    protocol: "V2",
-    console: "ONE_CONSOLE",
-    productCode: "p_efm",
-    domain: region.consoleDomain,
-    consoleSite: region.consoleSite,
-    userNickName: "",
-    userPrincipalName: "",
-    xsp_lang: "en-US",
-    ...(anonymousID ? { "X-Anonymous-Id": anonymousID } : {}),
-  };
+  const cornerstoneParam = consoleCornerstoneParam(
+    region,
+    region.dashboardURL,
+    anonymousID,
+  );
   const params = {
     Api: "zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2",
     V: "1.0",
@@ -1550,6 +1884,54 @@ function consoleRequestBody(
       cornerstoneParam,
     },
   };
+  return consoleFormBody(params, region, secToken);
+}
+
+function tokenPlanConsoleRequestBody(
+  region: RegionConfig,
+  secToken: string,
+  anonymousID: string | undefined,
+): string {
+  const params = {
+    Api: "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage",
+    V: "1.0",
+    Data: {
+      cornerstoneParam: consoleCornerstoneParam(
+        region,
+        region.tokenPlanDashboardURL,
+        anonymousID,
+      ),
+    },
+  };
+  return consoleFormBody(params, region, secToken);
+}
+
+function consoleCornerstoneParam(
+  region: RegionConfig,
+  pageURL: string,
+  anonymousID: string | undefined,
+): Record<string, unknown> {
+  const cornerstoneParam: Record<string, unknown> = {
+    feTraceId: randomUUID().toLowerCase(),
+    feURL: pageURL,
+    protocol: "V2",
+    console: "ONE_CONSOLE",
+    productCode: "p_efm",
+    domain: region.consoleDomain,
+    consoleSite: region.consoleSite,
+    userNickName: "",
+    userPrincipalName: "",
+    xsp_lang: "en-US",
+    ...(anonymousID ? { "X-Anonymous-Id": anonymousID } : {}),
+  };
+  return cornerstoneParam;
+}
+
+function consoleFormBody(
+  params: Record<string, unknown>,
+  region: RegionConfig,
+  secToken: string,
+): string {
   return new URLSearchParams({
     params: JSON.stringify(params),
     region: region.currentRegionId,
