@@ -78,6 +78,7 @@ function semanticsFor(provider: ProviderQuota): QuotaSemantics {
       );
     case "cursor":
     case "copilot":
+    case "alibaba":
       return unknownSemantics(
         provider.windows,
         `quota-axi does not know whether ${provider.label}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,

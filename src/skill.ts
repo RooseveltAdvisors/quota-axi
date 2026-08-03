@@ -3,9 +3,9 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 // Trigger string Claude Code (and other agents) match against to auto-load the skill.
 // Kept terse and outcome-focused so it fires on "check quota/rate limits" intents.
 export const SKILL_DESCRIPTION =
-  "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows via the quota-axi CLI - remaining " +
-  "percentages, reset times, cycle-average pace vs the reset clock, and provider status read from local auth sources, " +
-  "with no routing, recommendation, or provider-side mutation. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
+  "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, and Kimi quota windows plus Alibaba Coding Plan entitlement data via the quota-axi CLI - remaining " +
+  "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan identity, expiry, models, and credential validity read from local auth sources. Alibaba usage is console-only, so quota-axi reports no numeric Alibaba quota or fabricated token metrics. " +
+  "Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
 
@@ -24,6 +24,7 @@ export const HERMES_TAGS = [
   "copilot",
   "grok",
   "kimi",
+  "alibaba",
   "cli",
 ];
 export const HERMES_CATEGORY = "observability";
@@ -73,8 +74,8 @@ or when comparing supported local provider headroom side by side.
 
 ## Workflow
 
-1. Run \`npx -y quota-axi\` for compact TOON output covering supported providers' quota windows.
-2. Scope to one provider with \`--provider claude\` or to a subset with \`--provider cursor,copilot,grok,kimi\`.
+1. Run \`npx -y quota-axi\` for compact TOON output covering supported providers' quota windows and entitlement state.
+2. Scope to one provider with \`--provider claude\` or to a subset with \`--provider cursor,copilot,grok,kimi,alibaba\`.
 3. Pass \`--json\` for the normalized machine-readable model instead of TOON. Read
    \`quotaSemantics.effectiveAvailability\` rather than treating a model window in isolation:
    account windows can bound every model, and \`boundedBy\` names every window included in the
@@ -121,6 +122,12 @@ or when comparing supported local provider headroom side by side.
    \`~/.grok/auth.json\`. That fallback is used only when no Grok auth location is configured;
    setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
    to that location instead.
+13. Alibaba Coding Plan is reported as an entitlement-only provider. Its Pi source is
+   \`pi:alibaba-plan\` in \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`).
+   The report includes plan identity, period, region, expiry, models, and credential validity,
+   but no fabricated numeric quota windows: Alibaba exposes Coding Plan usage only in its
+   console. Alibaba's Pi \`refresh\` value stores endpoint configuration, not a refresh grant;
+   expired credentials therefore fail closed, and \`--no-refresh\` remains a read-only escape hatch.
 
 ## Usage
 
