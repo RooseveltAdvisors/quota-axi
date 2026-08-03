@@ -91,6 +91,12 @@ export type QuotaWindow = {
   id: string;
   label: string;
   kind: "session" | "weekly" | "monthly" | "model" | "credits" | "unknown";
+  /** Provider-declared accounting basis; never inferred from a percentage. */
+  accounting?: "request_quota" | "credit_balance" | "token_plan";
+  /** Raw server counters when the provider exposes them. */
+  used?: number;
+  limit?: number;
+  multiplier?: number;
   percentUsed?: number;
   percentRemaining?: number;
   startsAt?: string;
@@ -136,6 +142,14 @@ export type ProviderQuota = {
   expiresAt?: string;
   region?: string;
   models?: string[];
+  instance?: {
+    id?: string;
+    name?: string;
+    status?: string;
+  };
+  multiplier?: number;
+  modelMultipliers?: Record<string, number>;
+  modelLabels?: Record<string, string>;
   credential?: {
     status: "fresh" | "expiring" | "expired";
     expiresAt?: string;
