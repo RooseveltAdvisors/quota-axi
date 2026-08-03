@@ -411,6 +411,50 @@ describe("Alibaba Coding Plan quota", () => {
     });
   });
 
+  it("discovers supported quota aliases without a quota-info wrapper", () => {
+    const normalized = normalizeAlibabaPayload(
+      {
+        data: {
+          codingPlanInstanceInfos: [
+            {
+              planName: "Alias Plan",
+              status: "ACTIVE",
+              perFiveHourUsedQuota: 25,
+              perFiveHourTotalQuota: 100,
+              perFiveHourQuotaNextRefreshTime:
+                "2030-01-01T05:00:00.000Z",
+              perWeekUsedQuota: 200,
+              perWeekTotalQuota: 1_000,
+              perMonthUsedQuota: 300,
+              perMonthTotalQuota: 2_000,
+              perMonthQuotaNextRefreshTime: "2030-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+      NOW,
+    );
+
+    expect(normalized).toMatchObject({
+      plan: "Alias Plan",
+      windows: [
+        {
+          id: "five_hour",
+          used: 25,
+          limit: 100,
+          resetsAt: "2030-01-01T05:00:00.000Z",
+        },
+        { id: "weekly", used: 200, limit: 1_000 },
+        {
+          id: "monthly",
+          used: 300,
+          limit: 2_000,
+          resetsAt: "2030-02-01T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
   it("surfaces API-mode console login as a regional API limitation", async () => {
     const fetch = vi.fn(async () =>
       response({ code: "0", statusMessage: "ConsoleNeedLogin" }),

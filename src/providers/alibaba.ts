@@ -45,6 +45,32 @@ const OPERATION_DEADLINE_MS = 15_000;
 const RESPONSE_LIMIT_BYTES = 262_144;
 const FIVE_HOURS_SECONDS = 18_000;
 const WEEK_SECONDS = 604_800;
+const QUOTA_FIELD_ALIASES = {
+  fiveHour: {
+    used: ["per5HourUsedQuota", "perFiveHourUsedQuota"],
+    limit: ["per5HourTotalQuota", "perFiveHourTotalQuota"],
+    reset: [
+      "per5HourQuotaNextRefreshTime",
+      "perFiveHourQuotaNextRefreshTime",
+    ],
+  },
+  weekly: {
+    used: ["perWeekUsedQuota"],
+    limit: ["perWeekTotalQuota"],
+    reset: ["perWeekQuotaNextRefreshTime"],
+  },
+  monthly: {
+    used: ["perBillMonthUsedQuota", "perMonthUsedQuota"],
+    limit: ["perBillMonthTotalQuota", "perMonthTotalQuota"],
+    reset: [
+      "perBillMonthQuotaNextRefreshTime",
+      "perMonthQuotaNextRefreshTime",
+    ],
+  },
+} as const;
+const QUOTA_DISCOVERY_FIELDS = Object.values(QUOTA_FIELD_ALIASES).flatMap(
+  ({ used, limit }) => [...used, ...limit],
+);
 const COOKIE_LIMIT_CHARS = 128 * 1024;
 const DASHBOARD_URL =
   "https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=coding-plan#/efm/coding_plan";
@@ -928,33 +954,27 @@ function normalizeWindows(quota: Record<string, unknown>): QuotaWindow[] {
       id: "five_hour",
       label: "5-hour",
       kind: "session" as const,
-      used: ["per5HourUsedQuota", "perFiveHourUsedQuota"],
-      limit: ["per5HourTotalQuota", "perFiveHourTotalQuota"],
-      reset: [
-        "per5HourQuotaNextRefreshTime",
-        "perFiveHourQuotaNextRefreshTime",
-      ],
+      used: QUOTA_FIELD_ALIASES.fiveHour.used,
+      limit: QUOTA_FIELD_ALIASES.fiveHour.limit,
+      reset: QUOTA_FIELD_ALIASES.fiveHour.reset,
       windowSeconds: FIVE_HOURS_SECONDS,
     },
     {
       id: "weekly",
       label: "weekly",
       kind: "weekly" as const,
-      used: ["perWeekUsedQuota"],
-      limit: ["perWeekTotalQuota"],
-      reset: ["perWeekQuotaNextRefreshTime"],
+      used: QUOTA_FIELD_ALIASES.weekly.used,
+      limit: QUOTA_FIELD_ALIASES.weekly.limit,
+      reset: QUOTA_FIELD_ALIASES.weekly.reset,
       windowSeconds: WEEK_SECONDS,
     },
     {
       id: "monthly",
       label: "billing month",
       kind: "monthly" as const,
-      used: ["perBillMonthUsedQuota", "perMonthUsedQuota"],
-      limit: ["perBillMonthTotalQuota", "perMonthTotalQuota"],
-      reset: [
-        "perBillMonthQuotaNextRefreshTime",
-        "perMonthQuotaNextRefreshTime",
-      ],
+      used: QUOTA_FIELD_ALIASES.monthly.used,
+      limit: QUOTA_FIELD_ALIASES.monthly.limit,
+      reset: QUOTA_FIELD_ALIASES.monthly.reset,
     },
   ];
   const windows: QuotaWindow[] = [];
@@ -1054,14 +1074,7 @@ function findQuotaInfo(
     "coding_plan_quota_info",
   ]);
   if (direct) return direct;
-  return findFirstObjectByFields(value, [
-    "per5HourUsedQuota",
-    "per5HourTotalQuota",
-    "perWeekUsedQuota",
-    "perWeekTotalQuota",
-    "perBillMonthUsedQuota",
-    "perBillMonthTotalQuota",
-  ]);
+  return findFirstObjectByFields(value, QUOTA_DISCOVERY_FIELDS);
 }
 
 function findPlanName(
@@ -1401,7 +1414,7 @@ function firstString(
 
 function firstNumber(
   value: Record<string, unknown>,
-  keys: string[],
+  keys: readonly string[],
 ): number | undefined {
   for (const key of keys) {
     const raw = value[key];
@@ -1427,7 +1440,7 @@ function firstBoolean(
 
 function firstTimestamp(
   value: Record<string, unknown>,
-  keys: string[],
+  keys: readonly string[],
 ): string | undefined {
   for (const key of keys) {
     const parsed = timestamp(value[key]);
