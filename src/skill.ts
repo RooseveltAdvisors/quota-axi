@@ -123,14 +123,16 @@ or when comparing supported local provider headroom side by side.
    setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
    to that location instead.
 13. Alibaba Coding Plan prefers an explicit CodexBar-compatible
-   \`$ALIBABA_CODING_PLAN_COOKIE\` for the international console RPC. It discovers \`sec_token\`
+   \`$ALIBABA_CODING_PLAN_COOKIE\` for the configured region's console RPC: international Model
+   Studio by default, or China Bailian when \`$ALIBABA_CODING_PLAN_REGION\` is \`cn-beijing\`
+   (also \`cn\` or \`china\`). It discovers \`sec_token\`
    from dashboard HTML, user-info JSON, or the cookie, and never imports or persists browser
    cookies. If no cookie is configured, quota-axi tries the Pi
    \`pi:alibaba-plan\` entry in \`$PI_CODING_AGENT_DIR/auth.json\` (default \`~/.pi/agent/auth.json\`)
    through Alibaba's API-key-compatible path, then the documented
    \`$ALIBABA_CODING_PLAN_API_KEY\`, \`$ALIBABA_QWEN_API_KEY\`, or \`$DASHSCOPE_API_KEY\` aliases.
-   Set \`$ALIBABA_CODING_PLAN_REGION=cn-beijing\` for the China API configuration; international
-   is the default.
+   Set \`$ALIBABA_CODING_PLAN_REGION=cn-beijing\` for the China API and console configuration;
+   international is the default.
 14. Alibaba windows are server-reported request quotas: 5-hour, weekly, and billing-month
    counters, reset timestamps, raw used/limit values, and optional plan/instance/model labels
    and multipliers. Read \`accounting: request_quota\` explicitly; quota-axi does not convert
