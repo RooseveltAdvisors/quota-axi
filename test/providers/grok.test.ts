@@ -1925,6 +1925,43 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       },
     ]);
   });
+
+  it.each(["GROK_AUTH_PATH", "GROK_HOME"] as const)(
+    "does not inspect Pi when %s pins standalone auth",
+    async (variable) => {
+      delete process.env.GROK_AUTH_JSON;
+      delete process.env.GROK_AUTH_PATH;
+      delete process.env.GROK_HOME;
+      const configured = join(tempDir!, `pinned-${variable}`);
+      const authPath =
+        variable === "GROK_HOME" ? join(configured, "auth.json") : configured;
+      process.env[variable] = configured;
+      writeAuth(
+        {
+          current: {
+            key: "pinned-key",
+            expires_at: "2035-01-01T00:00:00.000Z",
+          },
+        },
+        authPath,
+      );
+      writeValidPiXaiOauth();
+      const inspect = vi.fn(async () => ({ status: "available" as const }));
+      const adapter = createGrokAdapter({
+        piXaiBroker: {
+          resolve: async () => ({ status: "missing" }),
+          inspect,
+        },
+      });
+
+      const report = await adapter.inspectAuth({ allowKeychainPrompt: false });
+
+      expect(report.sources).toEqual([
+        { source: "auth-json", path: authPath, status: "available" },
+      ]);
+      expect(inspect).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("Grok cache provenance", () => {

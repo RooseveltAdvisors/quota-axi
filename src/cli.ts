@@ -113,16 +113,18 @@ export function normalizeArgv(raw: string[]): string[] {
   );
   const commandIndex = findCommand(raw);
   if (helpIndex >= 0) {
-    const commandHelp = raw[helpIndex] === "--help" && commandIndex >= 0;
-    if (!commandHelp) return ["--help"];
+    if (commandIndex < 0) return ["--help"];
+    const commandArgv = raw.map((arg, index) =>
+      index === helpIndex && arg === "-h" ? "--help" : arg,
+    );
     if (commandIndex > 0) {
       return [
         raw[commandIndex],
-        ...raw.slice(0, commandIndex),
-        ...raw.slice(commandIndex + 1),
+        ...commandArgv.slice(0, commandIndex),
+        ...commandArgv.slice(commandIndex + 1),
       ];
     }
-    return raw;
+    return commandArgv;
   }
   const versionIndex = findLegacyFlag(raw, isVersionFlag);
   if (versionIndex >= 0) {

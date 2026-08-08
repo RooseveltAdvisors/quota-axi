@@ -191,9 +191,9 @@ describe("argv normalization", () => {
     expect(normalizeArgv(["--version"])).toEqual(["--version"]);
   });
 
-  it("routes legacy help aliases to top-level help with commands", () => {
-    expect(normalizeArgv(["auth", "-h"])).toEqual(["--help"]);
-    expect(normalizeArgv(["-h", "quota"])).toEqual(["--help"]);
+  it("routes legacy help aliases to command-specific help", () => {
+    expect(normalizeArgv(["auth", "-h"])).toEqual(["auth", "--help"]);
+    expect(normalizeArgv(["-h", "quota"])).toEqual(["quota", "--help"]);
   });
 
   it("routes flag-first explicit commands to the command token", () => {
@@ -725,7 +725,7 @@ describe("CLI plumbing via the axi SDK", () => {
   });
 
   it("prints the top-level help for legacy -h", async () => {
-    const output = await capture(["auth", "-h"]);
+    const output = await capture(["-h"]);
     expect(output).toContain("usage: quota-axi [quota|auth|models] [flags]");
     expect(process.exitCode).toBeUndefined();
   });
@@ -736,19 +736,29 @@ describe("CLI plumbing via the axi SDK", () => {
     expect(quota).not.toContain("--intelligence");
     expect(quota).not.toContain("--sort");
 
-    const auth = await capture(["auth", "--help"]);
-    expect(auth).toContain("usage: quota-axi auth [flags]");
-    expect(auth).not.toContain("--tui");
-    expect(auth).not.toContain("--refresh");
-    expect(auth).not.toContain("--intelligence");
-    expect(auth).not.toContain("--sort");
+    const authOutputs = await Promise.all([
+      capture(["auth", "--help"]),
+      capture(["auth", "-h"]),
+    ]);
+    for (const auth of authOutputs) {
+      expect(auth).toContain("usage: quota-axi auth [flags]");
+      expect(auth).not.toContain("--tui");
+      expect(auth).not.toContain("--refresh");
+      expect(auth).not.toContain("--intelligence");
+      expect(auth).not.toContain("--sort");
+    }
 
-    const models = await capture(["models", "--help"]);
-    expect(models).toContain("--intelligence");
-    expect(models).toContain("--sort");
-    expect(models).not.toContain("--tui");
-    expect(models).not.toContain("--refresh");
-    expect(models).not.toContain("--once");
+    const modelsOutputs = await Promise.all([
+      capture(["models", "--help"]),
+      capture(["models", "-h"]),
+    ]);
+    for (const models of modelsOutputs) {
+      expect(models).toContain("--intelligence");
+      expect(models).toContain("--sort");
+      expect(models).not.toContain("--tui");
+      expect(models).not.toContain("--refresh");
+      expect(models).not.toContain("--once");
+    }
     expect(process.exitCode).toBeUndefined();
   });
 

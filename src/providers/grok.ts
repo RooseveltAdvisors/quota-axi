@@ -334,7 +334,11 @@ async function inspectAuthWithDependencies(
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
   const cliState = await readCredentialState(options);
-  if (cliState.source.source === PI_XAI_CREDENTIAL_SOURCE) {
+  const allowIndependentPi = independentPiSourceAllowed();
+  if (
+    !allowIndependentPi ||
+    cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
+  ) {
     return { provider: "grok", sources: [cliState.source] };
   }
   const piInspection = await dependencies.piXaiBroker.inspect();
