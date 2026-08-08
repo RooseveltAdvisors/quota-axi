@@ -1,4 +1,0 @@
-{
-  "code": 0,
-  "data": "{\"codingPlanInstanceInfos\":[{\"instanceId\":\"fixture-instance\",\"instanceName\":\"Fixture Coding Plan\",\"status\":\"ACTIVE\",\"period\":\"monthly\",\"models\":[{\"name\":\"Fixture Model\",\"multiplier\":1.25,\"label\":\"Fixture Model label\"}],\"codingPlanQuotaInfo\":{\"per5HourUsedQuota\":25,\"per5HourTotalQuota\":100,\"per5HourQuotaNextRefreshTime\":\"2030-01-01T05:00:00.000Z\",\"perWeekUsedQuota\":200,\"perWeekTotalQuota\":1000,\"perWeekQuotaNextRefreshTime\":\"2030-01-07T00:00:00.000Z\",\"perBillMonthUsedQuota\":300,\"perBillMonthTotalQuota\":2000,\"perBillMonthQuotaNextRefreshTime\":\"2030-02-01T00:00:00.000Z\"}}]}"
-}

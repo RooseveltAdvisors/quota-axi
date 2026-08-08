@@ -3,13 +3,13 @@
 Thanks for wanting to contribute.
 One rule up front:
 
-**Pull requests must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes), except for the repository's release and dependency automation.**
+**Human-authored pull requests targeting `main` must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes).**
 We require this to reduce the maintainer's burden of reviewing and merging contributions.
 
 `no-mistakes` puts a local git proxy in front of your real remote.
 Pushing through it runs an AI-driven review/test/lint pipeline in an isolated worktree, forwards the push upstream only after every check passes, and opens a clean PR automatically.
 
-A GitHub Actions check (`Require no-mistakes`) runs on every PR and fails if the body is missing the deterministic signature that no-mistakes writes.
+A GitHub Actions check (`Require no-mistakes`) runs on PRs targeting `main` and fails if the body is missing the deterministic signature that no-mistakes writes.
 The release and dependency bots are exempt so their automation keeps working, but regular contributor PRs without the signature will not be reviewed or merged.
 
 ## Workflow
@@ -33,7 +33,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 ## Repo conventions
 
-- Node 22.19+, TypeScript, ESM-only.
+- Node 20+, TypeScript, ESM-only.
 - Install dependencies with `pnpm install --frozen-lockfile`; run `pnpm run build`, `pnpm run lint`, `pnpm run format:check`, `pnpm test`, and `pnpm run build:skill -- --check` before pushing.
 - Run `pnpm run format` when `pnpm run format:check` reports formatting drift.
 - After changing dependencies, run `pnpm exec prettier --write pnpm-lock.yaml` so the committed lockfile keeps its Prettier formatting.
@@ -45,7 +45,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   It points at commit `9f5dc949c50ab8ac0a441be777e1c3693ee0b612`, the published npm `0.1.0` baseline.
 - Do not hand-edit `skills/quota-axi/SKILL.md`.
   It is generated from the shared skill source, including frontmatter metadata; run `pnpm run build:skill` and commit the result.
-- Keep changes within the product boundary documented in [README Security Posture](README.md#security-posture).
+- quota-axi is data only: it must never route, recommend, proxy, intercept, log in, import browser cookies, or mutate provider state. Keep changes within that boundary.
 
 ## Questions
 

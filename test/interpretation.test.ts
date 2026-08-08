@@ -125,36 +125,6 @@ describe("quota semantics", () => {
     ).toBe(true);
   });
 
-  it("keeps legacy Claude Opus scopes independent across seats", () => {
-    const result = withQuotaSemantics(
-      provider("claude", [
-        window("arcs:five_hour", "session", 80),
-        window("arcs:seven_day_opus", "model", 31),
-        window("jr:five_hour", "session", 70),
-        window("jr:seven_day_opus", "model", 62),
-      ]),
-      GENERATED_AT,
-    );
-
-    expect(result.quotaSemantics?.status).toBe("known");
-    expect(
-      result.quotaSemantics?.effectiveAvailability.map(({ scope }) => scope),
-    ).toEqual([
-      "arcs:all_models",
-      "arcs:seven_day_opus",
-      "jr:all_models",
-      "jr:seven_day_opus",
-    ]);
-    expect(
-      result.quotaSemantics?.effectiveAvailability.find(
-        ({ scope }) => scope === "jr:seven_day_opus",
-      ),
-    ).toMatchObject({
-      effectivePercentRemaining: 62,
-      boundedBy: ["jr:five_hour", "jr:seven_day_opus"],
-    });
-  });
-
   it("does not block Claude effective runway when five_hour has not been triggered yet (no resetsAt)", () => {
     const result = withQuotaSemantics(
       provider("claude", [
@@ -336,12 +306,7 @@ describe("quota semantics", () => {
   });
 
   it("keeps valid Kimi bounds while marking unparsed limits partial", () => {
-    const kimi = provider("kimi", [
-      window("weekly", "weekly", 59, {
-        windowSeconds: WEEK_SECONDS,
-        resetsAt: weeklyResetsAt(0.2),
-      }),
-    ]);
+    const kimi = provider("kimi", [window("weekly", "weekly", 59)]);
     kimi.state.untrustedWindowIds = ["limit:2"];
 
     const result = withQuotaSemantics(kimi, GENERATED_AT);
@@ -356,33 +321,16 @@ describe("quota semantics", () => {
           status: "unknown",
           boundedBy: ["weekly"],
           pace: {
-            status: "ahead",
-            aheadWindowIds: ["weekly"],
-            worstReservePercentPoints: -21,
-            worstReserveWindowId: "weekly",
+            status: "unknown",
+            unknownWindowIds: ["weekly"],
           },
           runway: {
             status: "unknown",
-            unmeasurableWindowIds: ["limit:2"],
+            unmeasurableWindowIds: ["weekly", "limit:2"],
           },
         },
       ],
       unresolvedWindowIds: ["limit:2"],
-    });
-  });
-
-  it("preserves Kimi exhaustion when an additional limit is unresolved", () => {
-    const kimi = provider("kimi", [window("weekly", "weekly", 0)]);
-    kimi.state.untrustedWindowIds = ["limit:2"];
-
-    const result = withQuotaSemantics(kimi, GENERATED_AT);
-    const runway = result.quotaSemantics?.effectiveAvailability[0]?.runway;
-
-    expect(runway).toEqual({
-      status: "exhausted_now",
-      usableRunwaySeconds: 0,
-      limitingWindowId: "weekly",
-      projectedExhaustedAt: GENERATED_AT,
     });
   });
 

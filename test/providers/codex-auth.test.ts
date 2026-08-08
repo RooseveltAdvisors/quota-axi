@@ -199,7 +199,6 @@ describe("Codex credential-state reporting", () => {
                 reset_after_seconds: 1000,
                 limit_window_seconds: 18_000,
               },
-              secondary_window: { used_percent: 40 },
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },

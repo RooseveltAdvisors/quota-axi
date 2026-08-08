@@ -36,7 +36,6 @@ export async function quotaCommand(
   const flags = parseFlags(args);
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
-    refreshCredentials: !flags.noRefresh,
   };
 
   if (flags.tui) return quotaTuiReport(flags, options);
@@ -136,7 +135,6 @@ export async function modelsCommand(
   const flags = parseModelsFlags(args);
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
-    refreshCredentials: !flags.noRefresh,
   };
   const quota = await fetchQuota(flags.providers, options);
   writeCachedProvidersBestEffort(quota.providers);
@@ -169,7 +167,6 @@ export async function authCommand(
   }
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
-    refreshCredentials: !flags.noRefresh,
   };
 
   const reports = await inspectAuth(flags.providers, options);

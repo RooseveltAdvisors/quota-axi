@@ -4,8 +4,7 @@ export type ProviderId =
   | "cursor"
   | "copilot"
   | "grok"
-  | "kimi"
-  | "alibaba";
+  | "kimi";
 
 export const PROVIDER_IDS = [
   "claude",
@@ -14,7 +13,6 @@ export const PROVIDER_IDS = [
   "copilot",
   "grok",
   "kimi",
-  "alibaba",
 ] as const satisfies readonly ProviderId[];
 
 export type ProviderSource =
@@ -39,8 +37,9 @@ export type ProviderStatus =
  */
 export type ProviderAuthStatus = "usable" | "expired_refreshable" | "unusable";
 
-/** Provider-specific diagnostic text; known values remain stable where useful. */
-export type ProviderStateReason = string;
+export type ProviderStateReason =
+  | "keychain_access_required"
+  | "credentials_expired";
 
 export type QuotaPaceStatus = "ahead" | "on_pace" | "behind" | "unknown";
 
@@ -123,12 +122,6 @@ export type QuotaWindow = {
   id: string;
   label: string;
   kind: "session" | "weekly" | "monthly" | "model" | "credits" | "unknown";
-  /** Provider-declared accounting basis; never inferred from a percentage. */
-  accounting?: "request_quota" | "credit_balance" | "token_plan";
-  /** Raw server counters when the provider exposes them. */
-  used?: number;
-  limit?: number;
-  multiplier?: number;
   percentUsed?: number;
   percentRemaining?: number;
   startsAt?: string;
@@ -175,23 +168,6 @@ export type ProviderQuota = {
   label: string;
   source: ProviderSource;
   plan?: string;
-  period?: string;
-  expiresAt?: string;
-  region?: string;
-  models?: string[];
-  instance?: {
-    id?: string;
-    name?: string;
-    status?: string;
-  };
-  multiplier?: number;
-  modelMultipliers?: Record<string, number>;
-  modelLabels?: Record<string, string>;
-  credential?: {
-    status: "fresh" | "expiring" | "expired";
-    expiresAt?: string;
-    remainingSeconds?: number;
-  };
   account?: {
     email?: string;
     organization?: string;
@@ -234,8 +210,6 @@ export type QuotaAxiResponse = {
 
 export type ProviderOptions = {
   allowKeychainPrompt: boolean;
-  /** Defaults to enabled when omitted for direct adapter callers. */
-  refreshCredentials?: boolean;
 };
 
 export type ProviderAdapter = {
@@ -291,7 +265,6 @@ export type ModelQuotaRecord = {
   id: string;
   label: string;
   intelligence: IntelligenceBucket;
-  seat?: string;
   /** The effective availability scope used as evidence for this row. */
   quotaScopes: string[];
   /** Omitted when quota relationships are unavailable or unknown. */
@@ -299,7 +272,7 @@ export type ModelQuotaRecord = {
   state: ProviderStateSummary;
 };
 
-export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id" | "seat">;
+export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id">;
 
 /** Opt-in ordering keys. Future keys require their own evidence and docs. */
 export type ModelSortKey = "runway";

@@ -9,7 +9,6 @@ export type QuotaFlags = {
   full: boolean;
   tui: boolean;
   allowKeychainPrompt: boolean;
-  noRefresh: boolean;
   /** Live `--tui` refresh interval; the caller applies the default. */
   refreshSeconds?: number;
   /** Render one `--tui` frame and exit instead of staying live. */
@@ -76,7 +75,6 @@ function parseCommonFlags(
   let once = false;
   let refreshSeconds: number | undefined;
   let allowKeychainPrompt = false;
-  let noRefresh = process.env.QUOTA_AXI_NO_REFRESH === "1";
   let intelligence: IntelligenceBucket | undefined;
   let sort: ModelSortKey | undefined;
 
@@ -112,10 +110,6 @@ function parseCommonFlags(
     }
     if (arg === "--allow-keychain-prompt") {
       allowKeychainPrompt = true;
-      continue;
-    }
-    if (arg === "--no-refresh") {
-      noRefresh = true;
       continue;
     }
     if (arg === "--intelligence") {
@@ -190,7 +184,6 @@ function parseCommonFlags(
     tui,
     once,
     allowKeychainPrompt,
-    noRefresh,
     ...(refreshSeconds !== undefined ? { refreshSeconds } : {}),
     ...(intelligence ? { intelligence } : {}),
     ...(sort ? { sort } : {}),
@@ -247,9 +240,7 @@ function parseProviderScope(value: string | undefined): ProviderId[] {
     throw new AxiError(
       error instanceof Error ? error.message : "unsupported provider",
       "VALIDATION_ERROR",
-      [
-        "Supported providers: claude, codex, cursor, copilot, grok, kimi, alibaba",
-      ],
+      ["Supported providers: claude, codex, cursor, copilot, grok, kimi"],
     );
   }
 }

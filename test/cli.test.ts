@@ -19,11 +19,7 @@ const originalCursorProvider = PROVIDERS.cursor;
 const originalCopilotProvider = PROVIDERS.copilot;
 const originalGrokProvider = PROVIDERS.grok;
 const originalKimiProvider = PROVIDERS.kimi;
-const originalAlibabaProvider = PROVIDERS.alibaba;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalQuotaAxiEnvFile = process.env.QUOTA_AXI_ENV_FILE;
-const originalAlibabaTokenPlanCookie = process.env.ALIBABA_TOKEN_PLAN_COOKIE;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -33,17 +29,8 @@ afterEach(() => {
   PROVIDERS.copilot = originalCopilotProvider;
   PROVIDERS.grok = originalGrokProvider;
   PROVIDERS.kimi = originalKimiProvider;
-  PROVIDERS.alibaba = originalAlibabaProvider;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
-  if (originalQuotaAxiEnvFile === undefined)
-    delete process.env.QUOTA_AXI_ENV_FILE;
-  else process.env.QUOTA_AXI_ENV_FILE = originalQuotaAxiEnvFile;
-  if (originalAlibabaTokenPlanCookie === undefined)
-    delete process.env.ALIBABA_TOKEN_PLAN_COOKIE;
-  else process.env.ALIBABA_TOKEN_PLAN_COOKIE = originalAlibabaTokenPlanCookie;
-  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
   process.exitCode = undefined;
@@ -59,15 +46,14 @@ describe("CLI flag parsing", () => {
       "copilot",
       "grok",
       "kimi",
-      "alibaba",
     ]);
   });
 
   it("scopes comma-separated providers", () => {
     expect(parseFlags(["--provider", "claude"]).providers).toEqual(["claude"]);
     expect(
-      parseFlags(["--provider=cursor,copilot,grok,kimi,alibaba"]).providers,
-    ).toEqual(["cursor", "copilot", "grok", "kimi", "alibaba"]);
+      parseFlags(["--provider=cursor,copilot,grok,kimi"]).providers,
+    ).toEqual(["cursor", "copilot", "grok", "kimi"]);
   });
 
   it("ignores a standalone argument separator", () => {
@@ -80,21 +66,12 @@ describe("CLI flag parsing", () => {
   it("collects the boolean flags", () => {
     expect(parseFlags(["--json", "--full", "--allow-keychain-prompt"])).toEqual(
       {
-        providers: [
-          "claude",
-          "codex",
-          "cursor",
-          "copilot",
-          "grok",
-          "kimi",
-          "alibaba",
-        ],
+        providers: ["claude", "codex", "cursor", "copilot", "grok", "kimi"],
         json: true,
         full: true,
         tui: false,
         once: false,
         allowKeychainPrompt: true,
-        noRefresh: false,
       },
     );
     expect(parseFlags(["--tui"]).tui).toBe(true);
@@ -149,10 +126,6 @@ describe("CLI flag parsing", () => {
     ).rejects.toThrow("--tui is only supported by the quota command");
   });
 
-  it("disables OAuth renewal when requested", () => {
-    expect(parseFlags(["--no-refresh"]).noRefresh).toBe(true);
-  });
-
   it("rejects unsupported providers", () => {
     expect(() => parseFlags(["--provider", "gemini"])).toThrow(
       "unsupported provider",
@@ -191,9 +164,9 @@ describe("argv normalization", () => {
     expect(normalizeArgv(["--version"])).toEqual(["--version"]);
   });
 
-  it("routes legacy help aliases to command-specific help", () => {
-    expect(normalizeArgv(["auth", "-h"])).toEqual(["auth", "--help"]);
-    expect(normalizeArgv(["-h", "quota"])).toEqual(["quota", "--help"]);
+  it("routes legacy help aliases to top-level help with commands", () => {
+    expect(normalizeArgv(["auth", "-h"])).toEqual(["--help"]);
+    expect(normalizeArgv(["-h", "quota"])).toEqual(["--help"]);
   });
 
   it("routes flag-first explicit commands to the command token", () => {
@@ -205,61 +178,12 @@ describe("argv normalization", () => {
     expect(normalizeArgv(["--check", "update"])).toEqual(["update", "--check"]);
   });
 
-  it("does not route value-taking flag operands as commands", () => {
-    expect(normalizeArgv(["--refresh", "update"])).toEqual([
-      "quota",
-      "--refresh",
-      "update",
-    ]);
-    expect(normalizeArgv(["--sort", "auth"])).toEqual([
-      "quota",
-      "--sort",
-      "auth",
-    ]);
-    expect(normalizeArgv(["--intelligence", "models"])).toEqual([
-      "quota",
-      "--intelligence",
-      "models",
-    ]);
-  });
-
   it("leaves an unknown command for the SDK to reject", () => {
     expect(normalizeArgv(["boguscmd"])).toEqual(["boguscmd"]);
   });
 });
 
 describe("CLI quota rendering", () => {
-  it("loads the user env file before provider auth reads", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "quota-axi-cli-env-"));
-    const envFile = join(tempDir, "env");
-    process.env.QUOTA_AXI_ENV_FILE = envFile;
-    process.env.XDG_CACHE_HOME = join(tempDir, "cache");
-    delete process.env.ALIBABA_TOKEN_PLAN_COOKIE;
-    writeFileSync(envFile, "ALIBABA_TOKEN_PLAN_COOKIE=cli-cookie-fixture\n");
-    let observedCookie: string | undefined;
-    PROVIDERS.alibaba = {
-      id: "alibaba",
-      label: "Alibaba",
-      async fetchQuota() {
-        observedCookie = process.env.ALIBABA_TOKEN_PLAN_COOKIE;
-        return {
-          provider: "alibaba",
-          label: "Alibaba",
-          source: "web",
-          windows: [],
-          state: { status: "fresh", stale: false, sourcesTried: ["web"] },
-        };
-      },
-      async inspectAuth() {
-        return { provider: "alibaba", sources: [] };
-      },
-    };
-
-    await capture(["--provider", "alibaba"]);
-
-    expect(observedCookie).toBe("cli-cookie-fixture");
-  });
-
   it("renders live quota when cache persistence fails", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "quota-axi-cli-cache-"));
     const blockedCacheRoot = join(tempDir, "cache-root");
@@ -598,19 +522,19 @@ describe("CLI quota rendering", () => {
 
     const compact = await capture(["--provider", "claude,codex"]);
     expect(compact).toContain(
-      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:",
+      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,state}:",
     );
     expect(compact).toContain(
-      "effective[2]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
+      "effective[2]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
     );
     expect(compact).toContain(
-      'claude,all_models,1,five_hour,five_hour,on_pace,none,none,-1,projected_exhaustion,178,"2026-07-15T12:02:58.181Z",five_hour,established,cycle_average,none,none,known',
+      'claude,all_models,1,five_hour,five_hour,projected_exhaustion,178,"2026-07-15T12:02:58.181Z",five_hour,established,cycle_average,none,none,known',
     );
     expect(compact).toContain(
-      'codex,all_models,55,weekly,weekly,ahead,weekly,none,-10,projected_exhaustion,258720,"2026-07-18T11:52:00.000Z",weekly,established,cycle_average,none,none,known',
+      'codex,all_models,55,weekly,weekly,projected_exhaustion,258720,"2026-07-18T11:52:00.000Z",weekly,established,cycle_average,none,none,known',
     );
     expect(compact).not.toContain("windowPace[");
-    expect(compact).toContain("worstReserve");
+    expect(compact).not.toContain("worstReserve");
 
     const full = await capture(["--provider", "claude,codex", "--full"]);
     expect(full).toContain(
@@ -631,16 +555,16 @@ describe("CLI quota rendering", () => {
     const toon = await capture(["--provider", "kimi"]);
     expect(toon).toContain("kimi,unknown,api,fresh");
     expect(toon).toContain(
-      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:",
+      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,state}:",
     );
     expect(toon).toMatch(
-      /kimi,five_hour,session,81\.25,"2027-02-03T09:05:06\.000Z",[^,]+,[^,]+,fresh/,
+      /kimi,five_hour,session,81\.25,"2027-02-03T09:05:06\.000Z",[^,]+,fresh/,
     );
     expect(toon).toMatch(
-      /kimi,weekly,week,67\.5,"2027-02-08T04:05:06\.000Z",[^,]+,[^,]+,fresh/,
+      /kimi,weekly,week,67\.5,"2027-02-08T04:05:06\.000Z",[^,]+,fresh/,
     );
     expect(toon).toContain(
-      "effective[1]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
+      "effective[1]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
     );
     expect(toon).not.toContain("synthetic-kimi-key");
     expect(toon).not.toMatch(/recommend|prefer provider|switch to/i);
@@ -743,40 +667,8 @@ describe("CLI plumbing via the axi SDK", () => {
   });
 
   it("prints the top-level help for legacy -h", async () => {
-    const output = await capture(["-h"]);
+    const output = await capture(["auth", "-h"]);
     expect(output).toContain("usage: quota-axi [quota|auth|models] [flags]");
-    expect(process.exitCode).toBeUndefined();
-  });
-
-  it("prints only accepted flags in command-specific help", async () => {
-    const quota = await capture(["quota", "--help"]);
-    expect(quota).toContain("--tui");
-    expect(quota).not.toContain("--intelligence");
-    expect(quota).not.toContain("--sort");
-
-    const authOutputs = await Promise.all([
-      capture(["auth", "--help"]),
-      capture(["auth", "-h"]),
-    ]);
-    for (const auth of authOutputs) {
-      expect(auth).toContain("usage: quota-axi auth [flags]");
-      expect(auth).not.toContain("--tui");
-      expect(auth).not.toContain("--refresh");
-      expect(auth).not.toContain("--intelligence");
-      expect(auth).not.toContain("--sort");
-    }
-
-    const modelsOutputs = await Promise.all([
-      capture(["models", "--help"]),
-      capture(["models", "-h"]),
-    ]);
-    for (const models of modelsOutputs) {
-      expect(models).toContain("--intelligence");
-      expect(models).toContain("--sort");
-      expect(models).not.toContain("--tui");
-      expect(models).not.toContain("--refresh");
-      expect(models).not.toContain("--once");
-    }
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -787,7 +679,6 @@ describe("CLI plumbing via the axi SDK", () => {
     PROVIDERS.copilot = providerWithAuth("copilot", "GitHub Copilot");
     PROVIDERS.grok = providerWithAuth("grok", "Grok");
     PROVIDERS.kimi = providerWithAuth("kimi", "Kimi");
-    PROVIDERS.alibaba = providerWithAuth("alibaba", "Alibaba Coding Plan");
 
     const output = await capture(["--allow-keychain-prompt", "auth"]);
     expect(output).toContain(

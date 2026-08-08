@@ -165,7 +165,7 @@ describe("Kimi request transport", () => {
     expect(report.state.untrustedWindowIds).toEqual(["limit:2"]);
   });
 
-  it.each(["missing", "unsupported", "expired"] as const)(
+  it.each(["missing", "unsupported"] as const)(
     "uses a fresh CLI credential after Pi reports %s",
     async (piStatus) => {
       const cliToken = "synthetic-cli-token-529";
@@ -203,11 +203,10 @@ describe("Kimi request transport", () => {
         {
           source: "pi:kimi-coding",
           status: "skipped",
-          error: {
-            missing: "kimi_credential_unavailable",
-            unsupported: "unsupported_credential_type",
-            expired: "pi_kimi_credential_expired",
-          }[piStatus],
+          error:
+            piStatus === "missing"
+              ? "kimi_credential_unavailable"
+              : "unsupported_credential_type",
         },
         { source: "kimi-code-cli", status: "success" },
       ]);
@@ -839,30 +838,6 @@ describe("Kimi credential outcomes and cache policy", () => {
       expect(report.windows).toEqual([]);
     },
   );
-
-  it("neither retires nor serves cache for an expired Pi credential", async () => {
-    const request = vi.fn();
-    const remove = vi.fn();
-    const report = await testAdapter({
-      broker: broker({ status: "expired" }),
-      fetch: request,
-      deleteCachedProvider: remove,
-      readCachedProvider: () => cachedQuota(),
-    }).fetchQuota(OPTIONS);
-
-    expect(request).not.toHaveBeenCalled();
-    // Not definitive: Pi refreshes the grant itself, so the cache survives.
-    expect(remove).not.toHaveBeenCalled();
-    // Not stale-eligible either: an auth outcome must not be answered with a
-    // cached snapshot.
-    expect(report.source).toBe("unavailable");
-    expect(report.state).toMatchObject({
-      status: "auth_required",
-      stale: false,
-      error: "pi_kimi_credential_expired",
-    });
-    expect(report.windows).toEqual([]);
-  });
 
   it("uses eligible cached windows after an unexpected resolver failure", async () => {
     const cached = cachedQuota();

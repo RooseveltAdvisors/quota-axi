@@ -5,7 +5,6 @@ import {
   quotaCommand,
   type QuotaContext,
 } from "./commands.js";
-import { loadUserEnv } from "./lib/env.js";
 import { VERSION } from "./version.js";
 
 export const DESCRIPTION =
@@ -16,12 +15,12 @@ commands[3]:
   (none)=quota, auth, models
 output:
   Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits).
-flags[12]:
-  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --no-refresh, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
+flags[11]:
+  --provider <claude,codex,cursor,copilot,grok,kimi>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude
-  quota-axi --provider cursor,copilot,grok,kimi,alibaba
+  quota-axi --provider cursor,copilot,grok,kimi
   quota-axi --json
   quota-axi --full
   quota-axi --tui
@@ -32,39 +31,6 @@ examples:
   quota-axi models --sort runway
 `;
 
-export const QUOTA_HELP = `usage: quota-axi quota [flags]
-output:
-  Default TOON reports local quota evidence. Use --tui for the human terminal report.
-flags[9]:
-  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --no-refresh, --help
-examples:
-  quota-axi quota
-  quota-axi quota --provider claude --json
-  quota-axi quota --tui --refresh 1m
-`;
-
-export const AUTH_HELP = `usage: quota-axi auth [flags]
-output:
-  Inspect local credential sources without printing secret values.
-flags[6]:
-  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --allow-keychain-prompt, --no-refresh, --help
-examples:
-  quota-axi auth
-  quota-axi auth --provider claude --json
-  quota-axi auth --allow-keychain-prompt
-`;
-
-export const MODELS_HELP = `usage: quota-axi models [flags]
-output:
-  Join curated provider-native model buckets with local quota evidence. --sort runway is explicit opt-in ordering.
-flags[8]:
-  --provider <claude,codex,grok,kimi>, --json, --full, --allow-keychain-prompt, --no-refresh, --intelligence <high|medium|low>, --sort <runway>, --help
-examples:
-  quota-axi models
-  quota-axi models --intelligence high --json
-  quota-axi models --sort runway
-`;
-
 type MainOptions = {
   argv?: string[];
   stdout?: { write: (chunk: string) => unknown };
@@ -72,7 +38,6 @@ type MainOptions = {
 };
 
 export async function main(options: MainOptions = {}): Promise<void> {
-  loadUserEnv();
   const binPath = options.binPath ?? process.argv[1] ?? "quota-axi";
   const argv = normalizeArgv(options.argv ?? process.argv.slice(2));
 
@@ -91,12 +56,10 @@ export async function main(options: MainOptions = {}): Promise<void> {
     // is never reached (see normalizeArgv); wiring it keeps the SDK contract.
     home: quotaCommand,
     resolveContext: () => ({ binPath }),
-    getCommandHelp: (command) => {
-      if (command === "quota") return QUOTA_HELP;
-      if (command === "auth") return AUTH_HELP;
-      if (command === "models") return MODELS_HELP;
-      return undefined;
-    },
+    getCommandHelp: (command) =>
+      command === "quota" || command === "auth" || command === "models"
+        ? TOP_HELP
+        : undefined,
   });
 }
 
@@ -109,29 +72,14 @@ export async function main(options: MainOptions = {}): Promise<void> {
  */
 export function normalizeArgv(raw: string[]): string[] {
   if (raw.length === 0) return ["quota"];
-  const helpIndex = findLegacyFlag(
-    raw,
-    (arg) => arg === "--help" || arg === "-h",
-  );
-  const commandIndex = findCommand(raw);
-  if (helpIndex >= 0) {
-    if (commandIndex < 0) return ["--help"];
-    const commandArgv = raw.map((arg, index) =>
-      index === helpIndex && arg === "-h" ? "--help" : arg,
-    );
-    if (commandIndex > 0) {
-      return [
-        raw[commandIndex],
-        ...commandArgv.slice(0, commandIndex),
-        ...commandArgv.slice(commandIndex + 1),
-      ];
-    }
-    return commandArgv;
+  if (findLegacyFlag(raw, (arg) => arg === "--help" || arg === "-h") >= 0) {
+    return ["--help"];
   }
   const versionIndex = findLegacyFlag(raw, isVersionFlag);
   if (versionIndex >= 0) {
     return [raw[versionIndex]];
   }
+  const commandIndex = findCommand(raw);
   if (commandIndex > 0) {
     return [
       raw[commandIndex],
@@ -171,7 +119,7 @@ function findLegacyFlag(
 ): number {
   for (let index = 0; index < raw.length; index++) {
     const arg = raw[index];
-    if (isValueTakingFlag(arg)) {
+    if (arg === "--provider") {
       index++;
       continue;
     }
@@ -183,7 +131,7 @@ function findLegacyFlag(
 function findCommand(raw: string[]): number {
   for (let index = 0; index < raw.length; index++) {
     const arg = raw[index];
-    if (isValueTakingFlag(arg)) {
+    if (arg === "--provider") {
       index++;
       continue;
     }
@@ -197,13 +145,4 @@ function findCommand(raw: string[]): number {
     }
   }
   return -1;
-}
-
-function isValueTakingFlag(arg: string): boolean {
-  return (
-    arg === "--provider" ||
-    arg === "--refresh" ||
-    arg === "--intelligence" ||
-    arg === "--sort"
-  );
 }

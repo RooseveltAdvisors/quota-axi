@@ -219,27 +219,13 @@ describe("Pi xAI credential broker", () => {
     });
   });
 
-  it("reads auth storage without changing it", async () => {
-    const fixture = piAuthFixture({
-      type: "oauth",
-      access: "fixture-access-token",
-      refresh: "fixture-refresh-token",
-      expires: Date.now() + 3_600_000,
-    });
-    const before = readFileSync(fixture);
-    const entries = readdirSync(dirname(fixture));
-    const broker = createPiXaiCredentialBroker({
-      environment: { PI_CODING_AGENT_DIR: dirname(fixture) },
-      homeDirectory: () => temporaryDirectory(),
-    });
-
-    await expect(broker.resolve()).resolves.toMatchObject({
-      status: "available",
-      kind: "oauth",
-    });
-    await expect(broker.inspect()).resolves.toEqual({ status: "available" });
-    expect(readFileSync(fixture)).toEqual(before);
-    expect(readdirSync(dirname(fixture))).toEqual(entries);
+  it("does not implement Pi packages or write auth files", async () => {
+    const implementation = readFileSync(
+      new URL("../../src/providers/pi-xai-credential.ts", import.meta.url),
+      "utf8",
+    );
+    expect(implementation).not.toMatch(/@earendil-works\/pi-/);
+    expect(implementation).not.toMatch(/writeFile|rename|chmod/);
   });
 });
 

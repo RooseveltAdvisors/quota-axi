@@ -1,22 +1,9 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
-import {
-  PI_AUTH_FILE_LIMIT_BYTES,
-  PI_EXPIRY_SKEW_MS,
-  piAuthFilePath,
-  piGrantExpired,
-  piOAuthExpiryMs,
-  usablePiCredential,
-  type PiEnvironment,
-} from "./pi-auth.js";
-import {
-  isDefinitiveOAuthRefreshError,
-  refreshOAuthJsonFile,
-} from "../lib/oauth.js";
+import { join } from "node:path";
 
 const PI_PROVIDER_ID = "kimi-coding";
-const KIMI_TOKEN_URL = "https://auth.kimi.com/api/oauth/token";
-const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
+const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
 
 export type KimiCredentialResolution =
   | {
@@ -26,12 +13,7 @@ export type KimiCredentialResolution =
       credential: string;
     }
   | { status: "missing" }
-  | {
-      status: "expired";
-      refreshable: boolean;
-      refreshFailed?: boolean;
-      refreshDefinitive?: boolean;
-    }
+  | { status: "expired"; refreshable: boolean }
   | { status: "unsupported" }
   | { status: "error" };
 
@@ -39,23 +21,13 @@ export type KimiCredentialInspection =
   | Exclude<KimiCredentialResolution["status"], "available">
   | "available";
 
-export type KimiCredentialResolveOptions = {
-  refresh?: boolean;
-  fetch?: typeof globalThis.fetch;
-  signal?: AbortSignal;
-};
-
 export type KimiCredentialBroker = {
-  resolve(
-    options?: KimiCredentialResolveOptions,
-  ): Promise<KimiCredentialResolution>;
-  inspect(
-    options?: KimiCredentialResolveOptions,
-  ): Promise<KimiCredentialInspection>;
+  resolve(): Promise<KimiCredentialResolution>;
+  inspect(): Promise<KimiCredentialInspection>;
 };
 
 type BrokerDependencies = {
-  environment: PiEnvironment;
+  environment: Readonly<Record<string, string | undefined>>;
   homeDirectory: () => string;
   readFile: (path: string, maxBytes: number) => Promise<Buffer>;
   now: () => number;
@@ -68,35 +40,32 @@ export function createPiKimiCredentialBroker(
     environment: process.env,
     homeDirectory: homedir,
     readFile: readBoundedFile,
-    now: Date.now,
+    now: () => Date.now(),
     ...overrides,
   };
 
-  const inspect = async (
-    options: KimiCredentialResolveOptions = {},
-  ): Promise<KimiCredentialInspection> =>
-    (await resolveCredential(dependencies, options)).status;
+  const inspect = async (): Promise<KimiCredentialInspection> =>
+    (await resolveCredential(dependencies)).status;
 
   return {
-    resolve: (options = {}) => resolveCredential(dependencies, options),
+    resolve: () => resolveCredential(dependencies),
     inspect,
   };
 }
 
 async function resolveCredential(
   dependencies: BrokerDependencies,
-  options: KimiCredentialResolveOptions,
 ): Promise<KimiCredentialResolution> {
   const path = authFilePath(dependencies);
   let contents: Buffer;
   try {
-    contents = await dependencies.readFile(path, PI_AUTH_FILE_LIMIT_BYTES);
+    contents = await dependencies.readFile(path, AUTH_FILE_LIMIT_BYTES);
   } catch (error) {
     return errorCode(error) === "ENOENT"
       ? { status: "missing" }
       : { status: "error" };
   }
-  if (contents.byteLength > PI_AUTH_FILE_LIMIT_BYTES) {
+  if (contents.byteLength > AUTH_FILE_LIMIT_BYTES) {
     return { status: "missing" };
   }
 
@@ -114,24 +83,72 @@ async function resolveCredential(
   if (!entry) return { status: "missing" };
 
   // Pi stores a `kimi-coding` login as either a literal API key or the OAuth
-  // record it received from Kimi. OAuth grants are renewed only when the
-  // caller explicitly enables refresh; all other reads are in place.
+  // record it received from Kimi. Both are read in place: an expired OAuth
+  // record is reported as expired rather than refreshed, because refreshing
+  // would mutate Pi's auth state.
   const type = stringValue(entry.type)?.toLowerCase();
   if (type === "api_key") {
-    const apiKey = usablePiCredential(entry.key);
+    const apiKey = usableLiteralSecret(entry.key);
     return apiKey !== undefined
       ? { status: "available", kind: "api_key", credential: apiKey }
       : { status: "missing" };
   }
   if (type === "oauth") {
-    return oauthAccessToken(path, entry, dependencies, options);
+    const access = usableLiteralSecret(entry.access);
+    if (access === undefined) return { status: "missing" };
+    const hasExpiry = Object.hasOwn(entry, "expires");
+    const expiresMs = timestampMs(entry.expires);
+    if (hasExpiry && expiresMs === undefined) return { status: "missing" };
+    if (expiresMs !== undefined && expiresMs <= dependencies.now()) {
+      return {
+        status: "expired",
+        refreshable: usableLiteralSecret(entry.refresh) !== undefined,
+      };
+    }
+    return { status: "available", kind: "oauth", credential: access };
   }
   if (type === undefined) return { status: "missing" };
   return { status: "unsupported" };
 }
 
 function authFilePath(dependencies: BrokerDependencies): string {
-  return piAuthFilePath(dependencies.environment, dependencies.homeDirectory);
+  return join(piAgentDirectory(dependencies), "auth.json");
+}
+
+function piAgentDirectory(dependencies: BrokerDependencies): string {
+  const home = () =>
+    nonempty(dependencies.environment.HOME) ?? dependencies.homeDirectory();
+  const configured = nonempty(dependencies.environment.PI_CODING_AGENT_DIR);
+  if (configured === undefined) {
+    return join(home(), ".pi", "agent");
+  }
+  if (configured === "~") return home();
+  if (
+    configured.startsWith("~/") ||
+    (process.platform === "win32" && configured.startsWith("~\\"))
+  ) {
+    return join(home(), configured.slice(2));
+  }
+  return configured;
+}
+
+function usableLiteralSecret(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  // Reject environment, template, and command references without resolving them.
+  if (value.startsWith("!") || value.includes("$")) {
+    return undefined;
+  }
+  if (
+    [...value].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 async function readBoundedFile(
@@ -158,80 +175,34 @@ async function readBoundedFile(
   }
 }
 
-async function oauthAccessToken(
-  path: string,
-  entry: Record<string, unknown>,
-  dependencies: BrokerDependencies,
-  options: KimiCredentialResolveOptions,
-): Promise<KimiCredentialResolution> {
-  const accessToken = usablePiCredential(entry.access);
-  if (accessToken === undefined) return { status: "missing" };
-  const expiresAtMs = piOAuthExpiryMs(entry.expires);
-  if (Object.hasOwn(entry, "expires") && expiresAtMs === undefined) {
-    return { status: "missing" };
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Pi stores OAuth expiry as epoch milliseconds.
+    return value < 1_000_000_000_000 ? value * 1000 : value;
   }
-  const grant = {
-    accessToken,
-    expiresAtMs,
-    refreshable: usablePiCredential(entry.refresh) !== undefined,
-  };
-  if (!piGrantExpired(grant, dependencies.now())) {
-    return {
-      status: "available",
-      kind: "oauth",
-      credential: grant.accessToken,
-    };
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
   }
-  if (options.refresh !== true || !grant.refreshable || !options.fetch) {
-    return { status: "expired", refreshable: grant.refreshable };
-  }
+  return undefined;
+}
 
-  try {
-    const token = await refreshOAuthJsonFile({
-      filePath: path,
-      tokenUrl: KIMI_TOKEN_URL,
-      clientId: stringValue(entry.client_id) ?? KIMI_CLIENT_ID,
-      fetch: options.fetch,
-      signal: options.signal,
-      minimumFreshnessMs: PI_EXPIRY_SKEW_MS,
-      now: dependencies.now,
-      readRefreshToken: (document) =>
-        stringValue(
-          objectValue(objectValue(document)?.[PI_PROVIDER_ID])?.refresh,
-        ),
-      updateDocument: (document, refreshed) => {
-        const root = objectValue(document);
-        const current = objectValue(root?.[PI_PROVIDER_ID]);
-        if (!root || !current) return document;
-        current.access = refreshed.accessToken;
-        current.expires = refreshed.expiresAtMs;
-        if (refreshed.refreshToken) current.refresh = refreshed.refreshToken;
-        return root;
-      },
-    });
-    return {
-      status: "available",
-      kind: "oauth",
-      credential: token.accessToken,
-    };
-  } catch (error) {
-    return {
-      status: "expired",
-      refreshable: true,
-      refreshFailed: true,
-      refreshDefinitive: isDefinitiveOAuthRefreshError(error),
-    };
-  }
+function nonempty(value: string | undefined): string | undefined {
+  return value && value.length > 0 ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {

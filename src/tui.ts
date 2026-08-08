@@ -1,4 +1,3 @@
-import { splitClaudeSeatScope } from "./claude-scope.js";
 import type {
   EffectiveAvailability,
   ProviderId,
@@ -74,7 +73,6 @@ const ACCENTS: Record<ProviderId, StyleSpec> = {
   copilot: { rgb: [116, 199, 236], ansi16: "94", bold: true },
   grok: { rgb: [180, 190, 254], ansi16: "95", bold: true },
   kimi: { rgb: [245, 194, 231], ansi16: "95", bold: true },
-  alibaba: { rgb: [255, 184, 108], ansi16: "33", bold: true },
 };
 
 const STYLES: Record<Exclude<StyleName, `accent:${ProviderId}`>, StyleSpec> = {
@@ -208,45 +206,52 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
     interior([], "border"),
   ];
 
-  const seats = claudeSeatNames(provider);
-  const groups: (string | undefined)[] = seats.length > 0 ? seats : [undefined];
-  const groupedWindowIds = new Set<string>();
-  for (const [index, seat] of groups.entries()) {
-    if (index > 0) lines.push(interior([], "border"));
-    appendEffectiveSummary(lines, provider, generatedAtMs, stale, seat);
+  const headline = pickHeadlineAvailability(provider);
+  const effectivePct = headline?.effectivePercentRemaining;
+  const markerPct = effectiveMarkerPercent(provider, headline);
 
-    const windows =
-      seat === undefined
-        ? provider.windows
-        : provider.windows.filter((window) => {
-            const scope = splitClaudeSeatScope(window.id);
-            return scope?.seat === seat;
-          });
-    for (const window of windows) groupedWindowIds.add(window.id);
-    appendWindowRows(lines, windows, generatedAtMs);
-    const warning = claudeSeatWarning(provider, seat);
-    if (warning) {
-      lines.push(
-        interior(
-          [
-            {
-              text: `   ${truncate(warning, CARD_INTERIOR - 4)}`,
-              style: "warn",
-            },
-          ],
-          "border",
-        ),
-      );
-    }
-  }
+  const left: Line =
+    effectivePct !== undefined
+      ? [
+          {
+            text: `${Math.round(effectivePct)}%`,
+            style: boldHealthStyle(effectivePct),
+          },
+          { text: ` ${scopeLabel(headline?.scope)}`, style: "dim" },
+        ]
+      : [
+          {
+            text: stale ? "stale · effective unknown" : "effective unknown",
+            style: "dim",
+          },
+        ];
+  const verdict = runwayVerdict(headline);
+  lines.push(
+    interior(
+      [
+        { text: "   " },
+        ...padBetween(left, verdict, EFFECTIVE_BAR_WIDTH),
+        { text: "   " },
+      ],
+      "border",
+    ),
+  );
+  lines.push(
+    interior(
+      [
+        { text: "   " },
+        ...thinBar(effectivePct, markerPct, EFFECTIVE_BAR_WIDTH),
+        { text: "   " },
+      ],
+      "border",
+    ),
+  );
 
-  const ungroupedWindows =
-    seats.length > 0
-      ? provider.windows.filter((window) => !groupedWindowIds.has(window.id))
-      : [];
-  if (ungroupedWindows.length > 0) {
+  if (provider.windows.length > 0) {
     lines.push(interior([], "border"));
-    appendWindowRows(lines, ungroupedWindows, generatedAtMs);
+    for (const window of provider.windows) {
+      lines.push(interior(windowRow(window, generatedAtMs), "border"));
+    }
   }
 
   for (const note of cardNotes(provider)) {
@@ -300,16 +305,6 @@ function buildFailedCard(provider: ProviderQuota): Card {
             style: entry.style,
           },
         ],
-        "borderDim",
-      ),
-    );
-  }
-  for (const seat of claudeSeatNames(provider)) {
-    const warning =
-      claudeSeatWarning(provider, seat) ?? `${seat} · unavailable`;
-    lines.push(
-      interior(
-        [{ text: `   ${truncate(warning, CARD_INTERIOR - 4)}`, style: "warn" }],
         "borderDim",
       ),
     );
@@ -416,162 +411,16 @@ export function thinBar(
   return coalesce(cells);
 }
 
-function appendEffectiveSummary(
-  lines: Line[],
-  provider: ProviderQuota,
-  generatedAtMs: number,
-  stale: boolean,
-  seat?: string,
-): void {
-  const headline = pickHeadlineAvailability(provider, seat);
-  const effectivePct = headline?.effectivePercentRemaining;
-  const markerPct = effectiveMarkerPercent(provider, headline);
-  const seatPrefix = seat === undefined ? "" : `${seat} · `;
-  const left: Line =
-    effectivePct !== undefined
-      ? [
-          ...(seat === undefined
-            ? []
-            : [{ text: seatPrefix, style: "label" as const }]),
-          {
-            text: `${Math.round(effectivePct)}%`,
-            style: boldHealthStyle(effectivePct),
-          },
-          { text: ` ${scopeLabel(headline?.scope, seat)}`, style: "dim" },
-        ]
-      : [
-          {
-            text: `${seatPrefix}${stale ? "stale · effective unknown" : "effective unknown"}`,
-            style: "dim",
-          },
-        ];
-  const verdict = runwayVerdict(headline);
-  lines.push(
-    interior(
-      [
-        { text: "   " },
-        ...padBetween(left, verdict, EFFECTIVE_BAR_WIDTH),
-        { text: "   " },
-      ],
-      "border",
-    ),
-  );
-  lines.push(
-    interior(
-      [
-        { text: "   " },
-        ...thinBar(effectivePct, markerPct, EFFECTIVE_BAR_WIDTH),
-        { text: "   " },
-      ],
-      "border",
-    ),
-  );
-}
-
-function appendWindowRows(
-  lines: Line[],
-  windows: QuotaWindow[],
-  generatedAtMs: number,
-): void {
-  if (windows.length === 0) return;
-  lines.push(interior([], "border"));
-  for (const window of windows) {
-    lines.push(interior(windowRow(window, generatedAtMs), "border"));
-  }
-}
-
-function claudeSeatNames(provider: ProviderQuota): string[] {
-  if (provider.provider !== "claude") return [];
-  const names = new Set<string>();
-  for (const scope of [
-    ...provider.windows.map(({ id }) => id),
-    ...(provider.quotaSemantics?.effectiveAvailability ?? []).map(
-      ({ scope }) => scope,
-    ),
-  ]) {
-    const split = splitClaudeSeatScope(scope);
-    if (split) names.add(split.seat);
-  }
-  for (const attempt of provider.attempts ?? []) {
-    const seat = claudeAttemptSeat(attempt.source);
-    if (seat) names.add(seat);
-  }
-  for (const seat of claudeUnavailableSeatNames(provider)) names.add(seat);
-  for (const seat of claudeLabelSeatNames(provider.label)) names.add(seat);
-  return [...names].sort((left, right) => left.localeCompare(right));
-}
-
-function claudeSeatWarning(
-  provider: ProviderQuota,
-  seat: string | undefined,
-): string | undefined {
-  if (provider.provider !== "claude" || seat === undefined) return undefined;
-  const attempts = (provider.attempts ?? []).filter(
-    (attempt) => claudeAttemptSeat(attempt.source) === seat,
-  );
-  if (attempts.some(({ status }) => status === "success")) return undefined;
-  const issue =
-    attempts.find(({ status }) => status === "failed")?.error ??
-    attempts.find(({ status }) => status === "skipped")?.error;
-  const hasEvidence = [
-    ...provider.windows.map(({ id }) => id),
-    ...(provider.quotaSemantics?.effectiveAvailability ?? []).map(
-      ({ scope }) => scope,
-    ),
-  ].some((scope) => splitClaudeSeatScope(scope)?.seat === seat);
-  const unavailable = claudeUnavailableSeatNames(provider).includes(seat);
-  if (!issue && !unavailable && hasEvidence && attempts.length === 0)
-    return undefined;
-  return `${seat} · unavailable${issue ? `: ${humanize(issue)}` : ""}`;
-}
-
-function claudeAttemptSeat(source: string): string | undefined {
-  const prefix = "claude:";
-  if (!source.startsWith(prefix)) return undefined;
-  const seat = source.slice(prefix.length);
-  return seat === "" ? undefined : seat;
-}
-
-function claudeUnavailableSeatNames(provider: ProviderQuota): string[] {
-  if (provider.state.reason !== "partial_seat_failure") return [];
-  const prefix = "unavailable_seats:";
-  const error = provider.state.error;
-  if (!error?.startsWith(prefix)) return [];
-  return error
-    .slice(prefix.length)
-    .split(",")
-    .map((seat) => seat.trim())
-    .filter(Boolean);
-}
-
-function claudeLabelSeatNames(label: string): string[] {
-  const match = /^Claude \(([^)]*)\)$/.exec(label);
-  return (
-    match?.[1]
-      ?.split(",")
-      .map((seat) => seat.trim())
-      .filter(Boolean) ?? []
-  );
-}
-
 function pickHeadlineAvailability(
   provider: ProviderQuota,
-  seat?: string,
 ): EffectiveAvailability | undefined {
   const availability = provider.quotaSemantics?.effectiveAvailability ?? [];
-  const scoped =
-    seat === undefined
-      ? availability
-      : availability.filter((entry) => entry.scope.startsWith(`${seat}:`));
   return (
-    scoped.find(
-      (entry) =>
-        (seat === undefined
-          ? entry.scope.startsWith("all_")
-          : entry.scope === `${seat}:all_models`) && entry.status === "known",
+    availability.find(
+      (entry) => entry.scope.startsWith("all_") && entry.status === "known",
     ) ??
-    scoped.find((entry) => entry.status === "known") ??
-    scoped[0]
+    availability.find((entry) => entry.status === "known") ??
+    availability[0]
   );
 }
 
@@ -621,13 +470,9 @@ function cardNotes(provider: ProviderQuota): string[] {
   return notes;
 }
 
-function scopeLabel(scope: string | undefined, seat?: string): string {
+function scopeLabel(scope: string | undefined): string {
   if (scope === undefined) return "unknown scope";
-  const withoutSeat =
-    seat !== undefined && scope.startsWith(`${seat}:`)
-      ? scope.slice(seat.length + 1)
-      : scope;
-  return humanize(withoutSeat.replace(/^all_/, "all "));
+  return humanize(scope.replace(/^all_/, "all "));
 }
 
 /**
