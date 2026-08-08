@@ -163,8 +163,7 @@ async function fetchQuotaWithDependencies(
   const cliState = await readCredentialState(options);
   const piResolution =
     piResolutionFromCredentialState(cliState) ?? piResolutionProbe;
-  const cliStateIsPi =
-    cliState.source.source === PI_XAI_CREDENTIAL_SOURCE;
+  const cliStateIsPi = cliState.source.source === PI_XAI_CREDENTIAL_SOURCE;
   const piAttempt =
     allowIndependentPi && !cliStateIsPi
       ? piSourceAttempt(piResolution)
@@ -231,12 +230,12 @@ async function fetchQuotaWithDependencies(
   const definitiveAuthFailure = refreshDefinitive || consumerAuthRejected;
   const expiredConsumerCredentialError =
     cliState.status === "expired" && !refreshDefinitive
-      ? cliState.refreshError ??
+      ? (cliState.refreshError ??
         (cliState.refreshable
           ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
             ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
             : GROK_ACCESS_TOKEN_EXPIRED_ERROR
-          : GROK_SIGN_IN_REQUIRED_ERROR)
+          : GROK_SIGN_IN_REQUIRED_ERROR))
       : undefined;
 
   if (authStatus === "usable") {
@@ -272,8 +271,8 @@ async function fetchQuotaWithDependencies(
         error:
           finalError && transientConsumerFailure
             ? finalError
-            : expiredConsumerCredentialError ??
-              GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+            : (expiredConsumerCredentialError ??
+              GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,
         sourcesTried: sourceNames(attempts),
         attempts,
@@ -282,10 +281,7 @@ async function fetchQuotaWithDependencies(
     );
   }
 
-  if (
-    cliState.status === "expired" &&
-    cliState.refreshDefinitive === true
-  ) {
+  if (cliState.status === "expired" && cliState.refreshDefinitive === true) {
     finalError = cliState.refreshError ?? GROK_SIGN_IN_REQUIRED_ERROR;
   } else if (authStatus === "expired_refreshable") {
     finalError =
@@ -382,8 +378,7 @@ function piResolutionFromCredentialState(
   if (state.status === "expired") {
     return {
       status: "expired",
-      refreshable:
-        state.refreshable && state.refreshDefinitive !== true,
+      refreshable: state.refreshable && state.refreshDefinitive !== true,
     };
   }
   if (state.status === "invalid") return { status: "invalid" };
