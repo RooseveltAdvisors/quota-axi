@@ -325,13 +325,11 @@ function kimiSemantics(
                 status: "unknown",
                 boundedBy: recognized.map(({ id }) => id),
                 pace: summarizeEffectivePace(recognized),
-                runway: {
-                  status: "unknown",
-                  unmeasurableWindowIds: [
-                    ...recognized.map(({ id }) => id),
-                    ...unresolvedWindowIds,
-                  ],
-                },
+                runway: kimiPartialRunway(
+                  recognized,
+                  unresolvedWindowIds,
+                  generatedAt,
+                ),
               },
             ]
           : [],
@@ -346,6 +344,23 @@ function kimiSemantics(
     effectiveAvailability,
     "Kimi's weekly and five-hour account windows jointly bound every model, so effective remaining is the minimum across the named windows.",
   );
+}
+
+function kimiPartialRunway(
+  recognized: QuotaWindow[],
+  unresolvedWindowIds: string[],
+  generatedAt: string,
+) {
+  const recognizedRunway = computeEffectiveRunway(recognized, generatedAt);
+  if (recognizedRunway.status === "exhausted_now") return recognizedRunway;
+  const unmeasurableWindowIds = [
+    ...(recognizedRunway.unmeasurableWindowIds ?? []),
+    ...unresolvedWindowIds,
+  ];
+  return {
+    status: "unknown" as const,
+    unmeasurableWindowIds: [...new Set(unmeasurableWindowIds)],
+  };
 }
 
 function availability(

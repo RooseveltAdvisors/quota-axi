@@ -6,6 +6,7 @@ import {
   shortWindowLabel,
   thinBar,
 } from "../src/tui.js";
+import { redactedResponse } from "../src/render.js";
 import type { ProviderQuota, QuotaAxiResponse } from "../src/types.js";
 
 const GENERATED_AT = "2026-08-06T23:21:15.000Z";
@@ -457,6 +458,30 @@ describe("renderQuotaTui structure", () => {
     expect(output).toContain("jr · unavailable: seat network unavailable");
     expect(output).toContain("nyu · effective unknown");
     expect(output).toContain("nyu · unavailable: credentials missing");
+  });
+
+  it("keeps all failed Claude seats visible after default redaction", () => {
+    const response = fixtureResponse();
+    const claude = response.providers[0]!;
+    claude.label = "Claude (arcs, jr, nyu)";
+    claude.state.status = "auth_required";
+    claude.state.error = "Claude sign-in required";
+    claude.attempts = [
+      { source: "claude:arcs", status: "failed" },
+      { source: "claude:jr", status: "failed" },
+      { source: "claude:nyu", status: "failed" },
+    ];
+
+    const redacted = redactedResponse(response, false);
+    expect(redacted.providers[0]?.attempts).toBeUndefined();
+    const output = renderQuotaTui(redacted, {
+      columns: 80,
+      timeZone: "America/Los_Angeles",
+    });
+
+    expect(output).toContain("arcs · unavailable");
+    expect(output).toContain("jr · unavailable");
+    expect(output).toContain("nyu · unavailable");
   });
 
   it("recognizes legacy Opus scopes when grouping Claude seats", () => {

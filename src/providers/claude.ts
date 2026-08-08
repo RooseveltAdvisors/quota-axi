@@ -530,13 +530,19 @@ function failureReport(
 
   return failedProvider({
     provider: "claude",
-    label: "Claude",
+    label: claudeFailureLabel(seats),
     status: failure.status,
     error: failure.code,
     retryAfter: failure.retryAfter,
     sourcesTried: sourceNames(attempts),
     attempts,
   });
+}
+
+function claudeFailureLabel(seats?: ClaudeSeat[]): string {
+  return seats && seats.length > 1
+    ? `Claude (${seats.map(({ name }) => name).join(", ")})`
+    : "Claude";
 }
 
 function readFreshMultiSeatCache(
@@ -630,7 +636,7 @@ function staleClaudeReport(
 
   return {
     provider: "claude",
-    label: "Claude",
+    label: claudeFailureLabel(seats),
     source: "cache",
     ...(cached.plan ? { plan: cached.plan } : {}),
     windows,
