@@ -178,10 +178,11 @@ function claudeMultiSeatSemantics(
     }
     for (const model of models) {
       effectiveAvailability.push(
-        availability(`${seat}:${model.id}`, [
-          ...labeledAccount,
-          { ...model, id: `${seat}:${model.id}` },
-        ], generatedAt),
+        availability(
+          `${seat}:${model.id}`,
+          [...labeledAccount, { ...model, id: `${seat}:${model.id}` }],
+          generatedAt,
+        ),
       );
     }
   }
