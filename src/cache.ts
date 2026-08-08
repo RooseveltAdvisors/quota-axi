@@ -34,6 +34,10 @@ const WINDOW_KINDS = [
   "unknown",
 ] as const satisfies readonly QuotaWindow["kind"][];
 
+type InternalProviderState = ProviderQuota["state"] & {
+  cacheIdentity?: string;
+};
+
 export function readCachedProvider(
   provider: ProviderId,
 ): ProviderQuota | undefined {
@@ -86,7 +90,15 @@ function writeCacheFile(file: string, providers: ProviderQuota[]): void {
   const temp = `${file}.${process.pid}.tmp`;
   writeFileSync(
     temp,
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), schemaVersion: 1, providers }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        schemaVersion: 1,
+        providers: providers.map(serializeCachedProvider),
+      },
+      null,
+      2,
+    )}\n`,
     { mode: 0o600 },
   );
   chmodSync(temp, 0o600);
@@ -109,13 +121,26 @@ function readCacheProviders(): ProviderQuota[] {
 }
 
 function toCacheProvider(provider: ProviderQuota): ProviderQuota | undefined {
-  if (provider.state.status !== "fresh" || provider.windows.length === 0)
+  if (
+    provider.source === "cache" ||
+    provider.state.status !== "fresh" ||
+    provider.windows.length === 0
+  )
     return undefined;
+  const cacheIdentity = (provider.state as InternalProviderState).cacheIdentity;
   return normalizeCachedProvider({
     provider: provider.provider,
     label: provider.label,
     source: provider.source,
     plan: provider.plan,
+    period: provider.period,
+    expiresAt: provider.expiresAt,
+    region: provider.region,
+    models: provider.models,
+    instance: provider.instance,
+    multiplier: provider.multiplier,
+    modelMultipliers: provider.modelMultipliers,
+    modelLabels: provider.modelLabels,
     windows: provider.windows,
     credits: provider.credits,
     state: {
@@ -124,8 +149,21 @@ function toCacheProvider(provider: ProviderQuota): ProviderQuota | undefined {
       refreshedAt: provider.state.refreshedAt,
       untrustedWindowIds: provider.state.untrustedWindowIds,
       sourcesTried: provider.state.sourcesTried,
+      ...(cacheIdentity ? { cacheIdentity } : {}),
     },
   });
+}
+
+function serializeCachedProvider(provider: ProviderQuota): ProviderQuota {
+  const cacheIdentity = (provider.state as InternalProviderState).cacheIdentity;
+  if (!cacheIdentity) return provider;
+  return {
+    ...provider,
+    state: {
+      ...provider.state,
+      cacheIdentity,
+    } as ProviderQuota["state"],
+  };
 }
 
 function normalizeCachedProvider(raw: unknown): ProviderQuota | undefined {
@@ -166,12 +204,38 @@ function normalizeCachedProvider(raw: unknown): ProviderQuota | undefined {
     },
   };
   const plan = stringValue(data.plan);
+  const period = stringValue(data.period);
+  const expiresAt = stringValue(data.expiresAt);
+  const region = stringValue(data.region);
+  const models = stringArrayValue(data.models);
+  const instance = normalizeCachedInstance(data.instance);
+  const multiplier = numberValue(data.multiplier);
+  const modelMultipliers = normalizeCachedModelMultipliers(
+    data.modelMultipliers,
+  );
+  const modelLabels = normalizeCachedModelLabels(data.modelLabels);
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
+  const cacheIdentity = stringValue(state.cacheIdentity);
   const credits = normalizeCachedCredits(data.credits);
   if (plan) result.plan = plan;
+  if (period) result.period = period;
+  if (expiresAt) result.expiresAt = expiresAt;
+  if (region) result.region = region;
+  if (models) result.models = models;
+  if (instance) result.instance = instance;
+  if (multiplier !== undefined) result.multiplier = multiplier;
+  if (modelMultipliers) result.modelMultipliers = modelMultipliers;
+  if (modelLabels) result.modelLabels = modelLabels;
   if (refreshedAt) result.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds) result.state.untrustedWindowIds = untrustedWindowIds;
+  if (cacheIdentity) {
+    Object.defineProperty(result.state, "cacheIdentity", {
+      value: cacheIdentity,
+      enumerable: false,
+      configurable: true,
+    });
+  }
   if (credits) result.credits = credits;
   return result;
 }
@@ -317,6 +381,15 @@ function normalizeCachedWindow(raw: unknown): QuotaWindow | undefined {
   const kind = literalValue(data.kind, WINDOW_KINDS);
   if (!id || !label || !kind) return undefined;
   const result: QuotaWindow = { id, label, kind };
+  const accounting = literalValue(data.accounting, [
+    "request_quota",
+    "credit_balance",
+    "token_plan",
+  ] as const);
+  if (accounting) result.accounting = accounting;
+  assignNumber(result, "used", data.used);
+  assignNumber(result, "limit", data.limit);
+  assignNumber(result, "multiplier", data.multiplier);
   assignNumber(result, "percentUsed", data.percentUsed);
   assignNumber(result, "percentRemaining", data.percentRemaining);
   assignString(result, "startsAt", data.startsAt);
@@ -326,6 +399,50 @@ function normalizeCachedWindow(raw: unknown): QuotaWindow | undefined {
   assignNumber(result, "spentUsd", data.spentUsd);
   assignNumber(result, "limitUsd", data.limitUsd);
   return result;
+}
+
+function normalizeCachedInstance(
+  raw: unknown,
+): ProviderQuota["instance"] | undefined {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const id = stringValue(data.id);
+  const name = stringValue(data.name);
+  const status = stringValue(data.status);
+  if (!id && !name && !status) return undefined;
+  return {
+    ...(id ? { id } : {}),
+    ...(name ? { name } : {}),
+    ...(status ? { status } : {}),
+  };
+}
+
+function normalizeCachedModelMultipliers(
+  raw: unknown,
+): Record<string, number> | undefined {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const entries = Object.entries(data).filter(
+    ([key, value]) => key.length > 0 && numberValue(value) !== undefined,
+  );
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(
+    entries.map(([key, value]) => [key, numberValue(value)]),
+  ) as Record<string, number>;
+}
+
+function normalizeCachedModelLabels(
+  raw: unknown,
+): Record<string, string> | undefined {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const entries = Object.entries(data).filter(
+    ([key, value]) => key.length > 0 && stringValue(value) !== undefined,
+  );
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(
+    entries.map(([key, value]) => [key, stringValue(value)]),
+  ) as Record<string, string>;
 }
 
 function normalizeCachedCredits(

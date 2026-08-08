@@ -96,11 +96,13 @@ export function renderQuotaToon(
     encode({ effective }),
   ];
   const advice = response.providers
-    .filter((provider) => provider.state.reason && provider.state.remedyCommand)
+    .filter((provider) => provider.state.reason)
     .map((provider) => ({
       provider: provider.provider,
       reason: provider.state.reason,
-      remedyCommand: provider.state.remedyCommand,
+      ...(provider.state.remedyCommand
+        ? { remedyCommand: provider.state.remedyCommand }
+        : {}),
     }));
   if (advice.length > 0) blocks.push(encode({ advice }));
 

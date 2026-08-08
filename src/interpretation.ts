@@ -90,6 +90,7 @@ function semanticsFor(
       );
     case "cursor":
     case "copilot":
+    case "alibaba":
       return unknownSemantics(
         provider.windows,
         `quota-axi does not know whether ${provider.label}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
@@ -101,6 +102,9 @@ function claudeSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
 ): QuotaSemantics {
+  if (windows.some((window) => claudeSeatWindow(window))) {
+    return claudeMultiSeatSemantics(windows, generatedAt);
+  }
   const account = windows.filter(({ id }) =>
     ["five_hour", "seven_day"].includes(id),
   );
@@ -132,6 +136,83 @@ function claudeSemantics(
     effectiveAvailability,
     "Claude account windows bound every model. A model-specific window is an additional bound, so that model's effective remaining percentage is the minimum across the named windows.",
   );
+}
+
+function claudeMultiSeatSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const groups = new Map<string, QuotaWindow[]>();
+  const unresolved: QuotaWindow[] = [];
+  for (const window of windows) {
+    const split = claudeSeatWindow(window);
+    if (!split) {
+      unresolved.push(window);
+      continue;
+    }
+    const group = groups.get(split.seat) ?? [];
+    group.push({ ...window, id: split.id });
+    groups.set(split.seat, group);
+  }
+
+  const effectiveAvailability: EffectiveAvailability[] = [];
+  for (const [seat, seatWindows] of groups) {
+    const account = seatWindows.filter(({ id }) =>
+      ["five_hour", "seven_day"].includes(id),
+    );
+    const models = seatWindows.filter(({ kind }) => kind === "model");
+    const unknown = seatWindows.filter(
+      ({ id, kind }) =>
+        !["five_hour", "seven_day", "extra_usage"].includes(id) &&
+        kind !== "model",
+    );
+    unresolved.push(...unknown);
+    const labeledAccount = account.map((window) => ({
+      ...window,
+      id: `${seat}:${window.id}`,
+    }));
+    if (account.length > 0) {
+      effectiveAvailability.push(
+        availability(`${seat}:all_models`, labeledAccount, generatedAt),
+      );
+    }
+    for (const model of models) {
+      effectiveAvailability.push(
+        availability(
+          `${seat}:${model.id}`,
+          [...labeledAccount, { ...model, id: `${seat}:${model.id}` }],
+          generatedAt,
+        ),
+      );
+    }
+  }
+  if (unresolved.length > 0) {
+    return partialSemantics(
+      unresolved,
+      "Each Claude seat has independent account windows that bind its models; unfamiliar windows prevent a definitive effective percentage.",
+    );
+  }
+  return knownSemantics(
+    effectiveAvailability,
+    "Each Claude seat has independent account windows that bind its models. A model-specific window is an additional bound for that seat.",
+  );
+}
+
+function claudeSeatWindow(
+  window: QuotaWindow,
+): { seat: string; id: string } | undefined {
+  if (window.id.startsWith("model:")) return undefined;
+  const separator = window.id.indexOf(":");
+  if (separator <= 0) return undefined;
+  const seat = window.id.slice(0, separator);
+  const id = window.id.slice(separator + 1);
+  if (
+    ["five_hour", "seven_day", "extra_usage"].includes(id) ||
+    (window.kind === "model" && id.startsWith("model:"))
+  ) {
+    return { seat, id };
+  }
+  return undefined;
 }
 
 function codexSemantics(

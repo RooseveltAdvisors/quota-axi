@@ -15,11 +15,13 @@ import { VERSION } from "../version.js";
 import {
   createKimiCodeCliCredentialSource,
   KIMI_CODE_CLI_CREDENTIAL_SOURCE,
+  type KimiCodeCliCredentialResolveOptions,
   type KimiCodeCliCredentialResolution,
   type KimiCodeCliCredentialSource,
 } from "./kimi-code-cli-credential.js";
 import {
   createPiKimiCredentialBroker,
+  type KimiCredentialResolveOptions,
   type KimiCredentialBroker,
   type KimiCredentialResolution,
 } from "./pi-kimi-credential.js";
@@ -95,18 +97,24 @@ export function createKimiAdapter(
   return {
     id: "kimi",
     label: "Kimi",
-    fetchQuota(_options: ProviderOptions): Promise<ProviderQuota> {
+    fetchQuota(options: ProviderOptions): Promise<ProviderQuota> {
       if (inFlight) return inFlight;
-      const acquisition = acquireKimiQuota(dependencies).finally(() => {
-        if (inFlight === acquisition) inFlight = undefined;
-      });
+      const acquisition = acquireKimiQuota(dependencies, options).finally(
+        () => {
+          if (inFlight === acquisition) inFlight = undefined;
+        },
+      );
       inFlight = acquisition;
       return acquisition;
     },
-    async inspectAuth(_options: ProviderOptions): Promise<AuthProviderReport> {
+    async inspectAuth(options: ProviderOptions): Promise<AuthProviderReport> {
+      const refreshOptions = credentialResolveOptions(
+        options,
+        dependencies.fetch,
+      );
       let piInspection;
       try {
-        piInspection = await dependencies.broker.inspect();
+        piInspection = await dependencies.broker.inspect(refreshOptions.pi);
       } catch {
         piInspection = "error" as const;
       }
@@ -121,7 +129,9 @@ export function createKimiAdapter(
 
       let cliInspection;
       try {
-        cliInspection = await dependencies.cliCredentialSource.inspect();
+        cliInspection = await dependencies.cliCredentialSource.inspect(
+          refreshOptions.cli,
+        );
       } catch {
         cliInspection = "error" as const;
       }
@@ -164,6 +174,7 @@ export const kimiAdapter = createKimiAdapter();
 
 async function acquireKimiQuota(
   dependencies: KimiDependencies,
+  options: ProviderOptions,
 ): Promise<ProviderQuota> {
   const controller = new AbortController();
   const deadline = setTimeout(
@@ -171,11 +182,17 @@ async function acquireKimiQuota(
     dependencies.deadlineMs,
   );
   let attempts: SourceAttempt[] = [];
+  const resolveOptions = credentialResolveOptions(
+    options,
+    dependencies.fetch,
+    controller.signal,
+  );
 
   try {
     const piResolution = await resolveCredential(
       dependencies.broker,
       controller.signal,
+      resolveOptions.pi,
     );
     let credential: string;
     let credentialSource: string;
@@ -204,6 +221,7 @@ async function acquireKimiQuota(
       const cliResolution = await resolveCliCredential(
         dependencies.cliCredentialSource,
         controller.signal,
+        resolveOptions.cli,
       );
       if (cliResolution.status !== "available") {
         const cliFailure = cliCredentialFailureFor(cliResolution);
@@ -284,9 +302,10 @@ async function acquireKimiQuota(
 async function resolveCredential(
   broker: KimiCredentialBroker,
   signal: AbortSignal,
+  options: KimiCredentialResolveOptions,
 ): Promise<KimiCredentialResolution> {
   try {
-    return await waitForDeadline(broker.resolve(), signal);
+    return await waitForDeadline(broker.resolve(options), signal);
   } catch (error) {
     if (error instanceof KimiFailure) throw error;
     throw new KimiFailure("credential_resolution_failed", {
@@ -295,12 +314,35 @@ async function resolveCredential(
   }
 }
 
+function credentialResolveOptions(
+  options: ProviderOptions,
+  fetch: typeof globalThis.fetch,
+  signal?: AbortSignal,
+): {
+  pi: KimiCredentialResolveOptions;
+  cli: KimiCodeCliCredentialResolveOptions;
+} {
+  return {
+    pi: {
+      refresh: options.refreshCredentials !== false,
+      fetch,
+      signal,
+    },
+    cli: {
+      refresh: options.refreshCredentials !== false,
+      fetch,
+      signal,
+    },
+  };
+}
+
 async function resolveCliCredential(
   source: KimiCodeCliCredentialSource,
   signal: AbortSignal,
+  options: KimiCodeCliCredentialResolveOptions,
 ): Promise<KimiCodeCliCredentialResolution> {
   try {
-    return await waitForDeadline(source.resolve(), signal);
+    return await waitForDeadline(source.resolve(options), signal);
   } catch (error) {
     if (error instanceof KimiFailure) throw error;
     throw new KimiFailure("credential_resolution_failed", {
@@ -325,10 +367,18 @@ function credentialFailureFor(
     });
   }
   if (resolution.status === "expired") {
-    return new KimiFailure("pi_kimi_credential_expired", {
-      status: "auth_required",
-      definitiveAuth: true,
-    });
+    const refreshFailed = resolution.refreshFailed === true;
+    const refreshDefinitive = resolution.refreshDefinitive === true;
+    return new KimiFailure(
+      resolution.refreshFailed
+        ? "kimi_credential_refresh_failed"
+        : "pi_kimi_credential_expired",
+      {
+        status: "auth_required",
+        staleEligible: refreshFailed && !refreshDefinitive,
+        definitiveAuth: refreshFailed ? refreshDefinitive : false,
+      },
+    );
   }
   if (resolution.status === "error") {
     return new KimiFailure("credential_resolution_failed", {
@@ -350,10 +400,18 @@ function cliCredentialFailureFor(
     });
   }
   if (resolution.status === "expired") {
-    return new KimiFailure("kimi_code_cli_credential_expired", {
-      status: "auth_required",
-      definitiveAuth: true,
-    });
+    const refreshFailed = resolution.refreshFailed === true;
+    const refreshDefinitive = resolution.refreshDefinitive === true;
+    return new KimiFailure(
+      resolution.refreshFailed
+        ? "kimi_code_cli_credential_refresh_failed"
+        : "kimi_code_cli_credential_expired",
+      {
+        status: "auth_required",
+        staleEligible: refreshFailed && !refreshDefinitive,
+        definitiveAuth: refreshFailed ? refreshDefinitive : true,
+      },
+    );
   }
   if (resolution.status === "error") {
     return new KimiFailure("credential_resolution_failed", {

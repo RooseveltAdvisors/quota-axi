@@ -451,6 +451,8 @@ function extractCredentialState(
   const idToken = stringValue(tokens.id_token) ?? stringValue(tokens.idToken);
   const idPayload = decodeJwtPayload(idToken);
   const accessPayload = decodeJwtPayload(accessToken);
+  // The access token authenticates the usage request. An expired id_token is
+  // stale identity metadata, not proof that the access grant has lapsed.
   if (isExpiredJwtPayload(accessPayload)) {
     return {
       status: "expired",

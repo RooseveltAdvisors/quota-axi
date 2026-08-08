@@ -4,6 +4,7 @@ import { copilotAdapter } from "./copilot.js";
 import { cursorAdapter } from "./cursor.js";
 import { grokAdapter } from "./grok.js";
 import { kimiAdapter } from "./kimi.js";
+import { alibabaAdapter } from "./alibaba.js";
 import {
   PROVIDER_IDS,
   type ProviderAdapter,
@@ -17,6 +18,7 @@ export const PROVIDERS: Record<ProviderId, ProviderAdapter> = {
   copilot: copilotAdapter,
   grok: grokAdapter,
   kimi: kimiAdapter,
+  alibaba: alibabaAdapter,
 };
 
 export function parseProviders(value: string | undefined): ProviderId[] {

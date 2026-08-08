@@ -12,6 +12,35 @@ const workflowsDir = join(root, ".github", "workflows");
  * Keep this aligned with the fleet audit rule: node -> package.json
  * (+ package-lock.json if present), changelog, extra-files, and the manifest.
  */
+function loadWorkflow(filePath: string): Record<string, unknown> {
+  const document = loadYaml(readFileSync(filePath, "utf8")) as
+    | Record<string | boolean, unknown>
+    | null
+    | undefined;
+  expect(document).not.toBeNull();
+  expect(document).toBeDefined();
+  return document as Record<string, unknown>;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function configuredManifestFile(): string | undefined {
+  const workflow = loadWorkflow(join(workflowsDir, "release-please.yml"));
+  const jobs = objectValue(workflow.jobs);
+  const releaseJob = objectValue(jobs?.["release-please"]);
+  const steps = Array.isArray(releaseJob?.steps) ? releaseJob.steps : [];
+  const releaseStep = steps.find(
+    (step) => objectValue(step)?.uses === "googleapis/release-please-action@v4",
+  );
+  const inputs = objectValue(objectValue(releaseStep)?.with);
+  const manifest = inputs?.["manifest-file"];
+  return typeof manifest === "string" ? manifest : undefined;
+}
+
 function expectedReleaseOutputs(): string[] {
   const config = JSON.parse(
     readFileSync(join(root, "release-please-config.json"), "utf8"),
@@ -63,25 +92,15 @@ function expectedReleaseOutputs(): string[] {
     if (path) expected.push(path);
   }
 
-  let manifest = ".release-please-manifest.json";
-  const releaseWorkflow = readFileSync(
-    join(workflowsDir, "release-please.yml"),
-    "utf8",
-  );
-  const manifestMatch = releaseWorkflow.match(/manifest-file:\s*(\S+)/);
-  if (manifestMatch) manifest = manifestMatch[1];
-  expected.push(manifest);
+  expected.push(configuredManifestFile() ?? ".release-please-manifest.json");
 
   return [...new Set(expected)];
 }
 
 function loadWorkflowOn(filePath: string): Record<string, unknown> | null {
-  const doc = loadYaml(readFileSync(filePath, "utf8")) as
-    | Record<string | boolean, unknown>
-    | null
-    | undefined;
+  const doc = loadWorkflow(filePath);
   // js-yaml may parse a bare `on:` key as boolean true.
-  const on = doc?.on ?? doc?.true ?? null;
+  const on = doc.on ?? doc.true ?? null;
   if (on == null || typeof on !== "object" || Array.isArray(on)) return null;
   return on as Record<string, unknown>;
 }
@@ -165,7 +184,7 @@ describe("release-please CI exclusions", () => {
     ]);
   });
 
-  it("every pull_request workflow ignores the full release-output set", () => {
+  it("filters release outputs from build workflows", () => {
     const files = readdirSync(workflowsDir).filter((name) =>
       name.endsWith(".yml"),
     );
@@ -174,10 +193,12 @@ describe("release-please CI exclusions", () => {
     for (const name of files) {
       const filePath = join(workflowsDir, name);
       const on = loadWorkflowOn(filePath);
-      if (!on || !("pull_request" in on)) continue;
+      if (!on || (!("pull_request" in on) && !("pull_request_target" in on)))
+        continue;
+      const trigger = on.pull_request ?? on.pull_request_target;
       prWorkflows.push({
         name,
-        filter: pullRequestFilterCoverage(on.pull_request),
+        filter: pullRequestFilterCoverage(trigger),
       });
     }
 
@@ -186,9 +207,24 @@ describe("release-please CI exclusions", () => {
       "guard-generated-files.yml",
       "no-mistakes-required.yml",
     ]);
+    expect(
+      prWorkflows.find(
+        (workflow) => workflow.name === "guard-generated-files.yml",
+      )?.filter,
+    ).toMatchObject({
+      kind: "paths-ignore",
+      paths: expect.arrayContaining(expected),
+    });
+
+    expect(
+      prWorkflows.find(
+        (workflow) => workflow.name === "no-mistakes-required.yml",
+      )?.filter,
+    ).toEqual({ kind: "unfiltered" });
 
     const failures: string[] = [];
     for (const { name, filter } of prWorkflows) {
+      if (name === "no-mistakes-required.yml") continue;
       const missing = expected.filter((path) => !isCovered(filter, path));
       if (missing.length > 0) {
         failures.push(`${name} missing coverage for: ${missing.join(", ")}`);

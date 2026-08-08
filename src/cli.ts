@@ -5,6 +5,7 @@ import {
   quotaCommand,
   type QuotaContext,
 } from "./commands.js";
+import { loadUserEnv } from "./lib/env.js";
 import { VERSION } from "./version.js";
 
 export const DESCRIPTION =
@@ -15,12 +16,12 @@ commands[3]:
   (none)=quota, auth, models
 output:
   Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits).
-flags[11]:
-  --provider <claude,codex,cursor,copilot,grok,kimi>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
+flags[12]:
+  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --no-refresh, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude
-  quota-axi --provider cursor,copilot,grok,kimi
+  quota-axi --provider cursor,copilot,grok,kimi,alibaba
   quota-axi --json
   quota-axi --full
   quota-axi --tui
@@ -38,6 +39,7 @@ type MainOptions = {
 };
 
 export async function main(options: MainOptions = {}): Promise<void> {
+  loadUserEnv();
   const binPath = options.binPath ?? process.argv[1] ?? "quota-axi";
   const argv = normalizeArgv(options.argv ?? process.argv.slice(2));
 
