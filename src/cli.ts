@@ -169,7 +169,7 @@ function findLegacyFlag(
 ): number {
   for (let index = 0; index < raw.length; index++) {
     const arg = raw[index];
-    if (arg === "--provider") {
+    if (isValueTakingFlag(arg)) {
       index++;
       continue;
     }
@@ -181,7 +181,7 @@ function findLegacyFlag(
 function findCommand(raw: string[]): number {
   for (let index = 0; index < raw.length; index++) {
     const arg = raw[index];
-    if (arg === "--provider") {
+    if (isValueTakingFlag(arg)) {
       index++;
       continue;
     }
@@ -195,4 +195,13 @@ function findCommand(raw: string[]): number {
     }
   }
   return -1;
+}
+
+function isValueTakingFlag(arg: string): boolean {
+  return (
+    arg === "--provider" ||
+    arg === "--refresh" ||
+    arg === "--intelligence" ||
+    arg === "--sort"
+  );
 }

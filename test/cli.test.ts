@@ -205,6 +205,24 @@ describe("argv normalization", () => {
     expect(normalizeArgv(["--check", "update"])).toEqual(["update", "--check"]);
   });
 
+  it("does not route value-taking flag operands as commands", () => {
+    expect(normalizeArgv(["--refresh", "update"])).toEqual([
+      "quota",
+      "--refresh",
+      "update",
+    ]);
+    expect(normalizeArgv(["--sort", "auth"])).toEqual([
+      "quota",
+      "--sort",
+      "auth",
+    ]);
+    expect(normalizeArgv(["--intelligence", "models"])).toEqual([
+      "quota",
+      "--intelligence",
+      "models",
+    ]);
+  });
+
   it("leaves an unknown command for the SDK to reject", () => {
     expect(normalizeArgv(["boguscmd"])).toEqual(["boguscmd"]);
   });
