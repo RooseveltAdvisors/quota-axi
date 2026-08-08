@@ -74,7 +74,7 @@ effective[10]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowI
   kimi,all_models,74,"weekly + five_hour",weekly,through_reset,unknown,unknown,unknown,established,cycle_average,none,none,known
   alibaba,unresolved,unknown,none,unknown,unknown,unknown,unknown,unknown,unknown,none,none,unknown
 help[4]:
-  Default TOON reports effective headroom and usable runway; use --json or --full for reserve diagnostics
+  Default TOON reports effective headroom, usable runway, and pace diagnostics; use --full for account, source-attempt, and projection details
   Run `quota-axi --provider claude --json` for JSON output
   Run `quota-axi --full` to include account, source-attempt, and reserve details
   Run `quota-axi auth` to inspect local auth source availability without printing secrets
@@ -460,7 +460,7 @@ Pace is calculated only from trusted cycle evidence:
 - Otherwise use provider-owned `windowSeconds` with `resetsAt` (Codex durations; Claude fixed 5h/7d; Kimi fixed 5h/weekly).
 - Do not infer monthly, rolling, or unlabeled periods.
 
-Default TOON keeps token cost low: window rows expose `pace` status, while effective rows make effective headroom and usable runway primary. It intentionally omits raw numeric reserve columns. `--full` adds reserve and per-window projection diagnostics to TOON, and `--json` always retains them. Pace is recomputed on every report from `generatedAt` and is not written to the quota cache.
+Default TOON keeps token cost low while preserving window `pace` and numeric `reserve`, plus effective headroom, usable runway, and the effective pace summary. `--full` adds account identity, source attempts, and detailed per-window projection diagnostics to TOON, and `--json` always retains the normalized model. Pace is recomputed on every report from `generatedAt` and is not written to the quota cache.
 
 Each `effectiveAvailability` entry also carries a compact `pace` summary over **every** bounding window for that scope (not only the current lowest-remaining limiter): per-status window lists, including `aheadWindowIds` and `unknownWindowIds`, plus `worstReservePercentPoints` / `worstReserveWindowId` (most negative signed reserve among known-pace windows). Different windows keep their own reset horizons; quota-axi does not invent one synthetic reset for a scope. This is factual inspectable data, never a provider/model routing recommendation.
 

@@ -580,19 +580,19 @@ describe("CLI quota rendering", () => {
 
     const compact = await capture(["--provider", "claude,codex"]);
     expect(compact).toContain(
-      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,state}:",
+      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:",
     );
     expect(compact).toContain(
-      "effective[2]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
+      "effective[2]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
     );
     expect(compact).toContain(
-      'claude,all_models,1,five_hour,five_hour,projected_exhaustion,178,"2026-07-15T12:02:58.181Z",five_hour,established,cycle_average,none,none,known',
+      'claude,all_models,1,five_hour,five_hour,on_pace,none,none,-1,projected_exhaustion,178,"2026-07-15T12:02:58.181Z",five_hour,established,cycle_average,none,none,known',
     );
     expect(compact).toContain(
-      'codex,all_models,55,weekly,weekly,projected_exhaustion,258720,"2026-07-18T11:52:00.000Z",weekly,established,cycle_average,none,none,known',
+      'codex,all_models,55,weekly,weekly,ahead,weekly,none,-10,projected_exhaustion,258720,"2026-07-18T11:52:00.000Z",weekly,established,cycle_average,none,none,known',
     );
     expect(compact).not.toContain("windowPace[");
-    expect(compact).not.toContain("worstReserve");
+    expect(compact).toContain("worstReserve");
 
     const full = await capture(["--provider", "claude,codex", "--full"]);
     expect(full).toContain(
@@ -613,16 +613,16 @@ describe("CLI quota rendering", () => {
     const toon = await capture(["--provider", "kimi"]);
     expect(toon).toContain("kimi,unknown,api,fresh");
     expect(toon).toContain(
-      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,state}:",
+      "windows[2]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:",
     );
     expect(toon).toMatch(
-      /kimi,five_hour,session,81\.25,"2027-02-03T09:05:06\.000Z",[^,]+,fresh/,
+      /kimi,five_hour,session,81\.25,"2027-02-03T09:05:06\.000Z",[^,]+,[^,]+,fresh/,
     );
     expect(toon).toMatch(
-      /kimi,weekly,week,67\.5,"2027-02-08T04:05:06\.000Z",[^,]+,fresh/,
+      /kimi,weekly,week,67\.5,"2027-02-08T04:05:06\.000Z",[^,]+,[^,]+,fresh/,
     );
     expect(toon).toContain(
-      "effective[1]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
+      "effective[1]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:",
     );
     expect(toon).not.toContain("synthetic-kimi-key");
     expect(toon).not.toMatch(/recommend|prefer provider|switch to/i);

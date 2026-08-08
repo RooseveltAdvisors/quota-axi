@@ -57,8 +57,9 @@ or when comparing supported local provider headroom side by side.
    `usableRunwaySeconds`, `projectedExhaustedAt`, limiting window, and confidence; `through_reset`
    deliberately has no synthetic deadline; `exhausted_now` is zero runway; and `unknown` names
    unmeasurable bounds instead of inventing a conclusion. Read each window's `pace` (and the
-   effective scope's pace summary) for diagnostics. Default TOON omits raw numeric reserve;
-   `--json` and `--full` retain it. If relationship status is `partial` or `unknown`, do not infer
+   effective scope's pace summary) for diagnostics. Default TOON includes window reserve and
+   effective pace summaries; `--json` and `--full` retain the complete normalized diagnostics.
+   If relationship status is `partial` or `unknown`, do not infer
    one. Stale reports keep raw windows for diagnostics, but effective availability, pace, and
    runway are always unknown; never route from a stale raw percentage as though it were current
    headroom. Default output has no ordering preference. For a provider-native model evidence join,

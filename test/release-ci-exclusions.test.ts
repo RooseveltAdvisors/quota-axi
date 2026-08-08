@@ -211,7 +211,10 @@ describe("release-please CI exclusions", () => {
       prWorkflows.find(
         (workflow) => workflow.name === "guard-generated-files.yml",
       )?.filter,
-    ).toEqual({ kind: "unfiltered" });
+    ).toMatchObject({
+      kind: "paths-ignore",
+      paths: expect.arrayContaining(expected),
+    });
 
     expect(
       prWorkflows.find(
@@ -221,11 +224,7 @@ describe("release-please CI exclusions", () => {
 
     const failures: string[] = [];
     for (const { name, filter } of prWorkflows) {
-      if (
-        name === "guard-generated-files.yml" ||
-        name === "no-mistakes-required.yml"
-      )
-        continue;
+      if (name === "no-mistakes-required.yml") continue;
       const missing = expected.filter((path) => !isCovered(filter, path));
       if (missing.length > 0) {
         failures.push(`${name} missing coverage for: ${missing.join(", ")}`);

@@ -40,7 +40,7 @@ export function annotateQuotaAdvice(
 export function quotaHelpLines(response: QuotaAxiResponse): string[] {
   return [
     ...(response.help ?? []),
-    "Default TOON reports effective headroom and usable runway; use --json or --full for reserve diagnostics",
+    "Default TOON reports effective headroom, usable runway, and pace diagnostics; use --full for account, source-attempt, and projection details",
     "Run `quota-axi --provider claude --json` for JSON output",
     "Run `quota-axi --full` to include account, source-attempt, and reserve details",
     "Run `quota-axi auth` to inspect local auth source availability without printing secrets",

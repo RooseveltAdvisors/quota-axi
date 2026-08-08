@@ -125,6 +125,36 @@ describe("quota semantics", () => {
     ).toBe(true);
   });
 
+  it("keeps legacy Claude Opus scopes independent across seats", () => {
+    const result = withQuotaSemantics(
+      provider("claude", [
+        window("arcs:five_hour", "session", 80),
+        window("arcs:seven_day_opus", "model", 31),
+        window("jr:five_hour", "session", 70),
+        window("jr:seven_day_opus", "model", 62),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.status).toBe("known");
+    expect(
+      result.quotaSemantics?.effectiveAvailability.map(({ scope }) => scope),
+    ).toEqual([
+      "arcs:all_models",
+      "arcs:seven_day_opus",
+      "jr:all_models",
+      "jr:seven_day_opus",
+    ]);
+    expect(
+      result.quotaSemantics?.effectiveAvailability.find(
+        ({ scope }) => scope === "jr:seven_day_opus",
+      ),
+    ).toMatchObject({
+      effectivePercentRemaining: 62,
+      boundedBy: ["jr:five_hour", "jr:seven_day_opus"],
+    });
+  });
+
   it("does not block Claude effective runway when five_hour has not been triggered yet (no resetsAt)", () => {
     const result = withQuotaSemantics(
       provider("claude", [

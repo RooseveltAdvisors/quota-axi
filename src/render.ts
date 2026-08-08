@@ -34,6 +34,7 @@ export function renderQuotaToon(
       percentRemaining: window.percentRemaining ?? "unknown",
       resetsAt: window.resetsAt ?? window.resetText ?? "unknown",
       pace: window.pace?.status ?? "unknown",
+      reserve: window.pace?.reservePercentPoints ?? "unknown",
       state: provider.state.status,
     })),
   );
@@ -46,6 +47,10 @@ export function renderQuotaToon(
         effectivePercentRemaining: "unknown" as string | number,
         boundedBy: "none",
         limitingWindowIds: "unknown",
+        pace: "unknown",
+        aheadWindows: "none",
+        unknownPace: "none",
+        worstReserve: "unknown" as string | number,
         runway: "unknown",
         usableRunwaySeconds: "unknown" as string | number,
         projectedExhaustedAt: "unknown",
@@ -67,6 +72,11 @@ export function renderQuotaToon(
       boundedBy: availability.boundedBy.join(" + ") || "none",
       limitingWindowIds:
         availability.limitingWindowIds?.join(" + ") ?? "unknown",
+      pace: availability.pace?.status ?? "unknown",
+      aheadWindows: availability.pace?.aheadWindowIds?.join(" + ") ?? "none",
+      unknownPace: availability.pace?.unknownWindowIds?.join(" + ") ?? "none",
+      worstReserve:
+        availability.pace?.worstReservePercentPoints ?? ("unknown" as const),
       runway: availability.runway?.status ?? "unknown",
       usableRunwaySeconds:
         availability.runway?.usableRunwaySeconds ?? ("unknown" as const),
@@ -211,6 +221,7 @@ export function renderModelsToon(
         "Join curated provider-native model intelligence buckets with local quota evidence",
       generatedAt: response.generatedAt,
       catalogVersion: response.catalog.version,
+      catalogProvenance: response.catalog.provenance,
     }),
     encode({ models }),
   ];
@@ -238,7 +249,7 @@ export function renderModelsToon(
     renderHelp([
       "Default model order is deterministic and non-preferential (provider, then id)",
       "Run `quota-axi models --sort runway` for the documented opt-in runway comparator",
-      "Run `quota-axi models --json` for catalog provenance and full quota evidence",
+      "Run `quota-axi models --json` for normalized model output and full quota evidence",
     ]),
   );
   return blocks.join("\n");

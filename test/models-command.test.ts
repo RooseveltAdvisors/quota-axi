@@ -85,6 +85,7 @@ describe("models command", () => {
 
     const toon = await capture(["models", "--provider", "claude"]);
     expect(toon).toContain("models[");
+    expect(toon).toContain("catalogProvenance");
     expect(toon).toContain("claude-opus-4-5");
     expect(toon).toContain(
       "Default model order is deterministic and non-preferential",

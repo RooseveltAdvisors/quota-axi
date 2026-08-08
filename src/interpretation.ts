@@ -1,3 +1,4 @@
+import { splitClaudeSeatScope } from "./claude-scope.js";
 import {
   computeEffectiveRunway,
   computeWindowPace,
@@ -201,16 +202,15 @@ function claudeMultiSeatSemantics(
 function claudeSeatWindow(
   window: QuotaWindow,
 ): { seat: string; id: string } | undefined {
-  if (window.id.startsWith("model:")) return undefined;
-  const separator = window.id.indexOf(":");
-  if (separator <= 0) return undefined;
-  const seat = window.id.slice(0, separator);
-  const id = window.id.slice(separator + 1);
+  const split = splitClaudeSeatScope(window.id);
+  if (!split) return undefined;
   if (
-    ["five_hour", "seven_day", "extra_usage"].includes(id) ||
-    (window.kind === "model" && id.startsWith("model:"))
+    ["five_hour", "seven_day", "seven_day_opus", "extra_usage"].includes(
+      split.scope,
+    ) ||
+    (window.kind === "model" && split.scope.startsWith("model:"))
   ) {
-    return { seat, id };
+    return { seat: split.seat, id: split.scope };
   }
   return undefined;
 }

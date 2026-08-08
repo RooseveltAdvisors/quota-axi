@@ -1,3 +1,4 @@
+import { splitClaudeSeatScope } from "./claude-scope.js";
 import { MODEL_CATALOG } from "./model-kb.js";
 import type {
   EffectiveAvailability,
@@ -151,9 +152,7 @@ export function validateModelCatalog(catalog: ModelCatalog): void {
     if (seen.has(key)) throw new Error(`duplicate model catalog entry: ${key}`);
     seen.add(key);
     for (const windowId of entry.windowIds ?? []) {
-      if (
-        !/^(?:model:[a-z0-9][a-z0-9_.:-]*|seven_day_opus)$/i.test(windowId)
-      ) {
+      if (!/^(?:model:[a-z0-9][a-z0-9_.:-]*|seven_day_opus)$/i.test(windowId)) {
         throw new Error(`model catalog window id is invalid: ${windowId}`);
       }
     }
@@ -251,24 +250,6 @@ function claudeSeatNames(
     if (split) names.add(split.seat);
   }
   return [...names].sort((left, right) => left.localeCompare(right));
-}
-
-function splitClaudeSeatScope(
-  scope: string,
-): { seat: string; scope: string } | undefined {
-  const separator = scope.indexOf(":");
-  if (separator <= 0) return undefined;
-  const seat = scope.slice(0, separator);
-  const nestedScope = scope.slice(separator + 1);
-  if (
-    ["five_hour", "seven_day", "extra_usage", "all_models"].includes(
-      nestedScope,
-    ) ||
-    nestedScope.startsWith("model:")
-  ) {
-    return { seat, scope: nestedScope };
-  }
-  return undefined;
 }
 
 function unmatchedModelWindowIds(

@@ -1,3 +1,4 @@
+import { splitClaudeSeatScope } from "./claude-scope.js";
 import type {
   EffectiveAvailability,
   ProviderId,
@@ -208,8 +209,7 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
   ];
 
   const seats = claudeSeatNames(provider);
-  const groups: (string | undefined)[] =
-    seats.length > 0 ? seats : [undefined];
+  const groups: (string | undefined)[] = seats.length > 0 ? seats : [undefined];
   const groupedWindowIds = new Set<string>();
   for (const [index, seat] of groups.entries()) {
     if (index > 0) lines.push(interior([], "border"));
@@ -219,7 +219,7 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
       seat === undefined
         ? provider.windows
         : provider.windows.filter((window) => {
-            const scope = claudeSeatScope(window.id);
+            const scope = splitClaudeSeatScope(window.id);
             return scope?.seat === seat;
           });
     for (const window of windows) groupedWindowIds.add(window.id);
@@ -465,28 +465,10 @@ function claudeSeatNames(provider: ProviderQuota): string[] {
       ({ scope }) => scope,
     ),
   ]) {
-    const split = claudeSeatScope(scope);
+    const split = splitClaudeSeatScope(scope);
     if (split) names.add(split.seat);
   }
   return [...names].sort((left, right) => left.localeCompare(right));
-}
-
-function claudeSeatScope(
-  scope: string,
-): { seat: string; scope: string } | undefined {
-  const separator = scope.indexOf(":");
-  if (separator <= 0) return undefined;
-  const seat = scope.slice(0, separator);
-  const nestedScope = scope.slice(separator + 1);
-  if (
-    ["five_hour", "seven_day", "extra_usage", "all_models"].includes(
-      nestedScope,
-    ) ||
-    nestedScope.startsWith("model:")
-  ) {
-    return { seat, scope: nestedScope };
-  }
-  return undefined;
 }
 
 function pickHeadlineAvailability(
@@ -503,8 +485,7 @@ function pickHeadlineAvailability(
       (entry) =>
         (seat === undefined
           ? entry.scope.startsWith("all_")
-          : entry.scope === `${seat}:all_models`) &&
-        entry.status === "known",
+          : entry.scope === `${seat}:all_models`) && entry.status === "known",
     ) ??
     scoped.find((entry) => entry.status === "known") ??
     scoped[0]

@@ -411,6 +411,51 @@ describe("renderQuotaTui structure", () => {
     expect(output).toContain("on pace ✓");
   });
 
+  it("recognizes legacy Opus scopes when grouping Claude seats", () => {
+    const response = fixtureResponse();
+    const claude = response.providers[0]!;
+    claude.windows = [
+      {
+        id: "arcs:seven_day_opus",
+        label: "arcs Opus week",
+        kind: "model",
+        percentRemaining: 20,
+      },
+      {
+        id: "jr:seven_day_opus",
+        label: "jr Opus week",
+        kind: "model",
+        percentRemaining: 80,
+      },
+    ];
+    claude.quotaSemantics = {
+      status: "known",
+      description: "legacy Opus multi-seat test",
+      effectiveAvailability: [
+        {
+          scope: "arcs:seven_day_opus",
+          status: "known",
+          effectivePercentRemaining: 20,
+          boundedBy: ["arcs:seven_day_opus"],
+          runway: { status: "projected_exhaustion", usableRunwaySeconds: 3600 },
+        },
+        {
+          scope: "jr:seven_day_opus",
+          status: "known",
+          effectivePercentRemaining: 80,
+          boundedBy: ["jr:seven_day_opus"],
+          runway: { status: "through_reset" },
+        },
+      ],
+    };
+
+    const output = renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+    });
+    expect(output).toContain("arcs · 20% seven day opus");
+    expect(output).toContain("jr · 80% seven day opus");
+  });
+
   it("omits the triangle for the no-seconds exhaustion fallback", () => {
     const response = fixtureResponse();
     const runway =

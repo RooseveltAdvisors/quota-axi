@@ -236,6 +236,66 @@ describe("model quota join", () => {
     expect(response.unmatchedWindowIds).toBeUndefined();
   });
 
+  it("maps legacy Opus evidence separately for every Claude seat", () => {
+    const opusEntry = MODEL_CATALOG.entries.find(
+      (entry) => entry.id === "claude-opus-4-5",
+    );
+    expect(opusEntry).toBeDefined();
+    if (!opusEntry) return;
+
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              { id: "arcs:seven_day_opus", label: "arcs Opus", kind: "model" },
+              { id: "jr:seven_day_opus", label: "jr Opus", kind: "model" },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "multi-seat legacy Opus test",
+              effectiveAvailability: [
+                {
+                  scope: "arcs:seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 31,
+                  boundedBy: ["arcs:seven_day_opus"],
+                },
+                {
+                  scope: "jr:seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 62,
+                  boundedBy: ["jr:seven_day_opus"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      { catalog: { ...MODEL_CATALOG, entries: [opusEntry] } },
+    );
+
+    expect(response.models).toMatchObject([
+      {
+        seat: "arcs",
+        quotaScopes: ["arcs:seven_day_opus"],
+        effective: { effectivePercentRemaining: 31 },
+      },
+      {
+        seat: "jr",
+        quotaScopes: ["jr:seven_day_opus"],
+        effective: { effectivePercentRemaining: 62 },
+      },
+    ]);
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
   it("filters intelligence without inventing availability for failed providers", () => {
     const response = createModelsResponse(quotaResponse(), {
       catalog: testCatalog(),
