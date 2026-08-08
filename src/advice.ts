@@ -86,8 +86,7 @@ function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   if (provider.state.error === GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR) {
     return PI_TOKEN_REFRESH_REMEDY_COMMAND;
   }
-  return provider.state.authStatus === "expired_refreshable" &&
-    provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
+  return provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
     ? GROK_TOKEN_REFRESH_REMEDY_COMMAND
     : undefined;
 }

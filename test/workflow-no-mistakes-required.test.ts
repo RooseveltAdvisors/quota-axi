@@ -89,14 +89,11 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
     expect(on.pull_request).toBeUndefined();
   });
 
-  it("keeps the upstream release-output exclusions on the hardened trigger", () => {
+  it("keeps the hardened trigger unfiltered for ordinary PRs", () => {
     const trigger = loadPullRequestTargetTrigger();
     expect(trigger.branches).toEqual(["main"]);
-    expect(trigger["paths-ignore"]).toEqual([
-      ".release-please-manifest.json",
-      "CHANGELOG.md",
-      "package.json",
-    ]);
+    expect(trigger["paths-ignore"]).toBeUndefined();
+    expect(trigger.paths).toBeUndefined();
   });
 
   it("declares the four relevant PR event types", () => {

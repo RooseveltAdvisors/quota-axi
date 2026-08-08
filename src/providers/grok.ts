@@ -229,6 +229,15 @@ async function fetchQuotaWithDependencies(
   const refreshDefinitive =
     cliState.status === "expired" && cliState.refreshDefinitive === true;
   const definitiveAuthFailure = refreshDefinitive || consumerAuthRejected;
+  const expiredConsumerCredentialError =
+    cliState.status === "expired" && !refreshDefinitive
+      ? cliState.refreshError ??
+        (cliState.refreshable
+          ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
+            ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
+            : GROK_ACCESS_TOKEN_EXPIRED_ERROR
+          : GROK_SIGN_IN_REQUIRED_ERROR)
+      : undefined;
 
   if (authStatus === "usable") {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
@@ -240,7 +249,9 @@ async function fetchQuotaWithDependencies(
       return withAuthStatus(
         staleFromCache(
           cached,
-          finalError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+          finalError ??
+            expiredConsumerCredentialError ??
+            GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
           sourceNames(attempts),
           attempts,
         ),
@@ -261,7 +272,8 @@ async function fetchQuotaWithDependencies(
         error:
           finalError && transientConsumerFailure
             ? finalError
-            : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+            : expiredConsumerCredentialError ??
+              GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
         retryAfter,
         sourcesTried: sourceNames(attempts),
         attempts,

@@ -1167,6 +1167,47 @@ describe("Grok expired access-token classification", () => {
     expect(readFileSync(authPath)).toEqual(before);
   });
 
+  it("preserves expired CLI diagnostics with Pi api-key model auth", async () => {
+    writeAuth({
+      "https://auth.x.ai::fixture-client": {
+        key: "expired-access-token",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: "fixture-refresh-token",
+      },
+    });
+    writePiXaiAuth({
+      xai: {
+        type: "api_key",
+        key: "pi-xai-api-key-fixture-value",
+      },
+    });
+    writeCachedProviders([cachedGrok("web")]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const json = JSON.parse(
+      await captureCli([
+        "--provider",
+        "grok",
+        "--json",
+        "--no-refresh",
+      ]),
+    ) as QuotaAxiResponse;
+
+    expect(json.providers[0]).toMatchObject({
+      source: "cache",
+      state: {
+        status: "stale",
+        error: "Grok access token expired",
+        authStatus: "usable",
+        reason: "credentials_expired",
+        remedyCommand: "grok",
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("falls through an expired default Grok file to a renewable Pi xai grant", async () => {
     delete process.env.GROK_AUTH_JSON;
     delete process.env.GROK_HOME;
