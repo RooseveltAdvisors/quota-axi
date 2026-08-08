@@ -389,7 +389,7 @@ type ResetsAtOutcome =
  * as non-bounding.
  */
 function resolveResetsAtOutcome(value: string | undefined): ResetsAtOutcome {
-  if (!value) return { kind: "missing" };
+  if (value === undefined) return { kind: "missing" };
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? { kind: "ok", ms } : { kind: "malformed" };
 }

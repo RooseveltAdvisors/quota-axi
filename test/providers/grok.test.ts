@@ -1920,6 +1920,54 @@ describe("Grok cache provenance", () => {
     });
   });
 
+  it("does not serve web cache after definitive refresh rejection with Pi auth", async () => {
+    writeAuth({
+      "https://auth.x.ai::fixture-client": {
+        key: "expired-access-token",
+        auth_mode: "oidc",
+        expires_at: "2020-01-01T00:00:00.000Z",
+        refresh_token: "fixture-refresh-token",
+      },
+    });
+    writeValidPiXaiOauth();
+    writeCachedProviders([cachedGrok("web")]);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "unavailable",
+        stale: false,
+        error: "Grok consumer quota unavailable",
+        authStatus: "usable",
+      },
+    });
+    expect(result.attempts).toEqual([
+      {
+        source: "auth-json",
+        status: "skipped",
+        error: "credentials_expired",
+      },
+      {
+        source: "pi:xai",
+        status: "skipped",
+        error: "model_auth_only",
+        credentialPresent: true,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("rejects a legacy CLI-proxy cache entry after exact-source failure", async () => {
     writeValidAuth();
     writeCachedProviders([cachedGrok("api")]);

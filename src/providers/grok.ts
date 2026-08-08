@@ -226,11 +226,13 @@ async function fetchQuotaWithDependencies(
     consumerAuthRejected,
   );
   const cached = readCachedProvider("grok");
+  const refreshDefinitive =
+    cliState.status === "expired" && cliState.refreshDefinitive === true;
 
   if (authStatus === "usable") {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
-    const cached = readCachedProvider("grok");
     if (
+      !refreshDefinitive &&
       cached?.source === GROK_SOURCE &&
       (transientConsumerFailure || cliState.status !== "available")
     ) {
@@ -294,8 +296,6 @@ async function fetchQuotaWithDependencies(
     finalError = GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
-  const refreshDefinitive =
-    cliState.status === "expired" && cliState.refreshDefinitive === true;
   const resolvedError = finalError ?? GROK_SIGN_IN_REQUIRED_ERROR;
   if (!refreshDefinitive && cached?.source === GROK_SOURCE) {
     return withAuthStatus(
