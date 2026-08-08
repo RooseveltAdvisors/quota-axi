@@ -2,9 +2,10 @@
 
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
-- quota-axi is data only.
+- quota-axi reports quota data without routing or recommending providers; its multi-seat Claude path may make the bounded one-token header probe documented in [README Multi-seat Claude](README.md#multi-seat-claude), which can consume provider quota.
 - It reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Personal Token Plan quota windows. Alibaba source precedence, plan-specific accounting, bounded cookie handling, and degraded-state contracts are documented in [README Provider windows](README.md#provider-windows) and [README Security Posture](README.md#security-posture).
 - Claude quota windows can include `five_hour`, `seven_day`, `seven_day_opus`, and `extra_usage`. When the OAuth usage response includes a `limits` array, that array is the authoritative, self-describing source and is preferred over the fixed top-level fields: it surfaces every active limit, including ones scoped to a specific model (e.g. Fable) via `scope.model.display_name`, with a `model:<slug>` window id.
+- Claude multi-seat discovery and header-probe behavior, including the one-row seat-prefixed output shape and 60-second seat-matched snapshot reuse, are documented in [README Multi-seat Claude](README.md#multi-seat-claude).
 - Claude credential-validity and cache-fallback contracts are documented in [README Security Posture](README.md#security-posture).
 - Codex window identity and cache-validation contracts are documented in [README Provider windows](README.md#provider-windows) and [README Cache](README.md#cache).
 - Cursor reads `$CURSOR_STATE_DB` or the local Cursor state database via `sqlite3 -readonly` for `cursorAuth` values and can report `included_usage`, `auto_usage`, `api_usage`, and optional `spend_limit` windows from the first-party dashboard usage endpoint.

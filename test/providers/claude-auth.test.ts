@@ -17,6 +17,7 @@ const originalUser = process.env.USER;
 const originalUserProfile = process.env.USERPROFILE;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+const originalClaudeConfigDirs = process.env.CLAUDE_CONFIG_DIRS;
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 let tempDir: string | undefined;
 
@@ -24,6 +25,7 @@ beforeEach(() => {
   vi.resetModules();
   usePlatform("linux");
   process.env.USER = "fixture-user";
+  process.env.CLAUDE_CONFIG_DIRS = "";
 });
 
 afterEach(() => {
@@ -44,6 +46,9 @@ afterEach(() => {
   if (originalClaudeConfigDir === undefined)
     delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+  if (originalClaudeConfigDirs === undefined)
+    delete process.env.CLAUDE_CONFIG_DIRS;
+  else process.env.CLAUDE_CONFIG_DIRS = originalClaudeConfigDirs;
   process.exitCode = undefined;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
