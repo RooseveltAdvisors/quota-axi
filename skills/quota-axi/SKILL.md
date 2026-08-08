@@ -28,6 +28,12 @@ Report local agent-provider quota windows for routing-aware agents.
 
 You do not need quota-axi installed globally - invoke it with `npx -y quota-axi`.
 
+Bare `quota-axi` automatically loads KEY=VALUE pairs from
+`$XDG_CONFIG_HOME/quota-axi/env` or `~/.config/quota-axi/env` before reading
+provider auth. Existing process environment variables win; `QUOTA_AXI_ENV_FILE`
+can override the file path. The optional `quota-axi-with-secrets` wrapper is only
+a convenience.
+
 quota-axi reports data without routing, recommending, proxying, intercepting, logging in, or
 importing browser cookies. It reads local provider auth sources and calls first-party provider
 quota, usage, billing, or entitlement endpoints. Multi-seat Claude may make a bounded one-token

@@ -1,5 +1,6 @@
 import { runAxiCli } from "axi-sdk-js";
 import { authCommand, quotaCommand, type QuotaContext } from "./commands.js";
+import { loadUserEnv } from "./lib/env.js";
 import { VERSION } from "./version.js";
 
 export const DESCRIPTION =
@@ -26,6 +27,7 @@ type MainOptions = {
 };
 
 export async function main(options: MainOptions = {}): Promise<void> {
+  loadUserEnv();
   const binPath = options.binPath ?? process.argv[1] ?? "quota-axi";
   const argv = normalizeArgv(options.argv ?? process.argv.slice(2));
 
