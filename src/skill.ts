@@ -5,7 +5,7 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 export const SKILL_DESCRIPTION =
   "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows via the quota-axi CLI - remaining " +
   "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable. " +
-  "Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
+  "Short-lived local OAuth tokens may renew on read by default; use --no-refresh to prevent refresh requests and local credential writes. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
 
@@ -59,12 +59,14 @@ ${DESCRIPTION}
 
 You do not need quota-axi installed globally - invoke it with \`npx -y quota-axi\`.
 
-quota-axi is data only: it never routes, recommends, proxies, intercepts, logs in, imports
-browser cookies, or changes provider-side state. It reads local provider auth sources and calls
-first-party provider quota, usage, billing, or entitlement endpoints. By default, near-expiry
-Grok and Kimi OAuth grants may be renewed and atomically written back to their existing local
-auth files; use \`--no-refresh\` or \`QUOTA_AXI_NO_REFRESH=1\` for a pure read. It never launches
-the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures.
+quota-axi reports data without routing, recommending, proxying, intercepting, logging in, or
+importing browser cookies. It reads local provider auth sources and calls first-party provider
+quota, usage, billing, or entitlement endpoints. Multi-seat Claude may make a bounded one-token
+first-party model request to read rate-limit headers, which can consume a small amount of quota.
+By default, near-expiry Grok and Kimi OAuth grants may be renewed and atomically written back to
+their existing local auth files; use \`--no-refresh\` or \`QUOTA_AXI_NO_REFRESH=1\` to prevent
+refresh requests and local credential writes. It never launches the Claude, Grok, Pi, or Kimi
+CLIs.
 
 ## When to use
 
@@ -167,8 +169,8 @@ ${TOP_HELP.trimEnd()}
   non-secret snapshots.
   Fresh provider reports with no windows clear stale provider snapshots instead of caching
   empty quota.
-  Claude local expiry metadata is advisory when an access token exists: the existing read-only
-  usage request decides validity. Missing or invalid credentials without a usable token and HTTP
+  Claude local expiry metadata is advisory when an access token exists: the quota or multi-seat
+  header request decides validity. Missing or invalid credentials without a usable token and HTTP
   401/403 retire Claude cache; only transient failures may use bounded, reset-pruned stale data.
   The Claude Keychain access marker lives alongside it, is scoped by hashed profile and
   account hashes, and contains no credential values or raw account name.
