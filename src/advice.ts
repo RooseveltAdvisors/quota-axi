@@ -14,6 +14,11 @@ export const PI_TOKEN_REFRESH_REMEDY_COMMAND = "pi";
 export const GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR =
   "Grok access token expired in Pi";
 
+const GROK_TOKEN_REMEDIES: Readonly<Record<string, string>> = {
+  [GROK_ACCESS_TOKEN_EXPIRED_ERROR]: GROK_TOKEN_REFRESH_REMEDY_COMMAND,
+  [GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR]: PI_TOKEN_REFRESH_REMEDY_COMMAND,
+};
+
 const BLOCKED_CREDENTIAL_ERRORS = new Set([
   "credentials_expired",
   "credentials_missing",
@@ -85,14 +90,9 @@ function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   }
   // Do not gate this source-specific advice on aggregate authStatus: Pi model
   // auth can remain usable while the independent Grok CLI session is expired.
-  switch (provider.state.error) {
-    case GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR:
-      return PI_TOKEN_REFRESH_REMEDY_COMMAND;
-    case GROK_ACCESS_TOKEN_EXPIRED_ERROR:
-      return GROK_TOKEN_REFRESH_REMEDY_COMMAND;
-    default:
-      return undefined;
-  }
+  return provider.state.error
+    ? GROK_TOKEN_REMEDIES[provider.state.error]
+    : undefined;
 }
 
 function isBlockedCredentialAttempt(attempt: SourceAttempt): boolean {
