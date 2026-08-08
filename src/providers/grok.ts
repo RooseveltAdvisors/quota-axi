@@ -163,11 +163,14 @@ async function fetchQuotaWithDependencies(
   const cliState = await readCredentialState(options);
   const piResolution =
     piResolutionFromCredentialState(cliState) ?? piResolutionProbe;
-  const piAttempt = allowIndependentPi
-    ? piSourceAttempt(piResolution)
-    : undefined;
+  const cliStateIsPi =
+    cliState.source.source === PI_XAI_CREDENTIAL_SOURCE;
+  const piAttempt =
+    allowIndependentPi && !cliStateIsPi
+      ? piSourceAttempt(piResolution)
+      : undefined;
 
-  if (cliState.status === "available") {
+  if (cliState.status === "available" && !cliStateIsPi) {
     attempts.push({ source: GROK_SOURCE, status: "failed" });
     try {
       const quota = await fetchGrokConsumerQuota(cliState.credentials);
@@ -206,6 +209,8 @@ async function fetchQuotaWithDependencies(
         transientConsumerFailure = true;
       }
     }
+  } else if (cliStateIsPi) {
+    attempts.push(piSourceAttempt(piResolution));
   } else {
     attempts.push({
       source: cliState.source.source,

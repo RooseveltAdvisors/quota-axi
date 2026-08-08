@@ -812,17 +812,25 @@ describe("Grok auth discovery", () => {
     process.env.PI_CODING_AGENT_DIR = piAgentDir;
     const fetchMock = stubSuccessfulFetch();
 
-    await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
 
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      headers: expect.objectContaining({
-        Authorization: "Bearer pi-xai-access-token",
-      }),
+    expect(result).toMatchObject({
+      source: "unavailable",
+      state: {
+        status: "unavailable",
+        error: "Grok consumer quota unavailable",
+        authStatus: "usable",
+      },
+      attempts: [
+        {
+          source: "pi:xai",
+          status: "skipped",
+          error: "model_auth_only",
+          credentialPresent: true,
+        },
+      ],
     });
-    // Read-only: the refresh token is never sent anywhere.
-    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(
-      "must-not-be-refreshed",
-    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("expands a tilde-prefixed PI_CODING_AGENT_DIR like the kimi pi source", async () => {
@@ -843,13 +851,10 @@ describe("Grok auth discovery", () => {
     process.env.PI_CODING_AGENT_DIR = "~/pi-agent-tilde";
     const fetchMock = stubSuccessfulFetch();
 
-    await fetchQuota({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
 
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      headers: expect.objectContaining({
-        Authorization: "Bearer tilde-resolved-token",
-      }),
-    });
+    expect(result.state.authStatus).toBe("usable");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("never sends a pi xai token that is a template or command reference", async () => {
@@ -1206,13 +1211,24 @@ describe("Grok expired access-token classification", () => {
 
     const result = await fetchQuota({ allowKeychainPrompt: false });
 
-    expect(result.state.status).toBe("fresh");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
-      headers: expect.objectContaining({
-        Authorization: "Bearer synthetic-pi-xai-fresh-011",
-      }),
+    expect(result).toMatchObject({
+      source: "unavailable",
+      state: {
+        status: "unavailable",
+        error: "Grok consumer quota unavailable",
+        authStatus: "usable",
+      },
+      attempts: [
+        {
+          source: "pi:xai",
+          status: "skipped",
+          error: "model_auth_only",
+          credentialPresent: true,
+        },
+      ],
     });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(GROK_TOKEN_URL);
     expect(JSON.stringify(result)).not.toContain(
       "synthetic-pi-xai-refresh-010",
     );
@@ -1518,6 +1534,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       "pi-xai-refresh-token-fixture",
     );
   });
+
 
   it("renews Grok CLI OAuth before using consumer quota with a Pi api_key", async () => {
     writeAuth({

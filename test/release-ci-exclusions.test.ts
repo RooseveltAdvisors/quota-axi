@@ -185,7 +185,7 @@ describe("release-please CI exclusions", () => {
     ]);
   });
 
-  it("every pull_request workflow ignores the full release-output set", () => {
+  it("filters release outputs from build and required-gate workflows", () => {
     const files = readdirSync(workflowsDir).filter((name) =>
       name.endsWith(".yml"),
     );
@@ -194,10 +194,12 @@ describe("release-please CI exclusions", () => {
     for (const name of files) {
       const filePath = join(workflowsDir, name);
       const on = loadWorkflowOn(filePath);
-      if (!on || !("pull_request" in on)) continue;
+      if (!on || (!("pull_request" in on) && !("pull_request_target" in on)))
+        continue;
+      const trigger = on.pull_request ?? on.pull_request_target;
       prWorkflows.push({
         name,
-        filter: pullRequestFilterCoverage(on.pull_request),
+        filter: pullRequestFilterCoverage(trigger),
       });
     }
 
@@ -206,9 +208,14 @@ describe("release-please CI exclusions", () => {
       "guard-generated-files.yml",
       "no-mistakes-required.yml",
     ]);
+    expect(
+      prWorkflows.find((workflow) => workflow.name === "guard-generated-files.yml")
+        ?.filter,
+    ).toEqual({ kind: "unfiltered" });
 
     const failures: string[] = [];
     for (const { name, filter } of prWorkflows) {
+      if (name === "guard-generated-files.yml") continue;
       const missing = expected.filter((path) => !isCovered(filter, path));
       if (missing.length > 0) {
         failures.push(`${name} missing coverage for: ${missing.join(", ")}`);
