@@ -1,0 +1,519 @@
+import { describe, expect, it } from "vitest";
+
+import { MODEL_CATALOG } from "../src/model-kb.js";
+import {
+  compareModelsByRunway,
+  createModelsResponse,
+  validateModelCatalog,
+} from "../src/models.js";
+import type {
+  EffectiveRunway,
+  ModelCatalog,
+  ModelQuotaRecord,
+  QuotaAxiResponse,
+} from "../src/types.js";
+
+const generatedAt = "2026-08-05T12:00:00.000Z";
+
+describe("model catalog", () => {
+  it("is a valid native-provider catalog with unique entries and coarse buckets", () => {
+    expect(() => validateModelCatalog(MODEL_CATALOG)).not.toThrow();
+    expect(
+      new Set(MODEL_CATALOG.entries.map((entry) => entry.provider)),
+    ).toEqual(new Set(["claude", "codex", "grok", "kimi"]));
+    expect(
+      new Set(MODEL_CATALOG.entries.map((entry) => entry.intelligence)),
+    ).toEqual(new Set(["high", "medium", "low"]));
+  });
+
+  it("rejects malformed catalog data before it can be joined", () => {
+    const invalid: ModelCatalog = {
+      ...MODEL_CATALOG,
+      version: "not-a-date",
+      entries: [MODEL_CATALOG.entries[0]!, MODEL_CATALOG.entries[0]!],
+    };
+    expect(() => validateModelCatalog(invalid)).toThrow(
+      "model catalog version must be an ISO calendar date",
+    );
+  });
+
+  it("rejects calendar dates whose day overflows into another month", () => {
+    expect(() =>
+      validateModelCatalog({ ...MODEL_CATALOG, version: "2026-02-31" }),
+    ).toThrow("model catalog version must be an ISO calendar date");
+  });
+});
+
+describe("model quota join", () => {
+  it("uses the specific scope when known, falls back to account evidence, and discloses unmapped windows", () => {
+    const response = createModelsResponse(quotaResponse(), {
+      catalog: testCatalog(),
+    });
+
+    expect(
+      response.models.map((model) => `${model.provider}/${model.id}`),
+    ).toEqual(["claude/account-only", "claude/scoped", "codex/codex-model"]);
+    expect(response.models[0]).toMatchObject({
+      quotaScopes: ["all_models"],
+      effective: { scope: "all_models", effectivePercentRemaining: 70 },
+    });
+    expect(response.models[1]).toMatchObject({
+      quotaScopes: ["model:fable"],
+      effective: { scope: "model:fable", effectivePercentRemaining: 30 },
+    });
+    expect(response.models[2]).toMatchObject({
+      quotaScopes: [],
+      state: { status: "stale", stale: true },
+    });
+    expect(response.unmatchedWindowIds).toEqual(["claude/model:unmapped"]);
+  });
+
+  it("keeps Claude seat evidence separate for every catalog model", () => {
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              { id: "arcs:five_hour", label: "arcs session", kind: "session" },
+              { id: "jr:five_hour", label: "jr session", kind: "session" },
+              {
+                id: "arcs:model:fable",
+                label: "arcs Fable",
+                kind: "model",
+              },
+              { id: "jr:model:fable", label: "jr Fable", kind: "model" },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "multi-seat test",
+              effectiveAvailability: [
+                {
+                  scope: "arcs:all_models",
+                  status: "known",
+                  effectivePercentRemaining: 70,
+                  boundedBy: ["arcs:five_hour"],
+                },
+                {
+                  scope: "arcs:model:fable",
+                  status: "known",
+                  effectivePercentRemaining: 20,
+                  boundedBy: ["arcs:five_hour", "arcs:model:fable"],
+                },
+                {
+                  scope: "jr:all_models",
+                  status: "known",
+                  effectivePercentRemaining: 40,
+                  boundedBy: ["jr:five_hour"],
+                },
+                {
+                  scope: "jr:model:fable",
+                  status: "known",
+                  effectivePercentRemaining: 80,
+                  boundedBy: ["jr:five_hour", "jr:model:fable"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      {
+        catalog: {
+          version: "2026-08-05",
+          provenance: "multi-seat test catalog",
+          entries: [
+            {
+              provider: "claude",
+              id: "fable",
+              label: "Fable",
+              intelligence: "high",
+              windowIds: ["model:fable"],
+            },
+            {
+              provider: "claude",
+              id: "account-bound",
+              label: "Account bound",
+              intelligence: "medium",
+            },
+          ],
+        },
+      },
+    );
+
+    const fable = response.models.filter((model) => model.id === "fable");
+    expect(fable).toHaveLength(2);
+    expect(fable[0]).toMatchObject({
+      seat: "arcs",
+      quotaScopes: ["arcs:model:fable"],
+      effective: { effectivePercentRemaining: 20 },
+    });
+    expect(fable[1]).toMatchObject({
+      seat: "jr",
+      quotaScopes: ["jr:model:fable"],
+      effective: { effectivePercentRemaining: 80 },
+    });
+
+    const accountBound = response.models.filter(
+      (model) => model.id === "account-bound",
+    );
+    expect(accountBound).toHaveLength(2);
+    expect(accountBound[0]).toMatchObject({
+      seat: "arcs",
+      quotaScopes: ["arcs:all_models"],
+      effective: { effectivePercentRemaining: 70 },
+    });
+    expect(accountBound[1]).toMatchObject({
+      seat: "jr",
+      quotaScopes: ["jr:all_models"],
+      effective: { effectivePercentRemaining: 40 },
+    });
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
+  it("maps the legacy Claude Opus window to Opus evidence", () => {
+    const opusEntry = MODEL_CATALOG.entries.find(
+      (entry) => entry.id === "claude-opus-4-5",
+    );
+    expect(opusEntry).toBeDefined();
+    if (!opusEntry) return;
+
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              {
+                id: "five_hour",
+                label: "session",
+                kind: "session",
+                percentRemaining: 90,
+              },
+              {
+                id: "seven_day_opus",
+                label: "opus week",
+                kind: "model",
+                percentRemaining: 35,
+              },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "legacy Opus test",
+              effectiveAvailability: [
+                {
+                  scope: "seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 35,
+                  boundedBy: ["five_hour", "seven_day_opus"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      { catalog: { ...MODEL_CATALOG, entries: [opusEntry] } },
+    );
+
+    expect(response.models).toHaveLength(1);
+    expect(response.models[0]).toMatchObject({
+      id: "claude-opus-4-5",
+      quotaScopes: ["seven_day_opus"],
+      effective: {
+        scope: "seven_day_opus",
+        effectivePercentRemaining: 35,
+      },
+    });
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
+  it("maps legacy Opus evidence separately for every Claude seat", () => {
+    const opusEntry = MODEL_CATALOG.entries.find(
+      (entry) => entry.id === "claude-opus-4-5",
+    );
+    expect(opusEntry).toBeDefined();
+    if (!opusEntry) return;
+
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              { id: "arcs:seven_day_opus", label: "arcs Opus", kind: "model" },
+              { id: "jr:seven_day_opus", label: "jr Opus", kind: "model" },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "multi-seat legacy Opus test",
+              effectiveAvailability: [
+                {
+                  scope: "arcs:seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 31,
+                  boundedBy: ["arcs:seven_day_opus"],
+                },
+                {
+                  scope: "jr:seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 62,
+                  boundedBy: ["jr:seven_day_opus"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      { catalog: { ...MODEL_CATALOG, entries: [opusEntry] } },
+    );
+
+    expect(response.models).toMatchObject([
+      {
+        seat: "arcs",
+        quotaScopes: ["arcs:seven_day_opus"],
+        effective: { effectivePercentRemaining: 31 },
+      },
+      {
+        seat: "jr",
+        quotaScopes: ["jr:seven_day_opus"],
+        effective: { effectivePercentRemaining: 62 },
+      },
+    ]);
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
+  it("filters intelligence without inventing availability for failed providers", () => {
+    const response = createModelsResponse(quotaResponse(), {
+      catalog: testCatalog(),
+      intelligence: "high",
+    });
+
+    expect(response.models).toHaveLength(1);
+    expect(response.models[0]).toMatchObject({
+      id: "scoped",
+      intelligence: "high",
+      quotaScopes: ["model:fable"],
+    });
+  });
+
+  it("sorts runway evidence only and exposes equal evidence as ties", () => {
+    const response = createModelsResponse(quotaResponseWithRunways(), {
+      catalog: testCatalogWithRunways(),
+      sort: "runway",
+    });
+
+    expect(response.models.map((model) => model.id)).toEqual([
+      "longer",
+      "same-a",
+      "same-b",
+      "reset",
+      "empty",
+      "unknown",
+    ]);
+    expect(response.sort).toEqual({
+      key: "runway",
+      tieGroups: [
+        [
+          { provider: "claude", id: "same-a" },
+          { provider: "claude", id: "same-b" },
+        ],
+      ],
+    });
+  });
+
+  it("exports a comparator that treats unknown evidence as last rather than zero", () => {
+    expect(
+      compareModelsByRunway(
+        runwayRecord("unknown"),
+        runwayRecord("finite", 10),
+      ),
+    ).toBeGreaterThan(0);
+  });
+});
+
+function quotaResponse(): QuotaAxiResponse {
+  return {
+    generatedAt,
+    schemaVersion: 3,
+    providers: [
+      {
+        provider: "claude",
+        label: "Claude",
+        source: "oauth",
+        windows: [
+          { id: "five_hour", label: "session", kind: "session" },
+          { id: "model:fable", label: "Fable", kind: "model" },
+          { id: "model:unmapped:5h", label: "Unmapped 5h", kind: "model" },
+          { id: "model:unmapped:7d", label: "Unmapped 7d", kind: "model" },
+        ],
+        quotaSemantics: {
+          status: "known",
+          description: "test",
+          effectiveAvailability: [
+            {
+              scope: "all_models",
+              status: "known",
+              effectivePercentRemaining: 70,
+              boundedBy: ["five_hour"],
+              runway: { status: "through_reset" },
+            },
+            {
+              scope: "model:fable",
+              status: "known",
+              effectivePercentRemaining: 30,
+              boundedBy: ["five_hour", "model:fable"],
+              runway: {
+                status: "projected_exhaustion",
+                usableRunwaySeconds: 100,
+              },
+            },
+          ],
+        },
+        state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+      },
+      {
+        provider: "codex",
+        label: "Codex",
+        source: "cache",
+        windows: [],
+        quotaSemantics: {
+          status: "unknown",
+          description: "stale",
+          effectiveAvailability: [],
+        },
+        state: { status: "stale", stale: true, sourcesTried: ["cache"] },
+      },
+    ],
+  };
+}
+
+function testCatalog(): ModelCatalog {
+  return {
+    version: "2026-08-05",
+    provenance: "test catalog",
+    entries: [
+      {
+        provider: "claude",
+        id: "scoped",
+        label: "Scoped",
+        intelligence: "high",
+        windowIds: ["model:fable"],
+      },
+      {
+        provider: "claude",
+        id: "account-only",
+        label: "Account only",
+        intelligence: "medium",
+      },
+      {
+        provider: "codex",
+        id: "codex-model",
+        label: "Codex model",
+        intelligence: "low",
+      },
+    ],
+  };
+}
+
+function testCatalogWithRunways(): ModelCatalog {
+  const records = [
+    ["longer", "high"],
+    ["same-a", "high"],
+    ["same-b", "high"],
+    ["reset", "medium"],
+    ["empty", "medium"],
+    ["unknown", "low"],
+  ] as const;
+  return {
+    version: "2026-08-05",
+    provenance: "test catalog",
+    entries: records.map(([id, intelligence]) => ({
+      provider: "claude",
+      id,
+      label: id,
+      intelligence,
+      windowIds: [`model:${id}`],
+    })),
+  };
+}
+
+function quotaResponseWithRunways(): QuotaAxiResponse {
+  const availability: Array<[string, EffectiveRunway]> = [
+    ["longer", { status: "projected_exhaustion", usableRunwaySeconds: 100 }],
+    ["same-a", { status: "projected_exhaustion", usableRunwaySeconds: 50 }],
+    ["same-b", { status: "projected_exhaustion", usableRunwaySeconds: 50 }],
+    ["reset", { status: "through_reset" }],
+    ["empty", { status: "exhausted_now", usableRunwaySeconds: 0 }],
+    ["unknown", { status: "unknown" }],
+  ];
+  return {
+    generatedAt,
+    schemaVersion: 3,
+    providers: [
+      {
+        provider: "claude",
+        label: "Claude",
+        source: "oauth",
+        windows: availability.map(([id]) => ({
+          id: `model:${id}`,
+          label: id,
+          kind: "model" as const,
+        })),
+        quotaSemantics: {
+          status: "known",
+          description: "test",
+          effectiveAvailability: availability.map(([id, runway]) => ({
+            scope: `model:${id}`,
+            status:
+              runway.status === "unknown"
+                ? ("unknown" as const)
+                : ("known" as const),
+            boundedBy: [`model:${id}`],
+            runway,
+          })),
+        },
+        state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+      },
+    ],
+  };
+}
+
+function runwayRecord(
+  kind: "unknown" | "finite",
+  usableRunwaySeconds?: number,
+): ModelQuotaRecord {
+  return {
+    provider: "claude",
+    id: kind,
+    label: kind,
+    intelligence: "high",
+    quotaScopes: ["all_models"],
+    effective:
+      kind === "finite"
+        ? {
+            scope: "all_models",
+            status: "known",
+            boundedBy: [],
+            runway: {
+              status: "projected_exhaustion",
+              usableRunwaySeconds,
+            },
+          }
+        : { scope: "all_models", status: "unknown", boundedBy: [] },
+    state: { status: "fresh", stale: false },
+  };
+}

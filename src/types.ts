@@ -33,6 +33,12 @@ export type ProviderStatus =
   | "rate_limited"
   | "error";
 
+/**
+ * Machine-readable local auth usability, distinct from quota freshness.
+ * Callers must not infer logout from provider status alone when this is set.
+ */
+export type ProviderAuthStatus = "usable" | "expired_refreshable" | "unusable";
+
 /** Provider-specific diagnostic text; known values remain stable where useful. */
 export type ProviderStateReason = string;
 
@@ -70,6 +76,32 @@ export type QuotaPace = {
   projectionBasis?: "cycle_average";
   cycleBasis?: "starts_at_resets_at" | "window_seconds";
   cycleSeconds?: number;
+};
+
+export type EffectiveRunway = {
+  /**
+   * `through_reset` means every authoritative bounding window's current-cycle
+   * observation reaches its own reset before exhaustion. It is not a finite
+   * exhaustion deadline. `unknown` preserves uncertainty rather than deriving
+   * a synthetic scope reset from windows with different cycles.
+   */
+  status:
+    | "exhausted_now"
+    | "projected_exhaustion"
+    | "through_reset"
+    | "unknown";
+  /** Present for `exhausted_now` and `projected_exhaustion`, never negative. */
+  usableRunwaySeconds?: number;
+  /** Present for a finite exhaustion result when the snapshot clock is valid. */
+  projectedExhaustedAt?: string;
+  /** The authoritative bound responsible for a finite effective result. */
+  limitingWindowId?: string;
+  /** Present for cycle-average projected results, including `through_reset`. */
+  projectionConfidence?: "early" | "established";
+  /** Present when the conclusion follows the current cycle-average observation. */
+  projectionBasis?: "cycle_average";
+  /** Bounds that prevent a sound aggregate conclusion when status is `unknown`. */
+  unmeasurableWindowIds?: string[];
 };
 
 export type EffectivePaceSummary = {
@@ -117,6 +149,11 @@ export type EffectiveAvailability = {
   limitingWindowIds?: string[];
   /** Compact pace over every bounding window, not only the current limiter. */
   pace?: EffectivePaceSummary;
+  /**
+   * Effective usable runway across every authoritative bounding window, derived
+   * from this report's single generatedAt clock. Not cached.
+   */
+  runway?: EffectiveRunway;
 };
 
 export type QuotaSemantics = {
@@ -174,6 +211,12 @@ export type ProviderQuota = {
     refreshedAt?: string;
     error?: string;
     retryAfter?: string;
+    /**
+     * Local credential usability independent of quota windows.
+     * `expired_refreshable` is soft expiry (not sign-out); `usable` may still
+     * have unknown consumer quota (for example Pi xAI model auth only).
+     */
+    authStatus?: ProviderAuthStatus;
     reason?: ProviderStateReason;
     remedyCommand?: string;
     untrustedWindowIds?: string[];
@@ -205,7 +248,7 @@ export type ProviderAdapter = {
 export type AuthSourceReport = {
   source: string;
   path?: string;
-  status: "available" | "missing" | "invalid" | "expired" | "skipped";
+  status: "available" | "missing" | "invalid" | "expired" | "skipped" | "error";
   error?: string;
   credentialPresent?: boolean;
 };
@@ -213,4 +256,67 @@ export type AuthSourceReport = {
 export type AuthProviderReport = {
   provider: ProviderId;
   sources: AuthSourceReport[];
+};
+
+/** A coarse editorial classification relative to the current model frontier. */
+export type IntelligenceBucket = "high" | "medium" | "low";
+
+/** Native-provider model knowledge used by the `models` evidence join. */
+export type ModelCatalogEntry = {
+  provider: "claude" | "codex" | "grok" | "kimi";
+  id: string;
+  label: string;
+  intelligence: IntelligenceBucket;
+  /** Known model-scoped quota window IDs, without period suffixes. */
+  windowIds?: string[];
+  /** Human-facing or provider naming aliases, never launch identifiers. */
+  aliases?: string[];
+  notes?: string;
+};
+
+export type ModelCatalog = {
+  /** ISO calendar date for this reviewed catalog snapshot. */
+  version: string;
+  provenance: string;
+  entries: ModelCatalogEntry[];
+};
+
+export type ProviderStateSummary = Pick<
+  ProviderQuota["state"],
+  "status" | "stale" | "authStatus" | "reason" | "remedyCommand"
+>;
+
+export type ModelQuotaRecord = {
+  provider: ModelCatalogEntry["provider"];
+  id: string;
+  label: string;
+  intelligence: IntelligenceBucket;
+  seat?: string;
+  /** The effective availability scope used as evidence for this row. */
+  quotaScopes: string[];
+  /** Omitted when quota relationships are unavailable or unknown. */
+  effective?: EffectiveAvailability;
+  state: ProviderStateSummary;
+};
+
+export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id" | "seat">;
+
+/** Opt-in ordering keys. Future keys require their own evidence and docs. */
+export type ModelSortKey = "runway";
+
+export type ModelSortResult = {
+  key: ModelSortKey;
+  /** Groups with equal comparator evidence, never hidden behind array order. */
+  tieGroups: ModelReference[][];
+};
+
+export type ModelsResponse = {
+  generatedAt: string;
+  schemaVersion: 1;
+  catalog: Pick<ModelCatalog, "version" | "provenance">;
+  models: ModelQuotaRecord[];
+  /** Provider/model window scopes with no corresponding catalog entry. */
+  unmatchedWindowIds?: string[];
+  /** Present only when an explicit comparator was requested. */
+  sort?: ModelSortResult;
 };
