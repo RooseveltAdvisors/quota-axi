@@ -291,6 +291,7 @@ export type ModelQuotaRecord = {
   id: string;
   label: string;
   intelligence: IntelligenceBucket;
+  seat?: string;
   /** The effective availability scope used as evidence for this row. */
   quotaScopes: string[];
   /** Omitted when quota relationships are unavailable or unknown. */
@@ -298,7 +299,7 @@ export type ModelQuotaRecord = {
   state: ProviderStateSummary;
 };
 
-export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id">;
+export type ModelReference = Pick<ModelQuotaRecord, "provider" | "id" | "seat">;
 
 /** Opt-in ordering keys. Future keys require their own evidence and docs. */
 export type ModelSortKey = "runway";

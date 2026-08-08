@@ -730,6 +730,28 @@ describe("CLI plumbing via the axi SDK", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("prints only accepted flags in command-specific help", async () => {
+    const quota = await capture(["quota", "--help"]);
+    expect(quota).toContain("--tui");
+    expect(quota).not.toContain("--intelligence");
+    expect(quota).not.toContain("--sort");
+
+    const auth = await capture(["auth", "--help"]);
+    expect(auth).toContain("usage: quota-axi auth [flags]");
+    expect(auth).not.toContain("--tui");
+    expect(auth).not.toContain("--refresh");
+    expect(auth).not.toContain("--intelligence");
+    expect(auth).not.toContain("--sort");
+
+    const models = await capture(["models", "--help"]);
+    expect(models).toContain("--intelligence");
+    expect(models).toContain("--sort");
+    expect(models).not.toContain("--tui");
+    expect(models).not.toContain("--refresh");
+    expect(models).not.toContain("--once");
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it("routes flag-before-auth invocations to auth", async () => {
     PROVIDERS.claude = providerWithAuth("claude", "Claude");
     PROVIDERS.codex = providerWithAuth("codex", "Codex");

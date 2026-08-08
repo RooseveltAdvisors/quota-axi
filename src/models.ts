@@ -68,7 +68,7 @@ export function createModelsResponse(
         (options.intelligence === undefined ||
           entry.intelligence === options.intelligence),
     )
-    .map((entry) => modelRecord(entry, providers.get(entry.provider)!))
+    .flatMap((entry) => modelRecords(entry, providers.get(entry.provider)!))
     .sort(compareModelIdentity);
   const unmatchedWindowIds = quota.providers.flatMap((provider) =>
     unmatchedModelWindowIds(provider, catalog.entries),
@@ -158,48 +158,134 @@ export function validateModelCatalog(catalog: ModelCatalog): void {
   }
 }
 
-function modelRecord(
+type ModelEvidence = {
+  effective: EffectiveAvailability;
+  seat?: string;
+};
+
+function modelRecords(
   entry: ModelCatalogEntry,
   provider: ProviderQuota,
-): ModelQuotaRecord {
-  const effective = availabilityFor(entry, provider);
-  return {
+): ModelQuotaRecord[] {
+  const evidence = availabilityFor(entry, provider);
+  if (evidence.length === 0) {
+    return [
+      {
+        provider: entry.provider,
+        id: entry.id,
+        label: entry.label,
+        intelligence: entry.intelligence,
+        quotaScopes: [],
+        state: stateSummary(provider),
+      },
+    ];
+  }
+  return evidence.map(({ effective, seat }) => ({
     provider: entry.provider,
     id: entry.id,
     label: entry.label,
     intelligence: entry.intelligence,
-    quotaScopes: effective ? [effective.scope] : [],
-    ...(effective ? { effective } : {}),
+    ...(seat === undefined ? {} : { seat }),
+    quotaScopes: [effective.scope],
+    effective,
     state: stateSummary(provider),
-  };
+  }));
 }
 
 function availabilityFor(
   entry: ModelCatalogEntry,
   provider: ProviderQuota,
-): EffectiveAvailability | undefined {
+): ModelEvidence[] {
   const availability = provider.quotaSemantics?.effectiveAvailability ?? [];
+  const seatNames =
+    provider.provider === "claude"
+      ? claudeSeatNames(provider, availability)
+      : [];
+
+  if (seatNames.length > 0) {
+    return seatNames.flatMap((seat) => {
+      const specific = (entry.windowIds ?? [])
+        .map((windowId) => normalizedModelScope(windowId))
+        .map((scope) =>
+          availability.find(
+            (candidate) => candidate.scope === `${seat}:${scope}`,
+          ),
+        )
+        .find((candidate): candidate is EffectiveAvailability =>
+          Boolean(candidate),
+        );
+      const effective =
+        specific ??
+        availability.find(
+          (candidate) => candidate.scope === `${seat}:all_models`,
+        );
+      return effective ? [{ effective, seat }] : [];
+    });
+  }
+
   for (const windowId of entry.windowIds ?? []) {
     const found = availability.find(
       (candidate) => candidate.scope === normalizedModelScope(windowId),
     );
-    if (found) return found;
+    if (found) return [{ effective: found }];
   }
-  return availability.find(
+  const fallback = availability.find(
     (candidate) =>
       candidate.scope === "all_models" || candidate.scope === "all_products",
   );
+  return fallback ? [{ effective: fallback }] : [];
+}
+
+function claudeSeatNames(
+  provider: ProviderQuota,
+  availability: EffectiveAvailability[],
+): string[] {
+  const names = new Set<string>();
+  for (const scope of [
+    ...provider.windows.map(({ id }) => normalizedModelScope(id)),
+    ...availability.map(({ scope }) => normalizedModelScope(scope)),
+  ]) {
+    const split = splitClaudeSeatScope(scope);
+    if (split) names.add(split.seat);
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function splitClaudeSeatScope(
+  scope: string,
+): { seat: string; scope: string } | undefined {
+  const separator = scope.indexOf(":");
+  if (separator <= 0) return undefined;
+  const seat = scope.slice(0, separator);
+  const nestedScope = scope.slice(separator + 1);
+  if (
+    ["five_hour", "seven_day", "extra_usage", "all_models"].includes(
+      nestedScope,
+    ) ||
+    nestedScope.startsWith("model:")
+  ) {
+    return { seat, scope: nestedScope };
+  }
+  return undefined;
 }
 
 function unmatchedModelWindowIds(
   provider: ProviderQuota,
   entries: ModelCatalogEntry[],
 ): string[] {
+  const seatNames =
+    provider.provider === "claude" ? claudeSeatNames(provider, []) : [];
   const knownScopes = new Set(
     entries
       .filter((entry) => entry.provider === provider.provider)
-      .flatMap((entry) => entry.windowIds ?? [])
-      .map(normalizedModelScope),
+      .flatMap((entry) =>
+        (entry.windowIds ?? [])
+          .map(normalizedModelScope)
+          .flatMap((scope) => [
+            scope,
+            ...seatNames.map((seat) => `${seat}:${scope}`),
+          ]),
+      ),
   );
   const unmatchedScopes = new Set<string>();
   return provider.windows
@@ -239,7 +325,8 @@ function compareModelIdentity(
 ): number {
   return (
     left.provider.localeCompare(right.provider) ||
-    left.id.localeCompare(right.id)
+    left.id.localeCompare(right.id) ||
+    (left.seat ?? "").localeCompare(right.seat ?? "")
   );
 }
 
@@ -272,7 +359,11 @@ function tieGroups(
     const group: ModelReference[] = [];
     while (index < models.length && comparator.tieKey(models[index]!) === key) {
       const model = models[index++]!;
-      group.push({ provider: model.provider, id: model.id });
+      group.push({
+        provider: model.provider,
+        id: model.id,
+        ...(model.seat === undefined ? {} : { seat: model.seat }),
+      });
     }
     if (group.length > 1) groups.push(group);
   }

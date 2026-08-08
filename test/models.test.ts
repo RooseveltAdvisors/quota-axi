@@ -68,6 +68,113 @@ describe("model quota join", () => {
     expect(response.unmatchedWindowIds).toEqual(["claude/model:unmapped"]);
   });
 
+  it("keeps Claude seat evidence separate for every catalog model", () => {
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              { id: "arcs:five_hour", label: "arcs session", kind: "session" },
+              { id: "jr:five_hour", label: "jr session", kind: "session" },
+              {
+                id: "arcs:model:fable",
+                label: "arcs Fable",
+                kind: "model",
+              },
+              { id: "jr:model:fable", label: "jr Fable", kind: "model" },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "multi-seat test",
+              effectiveAvailability: [
+                {
+                  scope: "arcs:all_models",
+                  status: "known",
+                  effectivePercentRemaining: 70,
+                  boundedBy: ["arcs:five_hour"],
+                },
+                {
+                  scope: "arcs:model:fable",
+                  status: "known",
+                  effectivePercentRemaining: 20,
+                  boundedBy: ["arcs:five_hour", "arcs:model:fable"],
+                },
+                {
+                  scope: "jr:all_models",
+                  status: "known",
+                  effectivePercentRemaining: 40,
+                  boundedBy: ["jr:five_hour"],
+                },
+                {
+                  scope: "jr:model:fable",
+                  status: "known",
+                  effectivePercentRemaining: 80,
+                  boundedBy: ["jr:five_hour", "jr:model:fable"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      {
+        catalog: {
+          version: "2026-08-05",
+          provenance: "multi-seat test catalog",
+          entries: [
+            {
+              provider: "claude",
+              id: "fable",
+              label: "Fable",
+              intelligence: "high",
+              windowIds: ["model:fable"],
+            },
+            {
+              provider: "claude",
+              id: "account-bound",
+              label: "Account bound",
+              intelligence: "medium",
+            },
+          ],
+        },
+      },
+    );
+
+    const fable = response.models.filter((model) => model.id === "fable");
+    expect(fable).toHaveLength(2);
+    expect(fable[0]).toMatchObject({
+      seat: "arcs",
+      quotaScopes: ["arcs:model:fable"],
+      effective: { effectivePercentRemaining: 20 },
+    });
+    expect(fable[1]).toMatchObject({
+      seat: "jr",
+      quotaScopes: ["jr:model:fable"],
+      effective: { effectivePercentRemaining: 80 },
+    });
+
+    const accountBound = response.models.filter(
+      (model) => model.id === "account-bound",
+    );
+    expect(accountBound).toHaveLength(2);
+    expect(accountBound[0]).toMatchObject({
+      seat: "arcs",
+      quotaScopes: ["arcs:all_models"],
+      effective: { effectivePercentRemaining: 70 },
+    });
+    expect(accountBound[1]).toMatchObject({
+      seat: "jr",
+      quotaScopes: ["jr:all_models"],
+      effective: { effectivePercentRemaining: 40 },
+    });
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
   it("filters intelligence without inventing availability for failed providers", () => {
     const response = createModelsResponse(quotaResponse(), {
       catalog: testCatalog(),

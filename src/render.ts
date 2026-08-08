@@ -191,6 +191,7 @@ export function renderModelsToon(
 ): string {
   const models = response.models.map((model) => ({
     provider: model.provider,
+    seat: model.seat ?? "none",
     id: model.id,
     label: model.label,
     intelligence: model.intelligence,
@@ -220,6 +221,7 @@ export function renderModelsToon(
   if (full) {
     const evidence = response.models.map((model) => ({
       provider: model.provider,
+      seat: model.seat ?? "none",
       id: model.id,
       boundedBy: model.effective?.boundedBy.join(" + ") ?? "unknown",
       limitingWindowIds:
