@@ -18,8 +18,10 @@ import type {
   AuthProviderReport,
   AuthSourceReport,
   ProviderAdapter,
+  ProviderAuthStatus,
   ProviderOptions,
   ProviderQuota,
+  ProviderStatus,
   QuotaWindow,
   SourceAttempt,
 } from "../types.js";
@@ -30,6 +32,11 @@ import {
   statusFromError,
   successProvider,
 } from "./common.js";
+import {
+  createPiXaiCredentialBroker,
+  type PiXaiCredentialBroker,
+  type PiXaiCredentialResolution,
+} from "./pi-xai-credential.js";
 
 const CONSUMER_QUOTA_URL =
   "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -38,6 +45,11 @@ const RESPONSE_LIMIT_BYTES = 64 * 1024;
 const GRPC_MESSAGE_LIMIT_CHARS = 1_024;
 const EMPTY_GRPC_REQUEST = Uint8Array.from([0, 0, 0, 0, 0]);
 const GROK_SOURCE = "web" as const;
+const PI_XAI_CREDENTIAL_SOURCE = "pi:xai";
+const GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR = "Grok consumer quota unavailable";
+const GROK_PI_CREDENTIAL_RESOLUTION_ERROR =
+  "Grok Pi credential resolution failed";
+const PI_MODEL_AUTH_ONLY_ERROR = "model_auth_only";
 const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 const GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const GROK_EXPIRY_SKEW_MS = 30_000;
@@ -96,40 +108,93 @@ type VarintField = { field: number; wire: 0; value: bigint };
 type ByteField = { field: number; wire: 1 | 2 | 5; value: Uint8Array };
 type ProtoField = VarintField | ByteField;
 
-export const grokAdapter: ProviderAdapter = {
-  id: "grok",
-  label: "Grok",
-  fetchQuota,
-  inspectAuth,
+type GrokDependencies = {
+  piXaiBroker: PiXaiCredentialBroker;
 };
+
+const defaultGrokDependencies: GrokDependencies = {
+  piXaiBroker: createPiXaiCredentialBroker(),
+};
+
+export function createGrokAdapter(
+  overrides: Partial<GrokDependencies> = {},
+): ProviderAdapter {
+  const dependencies: GrokDependencies = {
+    ...defaultGrokDependencies,
+    ...overrides,
+  };
+  return {
+    id: "grok",
+    label: "Grok",
+    fetchQuota: (options) => fetchQuotaWithDependencies(dependencies, options),
+    inspectAuth: (options) =>
+      inspectAuthWithDependencies(dependencies, options),
+  };
+}
+
+export const grokAdapter = createGrokAdapter();
 
 export async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
-  const attempts: SourceAttempt[] = [];
-  let finalError: string;
-  let retryAfter: string | undefined;
+  return fetchQuotaWithDependencies(defaultGrokDependencies, options);
+}
 
-  const credentialState = await readCredentialState(options);
-  if (credentialState.status === "available") {
+export async function inspectAuth(
+  options: ProviderOptions,
+): Promise<AuthProviderReport> {
+  return inspectAuthWithDependencies(defaultGrokDependencies, options);
+}
+
+async function fetchQuotaWithDependencies(
+  dependencies: GrokDependencies,
+  options: ProviderOptions,
+): Promise<ProviderQuota> {
+  const attempts: SourceAttempt[] = [];
+  let finalError: string | undefined;
+  let retryAfter: string | undefined;
+  let consumerAuthRejected = false;
+  let transientConsumerFailure = false;
+
+  const allowIndependentPi = independentPiSourceAllowed();
+  const piResolution = allowIndependentPi
+    ? await dependencies.piXaiBroker.resolve()
+    : ({ status: "missing" } satisfies PiXaiCredentialResolution);
+  // If Pi already has a usable grant, prefer that source without first
+  // renewing an unrelated expired Grok CLI session. Pi API keys remain
+  // model-auth-only and are never sent to the consumer endpoint.
+  const cliState = await readCredentialState(
+    piResolution.status === "available"
+      ? { ...options, refreshCredentials: false }
+      : options,
+  );
+  const piAttempt = allowIndependentPi
+    ? piSourceAttempt(piResolution)
+    : undefined;
+
+  if (cliState.status === "available") {
     attempts.push({ source: GROK_SOURCE, status: "failed" });
     try {
-      const quota = await fetchGrokConsumerQuota(credentialState.credentials);
+      const quota = await fetchGrokConsumerQuota(cliState.credentials);
       attempts[attempts.length - 1] = {
         source: GROK_SOURCE,
         status: "success",
       };
-      return successProvider({
-        provider: "grok",
-        label: "Grok",
-        source: GROK_SOURCE,
-        account: quota.account,
-        windows: quota.windows,
-        credits: quota.credits,
-        refreshedAt: quota.refreshedAt,
-        sourcesTried: sourceNames(attempts),
-        attempts,
-      });
+      if (piAttempt) attempts.push(piAttempt);
+      return withAuthStatus(
+        successProvider({
+          provider: "grok",
+          label: "Grok",
+          source: GROK_SOURCE,
+          account: quota.account,
+          windows: quota.windows,
+          credits: quota.credits,
+          refreshedAt: quota.refreshedAt,
+          sourcesTried: sourceNames(attempts),
+          attempts,
+        }),
+        "usable",
+      );
     } catch (error) {
       finalError = errorMessage(error);
       attempts[attempts.length - 1] = {
@@ -137,49 +202,243 @@ export async function fetchQuota(
         status: "failed",
         error: finalError,
       };
-      if (error instanceof RateLimitError) retryAfter = error.retryAfter;
+      if (error instanceof RateLimitError) {
+        retryAfter = error.retryAfter;
+        transientConsumerFailure = true;
+      } else if (isDefinitiveGrokAuthError(finalError)) {
+        consumerAuthRejected = true;
+      } else {
+        transientConsumerFailure = true;
+      }
     }
   } else {
     attempts.push({
-      source: credentialState.source.source,
+      source: cliState.source.source,
       status: "skipped",
-      error: `credentials_${credentialState.status}`,
+      error: `credentials_${cliState.status}`,
     });
+  }
+
+  if (piAttempt) attempts.push(piAttempt);
+  const authStatus = classifyGrokAuthStatus(
+    cliState,
+    piResolution,
+    consumerAuthRejected,
+  );
+  const cached = readCachedProvider("grok");
+
+  if (authStatus === "usable") {
+    // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
+    const cached = readCachedProvider("grok");
+    if (
+      cached?.source === GROK_SOURCE &&
+      (transientConsumerFailure || cliState.status !== "available")
+    ) {
+      return withAuthStatus(
+        staleFromCache(
+          cached,
+          finalError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+          sourceNames(attempts),
+          attempts,
+        ),
+        "usable",
+      );
+    }
+    return withAuthStatus(
+      failedProvider({
+        provider: "grok",
+        label: "Grok",
+        status: retryAfter
+          ? "rate_limited"
+          : transientConsumerFailure
+            ? statusFromError(
+                finalError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+              )
+            : "unavailable",
+        error:
+          finalError && transientConsumerFailure
+            ? finalError
+            : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+        retryAfter,
+        sourcesTried: sourceNames(attempts),
+        attempts,
+      }),
+      "usable",
+    );
+  }
+
+  if (authStatus === "expired_refreshable") {
     finalError =
-      (credentialState.status === "expired"
-        ? credentialState.refreshError
+      (cliState.status === "expired" && cliState.refreshDefinitive === true
+        ? cliState.refreshError
         : undefined) ??
-      (credentialState.status === "expired" && credentialState.refreshable
-        ? credentialState.source.source === PI_XAI_SOURCE
+      (cliState.status === "expired" && cliState.refreshable
+        ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
           : GROK_ACCESS_TOKEN_EXPIRED_ERROR
-        : GROK_SIGN_IN_REQUIRED_ERROR);
+        : piResolution.status === "expired" && piResolution.refreshable
+          ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
+          : GROK_SIGN_IN_REQUIRED_ERROR);
+    // Preserve the richer transient-renewal diagnostic when a same-source
+    // cache is the safe fallback. Without a cache, the stable expiry wording
+    // is the upstream auth-classification contract.
+    const cliRefreshError =
+      cliState.status === "expired" ? cliState.refreshError : undefined;
+    if (cached?.source === GROK_SOURCE && cliRefreshError) {
+      finalError = cliRefreshError;
+    }
+  } else if (piResolution.status === "error") {
+    finalError = GROK_PI_CREDENTIAL_RESOLUTION_ERROR;
+  } else if (consumerAuthRejected && authStatus === "unusable") {
+    finalError = GROK_SIGN_IN_REQUIRED_ERROR;
+  } else {
+    finalError = GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
   const refreshDefinitive =
-    credentialState.status === "expired" &&
-    credentialState.refreshDefinitive === true;
-  const cached = readCachedProvider("grok");
+    cliState.status === "expired" && cliState.refreshDefinitive === true;
+  const resolvedError = finalError ?? GROK_SIGN_IN_REQUIRED_ERROR;
   if (!refreshDefinitive && cached?.source === GROK_SOURCE) {
-    return staleFromCache(cached, finalError, sourceNames(attempts), attempts);
+    return withAuthStatus(
+      staleFromCache(cached, resolvedError, sourceNames(attempts), attempts),
+      authStatus,
+    );
   }
 
-  return failedProvider({
-    provider: "grok",
-    label: "Grok",
-    status: retryAfter ? "rate_limited" : statusFromError(finalError),
-    error: finalError,
-    retryAfter,
-    sourcesTried: sourceNames(attempts),
-    attempts,
-  });
+  return withAuthStatus(
+    failedProvider({
+      provider: "grok",
+      label: "Grok",
+      status: retryAfter
+        ? "rate_limited"
+        : grokStatusForAuthFailure(resolvedError, authStatus),
+      error: resolvedError,
+      retryAfter,
+      sourcesTried: sourceNames(attempts),
+      attempts,
+    }),
+    authStatus,
+  );
 }
 
-export async function inspectAuth(
+async function inspectAuthWithDependencies(
+  dependencies: GrokDependencies,
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
-  const credentialState = await readCredentialState(options);
-  return { provider: "grok", sources: [credentialState.source] };
+  const cliState = await readCredentialState(options);
+  const piInspection = await dependencies.piXaiBroker.inspect();
+  const piStatus: AuthSourceReport["status"] =
+    piInspection.status === "available"
+      ? "available"
+      : piInspection.status === "expired"
+        ? "expired"
+        : piInspection.status === "missing"
+          ? "missing"
+          : piInspection.status === "error"
+            ? "error"
+            : piInspection.status === "unsupported" ||
+                piInspection.status === "invalid"
+              ? "invalid"
+              : "missing";
+  return {
+    provider: "grok",
+    sources: [
+      cliState.source,
+      {
+        source: PI_XAI_CREDENTIAL_SOURCE,
+        status: piStatus,
+        ...(piInspection.error ? { error: piInspection.error } : {}),
+      },
+    ],
+  };
+}
+
+function classifyGrokAuthStatus(
+  cliState: CredentialState,
+  piResolution: PiXaiCredentialResolution,
+  consumerAuthRejected: boolean,
+): ProviderAuthStatus {
+  const piUsable = piResolution.status === "available";
+  // Local CLI presence is not enough after a definitive consumer auth rejection
+  // unless an independent Pi credential still establishes model usability.
+  const cliUsable = cliState.status === "available" && !consumerAuthRejected;
+  if (cliUsable || piUsable) return "usable";
+  const cliRefreshable = cliState.status === "expired" && cliState.refreshable;
+  const piRefreshable =
+    piResolution.status === "expired" && piResolution.refreshable;
+  if (cliRefreshable || piRefreshable) return "expired_refreshable";
+  return "unusable";
+}
+
+function piSourceAttempt(resolution: PiXaiCredentialResolution): SourceAttempt {
+  if (resolution.status === "available") {
+    return {
+      source: PI_XAI_CREDENTIAL_SOURCE,
+      status: "skipped",
+      error: PI_MODEL_AUTH_ONLY_ERROR,
+      credentialPresent: true,
+    };
+  }
+  if (resolution.status === "expired") {
+    return {
+      source: PI_XAI_CREDENTIAL_SOURCE,
+      status: "skipped",
+      error: "credentials_expired",
+      credentialPresent: true,
+    };
+  }
+  if (resolution.status === "error") {
+    return {
+      source: PI_XAI_CREDENTIAL_SOURCE,
+      status: "failed",
+      error: "credential_resolution_failed",
+    };
+  }
+  if (resolution.status === "unsupported") {
+    return {
+      source: PI_XAI_CREDENTIAL_SOURCE,
+      status: "skipped",
+      error: "unsupported_credential_type",
+    };
+  }
+  if (resolution.status === "invalid") {
+    return {
+      source: PI_XAI_CREDENTIAL_SOURCE,
+      status: "skipped",
+      error: "credentials_invalid",
+    };
+  }
+  return {
+    source: PI_XAI_CREDENTIAL_SOURCE,
+    status: "skipped",
+    error: "credentials_missing",
+  };
+}
+
+function withAuthStatus(
+  provider: ProviderQuota,
+  authStatus: ProviderAuthStatus,
+): ProviderQuota {
+  return {
+    ...provider,
+    state: {
+      ...provider.state,
+      authStatus,
+    },
+  };
+}
+
+function grokStatusForAuthFailure(
+  error: string,
+  authStatus: ProviderAuthStatus,
+): ProviderStatus {
+  if (error.includes("OAuth refresh was rejected")) return "auth_required";
+  if (authStatus === "expired_refreshable") return "unavailable";
+  return statusFromError(error);
+}
+
+function isDefinitiveGrokAuthError(error: string): boolean {
+  return error === GROK_SIGN_IN_REQUIRED_ERROR;
 }
 
 export function normalizeGrokConsumerPayload(
@@ -629,6 +888,17 @@ function hasExplicitGrokAuthPath(): boolean {
   return (
     stringValue(process.env.GROK_AUTH_PATH) !== undefined ||
     stringValue(process.env.GROK_HOME) !== undefined
+  );
+}
+
+function independentPiSourceAllowed(): boolean {
+  // GROK_AUTH_JSON and inline GROK_AUTH are the upstream dual-source session
+  // selectors. GROK_AUTH_PATH/GROK_HOME without either selector are an
+  // explicit house configuration and must not silently fall through to Pi.
+  return (
+    stringValue(process.env.GROK_AUTH_JSON) !== undefined ||
+    stringValue(process.env.GROK_AUTH) !== undefined ||
+    !hasExplicitGrokAuthPath()
   );
 }
 

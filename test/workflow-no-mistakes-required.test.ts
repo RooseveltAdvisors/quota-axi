@@ -31,12 +31,17 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
     expect(content).not.toMatch(/^\s+pull_request:\s*$/m);
   });
 
-  it("emits on every PR (no branches or paths filters)", () => {
+  it("keeps the upstream release-output exclusions on the hardened trigger", () => {
     const content = loadWorkflow();
-    // No branch or path scoping so every PR emits the required check
-    expect(content).not.toMatch(/^\s+branches:/m);
-    expect(content).not.toMatch(/^\s+paths:/m);
-    expect(content).not.toMatch(/^\s+paths-ignore:/m);
+    expect(content).toContain("branches:\n      - main");
+    expect(content).toContain("paths-ignore:");
+    for (const path of [
+      ".release-please-manifest.json",
+      "CHANGELOG.md",
+      "package.json",
+    ]) {
+      expect(content).toContain(`      - ${path}`);
+    }
   });
 
   it("declares the four relevant PR event types", () => {
@@ -98,6 +103,6 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
     // Hardened form must never regress to that self-bypassable trigger.
     // A PR editing this file would run the PR-head definition under pull_request.
     expect(content).not.toMatch(/^\s+pull_request:\s*$/m);
-    expect(content).not.toContain("branches:\n      - main");
+    expect(content).toContain("branches:\n      - main");
   });
 });

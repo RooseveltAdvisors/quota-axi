@@ -5,7 +5,6 @@ import {
   PI_EXPIRY_SKEW_MS,
   piAuthFilePath,
   piGrantExpired,
-  piOAuthGrant,
   usablePiCredential,
   type PiEnvironment,
 } from "./pi-auth.js";
@@ -19,14 +18,20 @@ const KIMI_TOKEN_URL = "https://auth.kimi.com/api/oauth/token";
 const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 
 export type KimiCredentialResolution =
-  | { status: "available"; apiKey: string }
+  | {
+      status: "available";
+      kind: "oauth" | "api_key";
+      /** Present only for in-memory probe use; never log or render. */
+      credential: string;
+    }
   | { status: "missing" }
-  | { status: "unsupported" }
   | {
       status: "expired";
+      refreshable: boolean;
       refreshFailed?: boolean;
       refreshDefinitive?: boolean;
     }
+  | { status: "unsupported" }
   | { status: "error" };
 
 export type KimiCredentialInspection =
@@ -107,25 +112,21 @@ async function resolveCredential(
   const entry = objectValue(root[PI_PROVIDER_ID]);
   if (!entry) return { status: "missing" };
 
-  // pi stores a subscription as an OAuth grant, not an API key. The quota
-  // endpoints take `Authorization: Bearer <token>`, so an unexpired access
-  // token is usable exactly like a key. Rejecting it stranded every
-  // subscription behind "unsupported_credential_type".
-  if (entry.type === "oauth") {
+  // Pi stores a `kimi-coding` login as either a literal API key or the OAuth
+  // record it received from Kimi. OAuth grants are renewed only when the
+  // caller explicitly enables refresh; all other reads are in place.
+  const type = stringValue(entry.type)?.toLowerCase();
+  if (type === "api_key") {
+    const apiKey = usablePiCredential(entry.key);
+    return apiKey !== undefined
+      ? { status: "available", kind: "api_key", credential: apiKey }
+      : { status: "missing" };
+  }
+  if (type === "oauth") {
     return oauthAccessToken(path, entry, dependencies, options);
   }
-
-  if (typeof entry.type === "string" && entry.type !== "api_key") {
-    return { status: "unsupported" };
-  }
-  if (entry.type !== "api_key") {
-    return { status: "missing" };
-  }
-
-  const apiKey = usablePiCredential(entry.key);
-  return apiKey !== undefined
-    ? { status: "available", apiKey }
-    : { status: "missing" };
+  if (type === undefined) return { status: "missing" };
+  return { status: "unsupported" };
 }
 
 function authFilePath(dependencies: BrokerDependencies): string {
@@ -162,13 +163,26 @@ async function oauthAccessToken(
   dependencies: BrokerDependencies,
   options: KimiCredentialResolveOptions,
 ): Promise<KimiCredentialResolution> {
-  const grant = piOAuthGrant(entry);
-  if (!grant) return { status: "missing" };
+  const accessToken = usablePiCredential(entry.access);
+  if (accessToken === undefined) return { status: "missing" };
+  const expiresAtMs = timestampMs(entry.expires);
+  if (Object.hasOwn(entry, "expires") && expiresAtMs === undefined) {
+    return { status: "missing" };
+  }
+  const grant = {
+    accessToken,
+    expiresAtMs,
+    refreshable: usablePiCredential(entry.refresh) !== undefined,
+  };
   if (!piGrantExpired(grant, dependencies.now())) {
-    return { status: "available", apiKey: grant.accessToken };
+    return {
+      status: "available",
+      kind: "oauth",
+      credential: grant.accessToken,
+    };
   }
   if (options.refresh !== true || !grant.refreshable || !options.fetch) {
-    return { status: "expired" };
+    return { status: "expired", refreshable: grant.refreshable };
   }
 
   try {
@@ -194,14 +208,37 @@ async function oauthAccessToken(
         return root;
       },
     });
-    return { status: "available", apiKey: token.accessToken };
+    return {
+      status: "available",
+      kind: "oauth",
+      credential: token.accessToken,
+    };
   } catch (error) {
     return {
       status: "expired",
+      refreshable: true,
       refreshFailed: true,
       refreshDefinitive: isDefinitiveOAuthRefreshError(error),
     };
   }
+}
+
+/* Upstream expiry parsing is retained for ISO and epoch-string Pi grants. */
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Pi stores numeric OAuth expiry values as epoch milliseconds. Keep the
+    // numeric form exact; small values are useful in deterministic probes.
+    return value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeEffectiveRunway,
   computeWindowPace,
   PACE_EARLY_ELAPSED_PERCENT,
   PACE_ON_PACE_DEADBAND_PERCENT_POINTS,
@@ -375,6 +376,199 @@ describe("computeWindowPace", () => {
   });
 });
 
+describe("computeEffectiveRunway", () => {
+  function pacedWindow(
+    id: string,
+    percentRemaining: number,
+    elapsedFraction: number,
+    extra: Partial<QuotaWindow> = {},
+  ): QuotaWindow {
+    const value = window({
+      id,
+      percentUsed: 100 - percentRemaining,
+      percentRemaining,
+      windowSeconds: WEEK_SECONDS,
+      resetsAt: resetsAfter(elapsedFraction),
+      ...extra,
+    });
+    return { ...value, pace: computeWindowPace(value, GENERATED_AT) };
+  }
+
+  it("uses the earliest projected exhaustion across joint authoritative bounds", () => {
+    const first = pacedWindow("weekly", 50, 0.25);
+    const second = pacedWindow("five_hour", 50, 0.4);
+
+    expect(computeEffectiveRunway([first, second], GENERATED_AT)).toMatchObject(
+      {
+        status: "projected_exhaustion",
+        usableRunwaySeconds: 151_200,
+        limitingWindowId: "weekly",
+        projectionConfidence: "established",
+        projectionBasis: "cycle_average",
+        projectedExhaustedAt: first.pace?.projectedExhaustedAt,
+      },
+    );
+  });
+
+  it("reports zero remaining as exhausted now without requiring a cycle projection", () => {
+    expect(
+      computeEffectiveRunway(
+        [
+          window({
+            id: "weekly",
+            percentUsed: 100,
+            percentRemaining: 0,
+          }),
+        ],
+        GENERATED_AT,
+      ),
+    ).toEqual({
+      status: "exhausted_now",
+      usableRunwaySeconds: 0,
+      projectedExhaustedAt: GENERATED_AT,
+      limitingWindowId: "weekly",
+    });
+  });
+
+  it("reports through_reset when every bound reaches its own reset", () => {
+    const zeroUse = pacedWindow("five_hour", 100, 0.5);
+    const sustainable = pacedWindow("weekly", 90, 0.5);
+
+    expect(
+      computeEffectiveRunway([zeroUse, sustainable], GENERATED_AT),
+    ).toEqual({
+      status: "through_reset",
+      projectionConfidence: "established",
+      projectionBasis: "cycle_average",
+    });
+  });
+
+  it("preserves uncertainty when a bounding projection is stale or malformed", () => {
+    const projected = pacedWindow("weekly", 50, 0.25);
+    const stale = pacedWindow("five_hour", 50, 0.25);
+    stale.pace = { status: "unknown", reason: "stale" };
+
+    expect(computeEffectiveRunway([projected, stale], GENERATED_AT)).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["five_hour"],
+    });
+
+    const invalidTimestamp = pacedWindow("invalid", 50, 0.25, {
+      resetsAt: "not-a-timestamp",
+    });
+    expect(computeEffectiveRunway([invalidTimestamp], GENERATED_AT)).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["invalid"],
+    });
+  });
+
+  it("treats a not-yet-triggered window (missing resetsAt) as fully available, not unmeasurable", () => {
+    const fiveHour = window({
+      id: "five_hour",
+      kind: "session",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: FIVE_HOURS_SECONDS,
+      // No resetsAt: the clock has not started.
+    });
+    fiveHour.pace = computeWindowPace(fiveHour, GENERATED_AT);
+    expect(fiveHour.pace).toEqual({
+      status: "unknown",
+      reason: "missing_cycle",
+    });
+
+    const sevenDay = pacedWindow("seven_day", 90, 0.5);
+
+    const runway = computeEffectiveRunway([fiveHour, sevenDay], GENERATED_AT);
+    expect(runway.status).not.toBe("unknown");
+    expect(runway.unmeasurableWindowIds).toBeUndefined();
+    expect(["through_reset", "projected_exhaustion"]).toContain(runway.status);
+  });
+
+  it("reports through_reset when every window in scope has not yet triggered", () => {
+    const fiveHour = window({
+      id: "five_hour",
+      kind: "session",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: FIVE_HOURS_SECONDS,
+    });
+    fiveHour.pace = computeWindowPace(fiveHour, GENERATED_AT);
+    const sevenDay = window({
+      id: "seven_day",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: WEEK_SECONDS,
+    });
+    sevenDay.pace = computeWindowPace(sevenDay, GENERATED_AT);
+
+    expect(computeEffectiveRunway([fiveHour, sevenDay], GENERATED_AT)).toEqual({
+      status: "through_reset",
+      projectionConfidence: "established",
+      projectionBasis: "cycle_average",
+    });
+  });
+
+  it("still fails closed when a not-yet-triggered window also lacks usable percentRemaining", () => {
+    const broken = window({
+      id: "five_hour",
+      kind: "session",
+      windowSeconds: FIVE_HOURS_SECONDS,
+      // No resetsAt and no percentRemaining: a genuine data gap, not merely
+      // "not yet triggered".
+    });
+    const sevenDay = pacedWindow("seven_day", 90, 0.5);
+
+    expect(computeEffectiveRunway([broken, sevenDay], GENERATED_AT)).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["five_hour"],
+    });
+  });
+
+  it("fails closed for a malformed resetsAt even at 100% remaining (not merely missing)", () => {
+    const malformed = window({
+      id: "five_hour",
+      kind: "session",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: FIVE_HOURS_SECONDS,
+      resetsAt: "not-a-timestamp",
+    });
+    malformed.pace = computeWindowPace(malformed, GENERATED_AT);
+    const sevenDay = pacedWindow("seven_day", 90, 0.5);
+
+    expect(computeEffectiveRunway([malformed, sevenDay], GENERATED_AT)).toEqual(
+      {
+        status: "unknown",
+        unmeasurableWindowIds: ["five_hour"],
+      },
+    );
+  });
+
+  it("keeps early confidence and exact snapshot-clock edges deterministic", () => {
+    const early = pacedWindow("weekly", 50, 0.05);
+    expect(computeEffectiveRunway([early], GENERATED_AT)).toMatchObject({
+      status: "projected_exhaustion",
+      projectionConfidence: "early",
+      projectionBasis: "cycle_average",
+      usableRunwaySeconds: 30_240,
+    });
+
+    const resetAtSnapshot = window({
+      id: "weekly",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: WEEK_SECONDS,
+      resetsAt: GENERATED_AT,
+    });
+    resetAtSnapshot.pace = computeWindowPace(resetAtSnapshot, GENERATED_AT);
+    expect(computeEffectiveRunway([resetAtSnapshot], GENERATED_AT)).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["weekly"],
+    });
+  });
+});
+
 describe("summarizeEffectivePace", () => {
   it("flags a non-limiting bounding window that is ahead", () => {
     const fiveHour = window({
@@ -436,6 +630,25 @@ describe("summarizeEffectivePace", () => {
     ).toEqual({
       status: "unknown",
       unknownWindowIds: ["x"],
+    });
+  });
+
+  it("does not let a not-yet-triggered window's unknown pace poison a mixed aggregate", () => {
+    const fiveHour = window({
+      id: "five_hour",
+      pace: { status: "unknown", reason: "missing_cycle" },
+    });
+    const weekly = window({
+      id: "weekly",
+      pace: { status: "on_pace", reservePercentPoints: 0.4 },
+    });
+
+    expect(summarizeEffectivePace([fiveHour, weekly])).toEqual({
+      status: "on_pace",
+      onPaceWindowIds: ["weekly"],
+      unknownWindowIds: ["five_hour"],
+      worstReservePercentPoints: 0.4,
+      worstReserveWindowId: "weekly",
     });
   });
 });

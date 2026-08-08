@@ -5,7 +5,7 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 export const SKILL_DESCRIPTION =
   "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows via the quota-axi CLI - remaining " +
   "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable. " +
-  "Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
+  "effective usable runway, percentages, reset times, cycle-average pace vs the reset clock, and credential validity read from local auth sources, with no routing, provider mutation, or default ordering preference. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
 
@@ -64,7 +64,9 @@ browser cookies, or changes provider-side state. It reads local provider auth so
 first-party provider quota, usage, billing, or entitlement endpoints. By default, near-expiry
 Grok and Kimi OAuth grants may be renewed and atomically written back to their existing local
 auth files; use \`--no-refresh\` or \`QUOTA_AXI_NO_REFRESH=1\` for a pure read. It never launches
-the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures.
+the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures. Default output has no
+ordering preference. The explicit \`models --sort runway\` comparator only orders quota evidence,
+preserves ties, and is never a recommendation.
 
 ## When to use
 
@@ -79,14 +81,22 @@ or when comparing supported local provider headroom side by side.
 3. Pass \`--json\` for the normalized machine-readable model instead of TOON. Read
    \`quotaSemantics.effectiveAvailability\` rather than treating a model window in isolation:
    account windows can bound every model, and \`boundedBy\` names every window included in the
-   effective percentage. Read each window's \`pace\` (and the effective scope's pace summary) to
-   distinguish raw remaining capacity from whether usage is ahead of or behind the reset clock:
-   negative \`reservePercentPoints\` means ahead/conserve. Default TOON already shows \`pace\` and
-   signed \`reserve\` on window rows. If relationship status is \`partial\` or \`unknown\`, do not
-   infer one. Stale reports keep raw windows for diagnostics, but effective availability and pace
-   are always unknown; never route from a stale raw percentage as though it were current headroom.
-   quota-axi never recommends a provider, model, or route.
-4. Pass \`--full\` to include account identity and per-source attempt details.
+   effective percentage. Read \`effectiveAvailability[].runway\` first for completion-risk evidence
+   across every authoritative bound: \`projected_exhaustion\` supplies the earliest finite
+   \`usableRunwaySeconds\`, \`projectedExhaustedAt\`, limiting window, and confidence; \`through_reset\`
+   deliberately has no synthetic deadline; \`exhausted_now\` is zero runway; and \`unknown\` names
+   unmeasurable bounds instead of inventing a conclusion. Read each window's \`pace\` (and the
+   effective scope's pace summary) for diagnostics. Default TOON omits raw numeric reserve;
+   \`--json\` and \`--full\` retain it. If relationship status is \`partial\` or \`unknown\`, do not infer
+   one. Stale reports keep raw windows for diagnostics, but effective availability, pace, and
+   runway are always unknown; never route from a stale raw percentage as though it were current
+   headroom. Default output has no ordering preference. For a provider-native model evidence join,
+   use \`npx -y quota-axi models --intelligence high --json\`. This catalog covers Claude, Codex,
+   Grok, and Kimi only; its buckets are coarse editorial classifications, not scores. Its response
+   includes catalog provenance and unmatched model windows. \`--sort runway\` is an explicit,
+   documented quota-evidence comparator, not a provider, model, harness, credential, or route
+   recommendation; inspect \`sort.tieGroups\` rather than treating equal evidence as a preference.
+4. Pass \`--full\` to include account identity, per-source attempts, and raw reserve diagnostics.
 5. Run \`npx -y quota-axi auth\` to check local auth-source availability without printing
    secret values.
 6. Short-lived OAuth credentials renew on read by default only when a local refresh token is
@@ -101,7 +111,9 @@ or when comparing supported local provider headroom side by side.
    After that successful grant, plain \`quota-axi\` calls reuse the existing Keychain access
    marker, scoped to both profile and account, to refresh live Claude quota without requiring
    the flag. Legacy markers are not reused, so an upgrade may require this one-time grant again.
-8. If Grok reports \`reason: credentials_expired\` (or \`error: Grok access token expired\`) after
+8. Read Grok \`state.authStatus\` before logout wording: \`expired_refreshable\` is soft local
+   expiry, while \`unusable\` is sign-in failure. If Grok reports \`reason: credentials_expired\`
+   (or \`error: Grok access token expired\`) after
    a \`--no-refresh\` read, rerun without that flag so quota-axi can renew the local session, or
    open the Grok CLI (\`grok\`). A rejected renewal is an authentication failure, not fresh quota.
    If instead the error is \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed
