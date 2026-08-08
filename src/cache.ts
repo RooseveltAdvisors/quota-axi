@@ -34,6 +34,10 @@ const WINDOW_KINDS = [
   "unknown",
 ] as const satisfies readonly QuotaWindow["kind"][];
 
+type InternalProviderState = ProviderQuota["state"] & {
+  cacheIdentity?: string;
+};
+
 export function readCachedProvider(
   provider: ProviderId,
 ): ProviderQuota | undefined {
@@ -86,7 +90,15 @@ function writeCacheFile(file: string, providers: ProviderQuota[]): void {
   const temp = `${file}.${process.pid}.tmp`;
   writeFileSync(
     temp,
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), schemaVersion: 1, providers }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        schemaVersion: 1,
+        providers: providers.map(serializeCachedProvider),
+      },
+      null,
+      2,
+    )}\n`,
     { mode: 0o600 },
   );
   chmodSync(temp, 0o600);
@@ -109,8 +121,13 @@ function readCacheProviders(): ProviderQuota[] {
 }
 
 function toCacheProvider(provider: ProviderQuota): ProviderQuota | undefined {
-  if (provider.state.status !== "fresh" || provider.windows.length === 0)
+  if (
+    provider.source === "cache" ||
+    provider.state.status !== "fresh" ||
+    provider.windows.length === 0
+  )
     return undefined;
+  const cacheIdentity = (provider.state as InternalProviderState).cacheIdentity;
   return normalizeCachedProvider({
     provider: provider.provider,
     label: provider.label,
@@ -132,8 +149,21 @@ function toCacheProvider(provider: ProviderQuota): ProviderQuota | undefined {
       refreshedAt: provider.state.refreshedAt,
       untrustedWindowIds: provider.state.untrustedWindowIds,
       sourcesTried: provider.state.sourcesTried,
+      ...(cacheIdentity ? { cacheIdentity } : {}),
     },
   });
+}
+
+function serializeCachedProvider(provider: ProviderQuota): ProviderQuota {
+  const cacheIdentity = (provider.state as InternalProviderState).cacheIdentity;
+  if (!cacheIdentity) return provider;
+  return {
+    ...provider,
+    state: {
+      ...provider.state,
+      cacheIdentity,
+    } as ProviderQuota["state"],
+  };
 }
 
 function normalizeCachedProvider(raw: unknown): ProviderQuota | undefined {
@@ -186,6 +216,7 @@ function normalizeCachedProvider(raw: unknown): ProviderQuota | undefined {
   const modelLabels = normalizeCachedModelLabels(data.modelLabels);
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
+  const cacheIdentity = stringValue(state.cacheIdentity);
   const credits = normalizeCachedCredits(data.credits);
   if (plan) result.plan = plan;
   if (period) result.period = period;
@@ -198,6 +229,13 @@ function normalizeCachedProvider(raw: unknown): ProviderQuota | undefined {
   if (modelLabels) result.modelLabels = modelLabels;
   if (refreshedAt) result.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds) result.state.untrustedWindowIds = untrustedWindowIds;
+  if (cacheIdentity) {
+    Object.defineProperty(result.state, "cacheIdentity", {
+      value: cacheIdentity,
+      enumerable: false,
+      configurable: true,
+    });
+  }
   if (credits) result.credits = credits;
   return result;
 }

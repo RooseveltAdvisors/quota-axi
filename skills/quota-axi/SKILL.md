@@ -1,6 +1,6 @@
 ---
 name: quota-axi
-description: "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows via the quota-axi CLI - remaining percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable. effective usable runway, percentages, reset times, cycle-average pace vs the reset clock, and credential validity read from local auth sources, with no routing, provider mutation, or default ordering preference. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or remaining quota, or when comparing local provider headroom."
+description: "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows via the quota-axi CLI - remaining percentages, reset times, cycle-average pace vs the reset clock, provider status, effective usable runway, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable, with no routing, provider mutation, or default ordering preference. Multi-seat Claude may make a bounded one-token first-party model request to read rate-limit headers. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or remaining quota, or when comparing local provider headroom."
 user-invocable: false
 author: Kun Chen (kunchenguid)
 metadata:
@@ -29,13 +29,15 @@ Report local agent-provider quota windows and model quota evidence.
 You do not need quota-axi installed globally - invoke it with `npx -y quota-axi`.
 
 quota-axi is data only: it never routes, recommends, proxies, intercepts, logs in, imports
-browser cookies, or changes provider-side state. It reads local provider auth sources and calls
-first-party provider quota, usage, billing, or entitlement endpoints. By default, near-expiry
-Grok and Kimi OAuth grants may be renewed and atomically written back to their existing local
-auth files; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` for a pure read. It never launches
-the Claude, Grok, Pi, or Kimi CLIs, so it cannot spend the quota it measures. Default output has no
-ordering preference. The explicit `models --sort runway` comparator only orders quota evidence,
-preserves ties, and is never a recommendation.
+browser cookies, or changes provider-side state. Multi-seat Claude may make a bounded one-token
+first-party model request to read rate-limit headers, which can consume a small amount of quota.
+It reads local provider auth sources and calls first-party provider quota, usage, billing, or
+entitlement endpoints. By default, near-expiry Grok and Kimi OAuth grants may be renewed and
+atomically written back to their existing local auth files; use `--no-refresh` or
+`QUOTA_AXI_NO_REFRESH=1` to prevent refresh requests and local credential writes. It never
+launches the Claude, Grok, Pi, or Kimi CLIs. Default output has no ordering preference. The
+explicit `models --sort runway` comparator only orders quota evidence, preserves ties, and is
+never a recommendation.
 
 ## When to use
 
@@ -84,9 +86,10 @@ or when comparing supported local provider headroom side by side.
    expiry, while `unusable` is sign-in failure. If Grok reports `reason: credentials_expired`
    (or `error: Grok access token expired`) after
    a `--no-refresh` read, rerun without that flag so quota-axi can renew the local session, or
-   open the Grok CLI (`grok`). A rejected renewal is an authentication failure, not fresh quota.
-   If instead the error is `Grok access token expired in Pi` (`remedyCommand: pi`), the lapsed
-   grant is Pi's; rerun without `--no-refresh` or run Pi.
+   open the Grok CLI (`grok`). A rejected renewal never produces fresh quota; without
+   independent usable Pi auth it is an authentication failure. If instead the error is
+   `Grok access token expired in Pi` (`remedyCommand: pi`), the lapsed grant is Pi's;
+   rerun without `--no-refresh` or run Pi.
 9. For a managed Codex installation, set `QUOTA_AXI_CODEX_BINARY` to its absolute executable
    path. quota-axi uses that exact executable for auth inspection and the read-only app-server
    fallback, and fails closed if the override is invalid.
@@ -97,12 +100,14 @@ or when comparing supported local provider headroom side by side.
     `$KIMI_CODE_HOME/credentials/kimi-code.json` (default
     `$HOME/.kimi-code/credentials/kimi-code.json`), renewing near-expiry OAuth grants on read
     unless refresh is disabled.
-11. If Kimi reports `error: pi_credential_expired` after `--no-refresh`, rerun without the
+11. If Kimi reports `error: pi_kimi_credential_expired` after `--no-refresh`, rerun without the
     flag so quota-axi can renew the grant, or run Pi. A rejected renewal is `auth_required`.
 12. If Grok reports the `pi:xai` source, Grok is authenticated through Pi rather than through a
-    `~/.grok/auth.json`. That fallback is used only when no Grok auth location is configured;
-    setting `$GROK_AUTH_JSON`, `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME` pins Grok
-    to that location instead.
+    `~/.grok/auth.json`. That source fallback is available only when none of
+    `$GROK_AUTH_JSON`, `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME` is set.
+    `$GROK_AUTH_JSON` and inline `$GROK_AUTH` may still allow independent Pi model-auth
+    inspection; `$GROK_AUTH_PATH` or `$GROK_HOME` pins the standalone session. Pi credentials
+    are never sent to the consumer quota endpoint.
 13. Alibaba tries explicit `$ALIBABA_TOKEN_PLAN_COOKIE`, explicit CodexBar-compatible
     `$ALIBABA_CODING_PLAN_COOKIE`, the Pi `pi:alibaba-plan` entry, then documented API-key
     aliases. `quota-axi auth` lists this order and `--full` shows attempts. The Token Plan cookie
@@ -166,8 +171,8 @@ examples:
   non-secret snapshots.
   Fresh provider reports with no windows clear stale provider snapshots instead of caching
   empty quota.
-  Claude local expiry metadata is advisory when an access token exists: the existing read-only
-  usage request decides validity. Missing or invalid credentials without a usable token and HTTP
+  Claude local expiry metadata is advisory when an access token exists: the quota or multi-seat
+  header request decides validity. Missing or invalid credentials without a usable token and HTTP
   401/403 retire Claude cache; only transient failures may use bounded, reset-pruned stale data.
   The Claude Keychain access marker lives alongside it, is scoped by hashed profile and
   account hashes, and contains no credential values or raw account name.

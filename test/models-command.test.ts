@@ -138,6 +138,22 @@ describe("models command", () => {
     expect(json.unmatchedWindowIds).toEqual(["claude/model:unmapped"]);
   });
 
+  it("passes read-only refresh settings to model providers", async () => {
+    let refreshCredentials: boolean | undefined;
+    const quota = failedQuota("grok");
+    PROVIDERS.grok = {
+      ...adapter(quota),
+      async fetchQuota(options) {
+        refreshCredentials = options.refreshCredentials;
+        return quota;
+      },
+    };
+
+    await capture(["models", "--provider", "grok", "--no-refresh", "--json"]);
+
+    expect(refreshCredentials).toBe(false);
+  });
+
   it("fails when every catalog provider fails and rejects non-catalog scopes", async () => {
     for (const provider of ["claude", "codex", "grok", "kimi"] as const) {
       PROVIDERS[provider] = adapter(failedQuota(provider));

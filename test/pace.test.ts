@@ -545,6 +545,24 @@ describe("computeEffectiveRunway", () => {
     );
   });
 
+  it("fails closed when resetsAt is present but empty", () => {
+    const empty = window({
+      id: "five_hour",
+      kind: "session",
+      percentUsed: 0,
+      percentRemaining: 100,
+      windowSeconds: FIVE_HOURS_SECONDS,
+      resetsAt: "",
+    });
+    empty.pace = computeWindowPace(empty, GENERATED_AT);
+    const sevenDay = pacedWindow("seven_day", 90, 0.5);
+
+    expect(computeEffectiveRunway([empty, sevenDay], GENERATED_AT)).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["five_hour"],
+    });
+  });
+
   it("keeps early confidence and exact snapshot-clock edges deterministic", () => {
     const early = pacedWindow("weekly", 50, 0.05);
     expect(computeEffectiveRunway([early], GENERATED_AT)).toMatchObject({

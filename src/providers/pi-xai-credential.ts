@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { piOAuthExpiryMs, usablePiCredential } from "./pi-auth.js";
 
 const PI_PROVIDER_ID = "xai";
 const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
@@ -114,22 +115,22 @@ async function resolveCredential(
 
   const type = stringValue(entry.type)?.toLowerCase();
   if (type === "api_key") {
-    const apiKey = usableLiteralSecret(entry.key);
+    const apiKey = usablePiCredential(entry.key);
     return apiKey !== undefined
       ? { status: "available", kind: "api_key", credential: apiKey }
       : { status: "invalid" };
   }
 
   if (type === "oauth") {
-    const access = usableLiteralSecret(entry.access);
+    const access = usablePiCredential(entry.access);
     if (access === undefined) return { status: "invalid" };
     const hasExpiry = Object.hasOwn(entry, "expires");
-    const expiresMs = timestampMs(entry.expires);
+    const expiresMs = piOAuthExpiryMs(entry.expires);
     if (hasExpiry && expiresMs === undefined) return { status: "invalid" };
     if (expiresMs !== undefined && expiresMs <= dependencies.now()) {
       return {
         status: "expired",
-        refreshable: usableLiteralSecret(entry.refresh) !== undefined,
+        refreshable: usablePiCredential(entry.refresh) !== undefined,
       };
     }
     return { status: "available", kind: "oauth", credential: access };
@@ -158,41 +159,6 @@ function piAgentDirectory(dependencies: BrokerDependencies): string {
     return join(home(), configured.slice(2));
   }
   return configured;
-}
-
-function usableLiteralSecret(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-  // Reject environment, template, and command references without resolving them.
-  if (value.startsWith("!") || value.includes("$")) {
-    return undefined;
-  }
-  if (
-    [...value].some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f;
-    })
-  ) {
-    return undefined;
-  }
-  return value;
-}
-
-function timestampMs(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    // Pi stores OAuth expiry as epoch milliseconds.
-    return value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const asNumber = Number(value);
-    if (Number.isFinite(asNumber)) {
-      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
-    }
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-  return undefined;
 }
 
 async function readBoundedFile(

@@ -6,8 +6,8 @@ run-name: "PR #${{ github.event.pull_request.number }} body compliance - ${{ git
 #
 # Fork safety: the trigger is pull_request_target, so the workflow that runs is
 # always the base branch copy. A PR that edits or deletes this workflow cannot
-# exempt itself. There are no branch/path filters, so the check is emitted on
-# every PR and is safe to require.
+# exempt itself. The branch filter limits the check to PRs targeting main; there
+# are no path filters, so every such PR emits the check and it is safe to require.
 #
 # Bot exemptions: github-actions[bot], dependabot[bot], and release-please[bot]
 # are exempt so release automation and Dependabot keep working. Other authors
@@ -20,13 +20,6 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches:
       - main
-    # Never create a run for a release-please PR. The job-level author exemption
-    # below cannot do this: it is evaluated inside a run, and a GITHUB_TOKEN PR's
-    # run is created in action_required and never starts.
-    paths-ignore:
-      - .release-please-manifest.json
-      - CHANGELOG.md
-      - package.json
 
 permissions:
   contents: read
