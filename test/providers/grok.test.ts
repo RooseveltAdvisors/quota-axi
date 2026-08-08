@@ -1968,6 +1968,29 @@ describe("Grok cache provenance", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("does not serve web cache after consumer auth rejection", async () => {
+    writeValidAuth();
+    writeCachedProviders([cachedGrok("web")]);
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 401 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "auth_required",
+        stale: false,
+        error: "Grok sign-in required",
+        authStatus: "unusable",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("rejects a legacy CLI-proxy cache entry after exact-source failure", async () => {
     writeValidAuth();
     writeCachedProviders([cachedGrok("api")]);

@@ -74,17 +74,31 @@ export async function runLiveTui<T>({
     if (QUIT_KEY_PATTERN.test(text)) requestQuit();
   };
 
-  const stopResize = io.onResize?.(() => {
-    notify("resize");
-  });
-  const stopSignal = io.onSignal?.(requestQuit);
-  io.stdin.on("data", onData);
-  io.stdin.setRawMode?.(true);
-  io.stdin.resume?.();
-  io.stdout.write(ENTER_SCREEN);
-
+  let stopResize: (() => void) | undefined;
+  let stopSignal: (() => void) | undefined;
+  let dataSubscribed = false;
+  let rawModeSet = false;
+  let stdinResumed = false;
+  let alternateScreenEntered = false;
   let value: T | undefined;
   try {
+    stopResize = io.onResize?.(() => {
+      notify("resize");
+    });
+    stopSignal = io.onSignal?.(requestQuit);
+    dataSubscribed = true;
+    io.stdin.on("data", onData);
+    if (io.stdin.setRawMode) {
+      rawModeSet = true;
+      io.stdin.setRawMode(true);
+    }
+    if (io.stdin.resume) {
+      stdinResumed = true;
+      io.stdin.resume();
+    }
+    alternateScreenEntered = true;
+    io.stdout.write(ENTER_SCREEN);
+
     while (!quit) {
       if (value === undefined) io.stdout.write(`${CLEAR_SCREEN}\n  loading…\n`);
       value = await load();
@@ -114,10 +128,10 @@ export async function runLiveTui<T>({
       }
     }
   } finally {
-    io.stdout.write(LEAVE_SCREEN);
-    io.stdin.off("data", onData);
-    io.stdin.setRawMode?.(false);
-    io.stdin.pause?.();
+    if (alternateScreenEntered) io.stdout.write(LEAVE_SCREEN);
+    if (dataSubscribed) io.stdin.off("data", onData);
+    if (rawModeSet) io.stdin.setRawMode?.(false);
+    if (stdinResumed) io.stdin.pause?.();
     stopResize?.();
     stopSignal?.();
   }
