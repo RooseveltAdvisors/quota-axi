@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { load as loadYaml } from "js-yaml";
 
 const WORKFLOW_PATH = ".github/workflows/no-mistakes-required.yml";
 
 function loadWorkflow() {
   return readFileSync(WORKFLOW_PATH, "utf8");
+}
+
+function loadWorkflowOn(): Record<string, unknown> {
+  const document = loadYaml(loadWorkflow()) as
+    | Record<string | boolean, unknown>
+    | null
+    | undefined;
+  const on = document?.on ?? document?.true;
+  expect(on).toBeDefined();
+  expect(on).not.toBeNull();
+  expect(typeof on).toBe("object");
+  expect(Array.isArray(on)).toBe(false);
+  return on as Record<string, unknown>;
+}
+
+function loadPullRequestTargetTrigger(): Record<string, unknown> {
+  const on = loadWorkflowOn();
+  const trigger = on.pull_request_target;
+  expect(trigger).toBeDefined();
+  expect(trigger).not.toBeNull();
+  expect(typeof trigger).toBe("object");
+  expect(Array.isArray(trigger)).toBe(false);
+  return trigger as Record<string, unknown>;
 }
 
 function extractIndentedBlock(content: string, key: string) {
@@ -25,23 +49,24 @@ function extractRunScript(content: string) {
 
 describe("no-mistakes-required workflow (hardened pull_request_target gate)", () => {
   it("triggers on pull_request_target so base branch copy always runs", () => {
-    const content = loadWorkflow();
-    // Canonical hardened contract: pull_request_target, never pull_request at trigger level
-    expect(content).toMatch(/^\s+pull_request_target:/m);
-    expect(content).not.toMatch(/^\s+pull_request:\s*$/m);
+    const on = loadWorkflowOn();
+    expect(on.pull_request_target).toBeDefined();
+    expect(on.pull_request).toBeUndefined();
   });
 
-  it("emits on every PR (no branches or paths filters)", () => {
-    const content = loadWorkflow();
-    // No branch or path scoping so every PR emits the required check
-    expect(content).not.toMatch(/^\s+branches:/m);
-    expect(content).not.toMatch(/^\s+paths:/m);
-    expect(content).not.toMatch(/^\s+paths-ignore:/m);
+  it("keeps the upstream release-output exclusions on the hardened trigger", () => {
+    const trigger = loadPullRequestTargetTrigger();
+    expect(trigger.branches).toEqual(["main"]);
+    expect(trigger["paths-ignore"]).toEqual([
+      ".release-please-manifest.json",
+      "CHANGELOG.md",
+      "package.json",
+    ]);
   });
 
   it("declares the four relevant PR event types", () => {
-    const content = loadWorkflow();
-    expect(content).toContain("types: [opened, edited, synchronize, reopened]");
+    const trigger = loadPullRequestTargetTrigger();
+    expect(trigger.types).toEqual(["opened", "edited", "synchronize", "reopened"]);
   });
 
   it("uses contents: read only and no write permissions", () => {
@@ -93,11 +118,9 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
   });
 
   it("regression: does not contain the bypassable pull_request trigger on main", () => {
-    const content = loadWorkflow();
-    // This is the key regression pin: old form used "pull_request: ... branches: [main]"
-    // Hardened form must never regress to that self-bypassable trigger.
-    // A PR editing this file would run the PR-head definition under pull_request.
-    expect(content).not.toMatch(/^\s+pull_request:\s*$/m);
-    expect(content).not.toContain("branches:\n      - main");
+    const on = loadWorkflowOn();
+    const trigger = loadPullRequestTargetTrigger();
+    expect(on.pull_request).toBeUndefined();
+    expect(trigger.branches).toEqual(["main"]);
   });
 });

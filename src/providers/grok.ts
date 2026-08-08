@@ -160,14 +160,7 @@ async function fetchQuotaWithDependencies(
   const piResolution = allowIndependentPi
     ? await dependencies.piXaiBroker.resolve()
     : ({ status: "missing" } satisfies PiXaiCredentialResolution);
-  // If Pi already has a usable grant, prefer that source without first
-  // renewing an unrelated expired Grok CLI session. Pi API keys remain
-  // model-auth-only and are never sent to the consumer endpoint.
-  const cliState = await readCredentialState(
-    piResolution.status === "available"
-      ? { ...options, refreshCredentials: false }
-      : options,
-  );
+  const cliState = await readCredentialState(options);
   const piAttempt = allowIndependentPi
     ? piSourceAttempt(piResolution)
     : undefined;
@@ -267,21 +260,20 @@ async function fetchQuotaWithDependencies(
     );
   }
 
-  if (authStatus === "expired_refreshable") {
+  if (
+    cliState.status === "expired" &&
+    cliState.refreshDefinitive === true
+  ) {
+    finalError = cliState.refreshError ?? GROK_SIGN_IN_REQUIRED_ERROR;
+  } else if (authStatus === "expired_refreshable") {
     finalError =
-      (cliState.status === "expired" && cliState.refreshDefinitive === true
-        ? cliState.refreshError
-        : undefined) ??
-      (cliState.status === "expired" && cliState.refreshable
+      cliState.status === "expired" && cliState.refreshable
         ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
           : GROK_ACCESS_TOKEN_EXPIRED_ERROR
         : piResolution.status === "expired" && piResolution.refreshable
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
-          : GROK_SIGN_IN_REQUIRED_ERROR);
-    // Preserve the richer transient-renewal diagnostic when a same-source
-    // cache is the safe fallback. Without a cache, the stable expiry wording
-    // is the upstream auth-classification contract.
+          : GROK_SIGN_IN_REQUIRED_ERROR;
     const cliRefreshError =
       cliState.status === "expired" ? cliState.refreshError : undefined;
     if (cached?.source === GROK_SOURCE && cliRefreshError) {
@@ -363,7 +355,10 @@ function classifyGrokAuthStatus(
   // unless an independent Pi credential still establishes model usability.
   const cliUsable = cliState.status === "available" && !consumerAuthRejected;
   if (cliUsable || piUsable) return "usable";
-  const cliRefreshable = cliState.status === "expired" && cliState.refreshable;
+  const cliRefreshable =
+    cliState.status === "expired" &&
+    cliState.refreshable &&
+    cliState.refreshDefinitive !== true;
   const piRefreshable =
     piResolution.status === "expired" && piResolution.refreshable;
   if (cliRefreshable || piRefreshable) return "expired_refreshable";
