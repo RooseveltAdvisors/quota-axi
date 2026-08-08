@@ -411,6 +411,54 @@ describe("renderQuotaTui structure", () => {
     expect(output).toContain("on pace ✓");
   });
 
+  it("shows unavailable Claude seats as unknown with per-seat warnings", () => {
+    const response = fixtureResponse();
+    const claude = response.providers[0]!;
+    claude.label = "Claude (arcs, jr, nyu)";
+    claude.windows = [
+      {
+        id: "arcs:five_hour",
+        label: "arcs session",
+        kind: "session",
+        percentRemaining: 20,
+      },
+    ];
+    claude.quotaSemantics = {
+      status: "partial",
+      description: "partial multi-seat test",
+      effectiveAvailability: [
+        {
+          scope: "arcs:all_models",
+          status: "known",
+          effectivePercentRemaining: 20,
+          boundedBy: ["arcs:five_hour"],
+          limitingWindowIds: ["arcs:five_hour"],
+          runway: { status: "projected_exhaustion", usableRunwaySeconds: 3600 },
+        },
+      ],
+    };
+    claude.state.reason = "partial_seat_failure";
+    claude.state.error = "unavailable_seats:jr,nyu";
+    claude.attempts = [
+      { source: "claude:arcs", status: "success" },
+      {
+        source: "claude:jr",
+        status: "failed",
+        error: "seat_network_unavailable",
+      },
+      { source: "claude:nyu", status: "skipped", error: "credentials_missing" },
+    ];
+
+    const output = renderQuotaTui(response, {
+      columns: 80,
+      timeZone: "America/Los_Angeles",
+    });
+    expect(output).toContain("jr · effective unknown");
+    expect(output).toContain("jr · unavailable: seat network unavailable");
+    expect(output).toContain("nyu · effective unknown");
+    expect(output).toContain("nyu · unavailable: credentials missing");
+  });
+
   it("recognizes legacy Opus scopes when grouping Claude seats", () => {
     const response = fixtureResponse();
     const claude = response.providers[0]!;

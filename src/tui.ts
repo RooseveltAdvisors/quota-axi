@@ -224,6 +224,20 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
           });
     for (const window of windows) groupedWindowIds.add(window.id);
     appendWindowRows(lines, windows, generatedAtMs);
+    const warning = claudeSeatWarning(provider, seat);
+    if (warning) {
+      lines.push(
+        interior(
+          [
+            {
+              text: `   ${truncate(warning, CARD_INTERIOR - 4)}`,
+              style: "warn",
+            },
+          ],
+          "border",
+        ),
+      );
+    }
   }
 
   const ungroupedWindows =
@@ -286,6 +300,16 @@ function buildFailedCard(provider: ProviderQuota): Card {
             style: entry.style,
           },
         ],
+        "borderDim",
+      ),
+    );
+  }
+  for (const seat of claudeSeatNames(provider)) {
+    const warning =
+      claudeSeatWarning(provider, seat) ?? `${seat} · unavailable`;
+    lines.push(
+      interior(
+        [{ text: `   ${truncate(warning, CARD_INTERIOR - 4)}`, style: "warn" }],
         "borderDim",
       ),
     );
@@ -468,7 +492,66 @@ function claudeSeatNames(provider: ProviderQuota): string[] {
     const split = splitClaudeSeatScope(scope);
     if (split) names.add(split.seat);
   }
+  for (const attempt of provider.attempts ?? []) {
+    const seat = claudeAttemptSeat(attempt.source);
+    if (seat) names.add(seat);
+  }
+  for (const seat of claudeUnavailableSeatNames(provider)) names.add(seat);
+  for (const seat of claudeLabelSeatNames(provider.label)) names.add(seat);
   return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function claudeSeatWarning(
+  provider: ProviderQuota,
+  seat: string | undefined,
+): string | undefined {
+  if (provider.provider !== "claude" || seat === undefined) return undefined;
+  const attempts = (provider.attempts ?? []).filter(
+    (attempt) => claudeAttemptSeat(attempt.source) === seat,
+  );
+  if (attempts.some(({ status }) => status === "success")) return undefined;
+  const issue =
+    attempts.find(({ status }) => status === "failed")?.error ??
+    attempts.find(({ status }) => status === "skipped")?.error;
+  const hasEvidence = [
+    ...provider.windows.map(({ id }) => id),
+    ...(provider.quotaSemantics?.effectiveAvailability ?? []).map(
+      ({ scope }) => scope,
+    ),
+  ].some((scope) => splitClaudeSeatScope(scope)?.seat === seat);
+  const unavailable = claudeUnavailableSeatNames(provider).includes(seat);
+  if (!issue && !unavailable && hasEvidence && attempts.length === 0)
+    return undefined;
+  return `${seat} · unavailable${issue ? `: ${humanize(issue)}` : ""}`;
+}
+
+function claudeAttemptSeat(source: string): string | undefined {
+  const prefix = "claude:";
+  if (!source.startsWith(prefix)) return undefined;
+  const seat = source.slice(prefix.length);
+  return seat === "" ? undefined : seat;
+}
+
+function claudeUnavailableSeatNames(provider: ProviderQuota): string[] {
+  if (provider.state.reason !== "partial_seat_failure") return [];
+  const prefix = "unavailable_seats:";
+  const error = provider.state.error;
+  if (!error?.startsWith(prefix)) return [];
+  return error
+    .slice(prefix.length)
+    .split(",")
+    .map((seat) => seat.trim())
+    .filter(Boolean);
+}
+
+function claudeLabelSeatNames(label: string): string[] {
+  const match = /^Claude \(([^)]*)\)$/.exec(label);
+  return (
+    match?.[1]
+      ?.split(",")
+      .map((seat) => seat.trim())
+      .filter(Boolean) ?? []
+  );
 }
 
 function pickHeadlineAvailability(
