@@ -1646,6 +1646,8 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
   });
 
   it("does not treat an unusable Pi refresh reference as refreshable", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
     writePiXaiAuth({
       xai: {
         type: "oauth",
@@ -1734,6 +1736,40 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     });
   });
 
+  it("reports a rejected Pi OAuth refresh as unusable", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    writePiXaiAuth({
+      xai: {
+        type: "oauth",
+        access: "expired-pi-access",
+        refresh: "rejected-pi-refresh",
+        expires: Date.now() - 60_000,
+      },
+    });
+    const authPath = join(process.env.PI_CODING_AGENT_DIR!, "auth.json");
+    const before = readFileSync(authPath);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      error: "Grok access token expired; OAuth refresh was rejected",
+      authStatus: "unusable",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(readFileSync(authPath)).toEqual(before);
+    expect(JSON.stringify(result)).not.toContain("rejected-pi-refresh");
+  });
+
   it("omits the Grok CLI remedy for Pi-only refreshable expiry", async () => {
     writePiXaiAuth({
       xai: {
@@ -1801,6 +1837,23 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(toon).toMatch(/grok,unknown,unavailable,unavailable,usable/);
     expect(toon).not.toContain("credentials_expired");
     expect(toon).not.toContain("pi-xai-access-token-fixture");
+  });
+
+  it("reports a Pi-only auth source once", async () => {
+    delete process.env.GROK_AUTH_JSON;
+    delete process.env.GROK_HOME;
+    writeValidPiXaiOauth();
+    const { inspectAuth } = await import("../../src/providers/grok.js");
+
+    const report = await inspectAuth({ allowKeychainPrompt: false });
+
+    expect(report.sources).toEqual([
+      {
+        source: "pi:xai",
+        path: join(process.env.PI_CODING_AGENT_DIR!, "auth.json"),
+        status: "available",
+      },
+    ]);
   });
 
   it("reports both auth sources from inspectAuth", async () => {

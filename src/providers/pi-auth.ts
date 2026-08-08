@@ -36,7 +36,7 @@ export function piOAuthGrant(
     expiresAtMs,
     // Keep only presence in the grant summary; the refresh token stays private
     // and is read again under the shared file lock only when renewal is enabled.
-    refreshable: typeof entry.refresh === "string" && entry.refresh !== "",
+    refreshable: usablePiCredential(entry.refresh) !== undefined,
   };
 }
 

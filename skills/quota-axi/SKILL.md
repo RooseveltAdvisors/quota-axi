@@ -99,7 +99,7 @@ or when comparing supported local provider headroom side by side.
     `$KIMI_CODE_HOME/credentials/kimi-code.json` (default
     `$HOME/.kimi-code/credentials/kimi-code.json`), renewing near-expiry OAuth grants on read
     unless refresh is disabled.
-11. If Kimi reports `error: pi_credential_expired` after `--no-refresh`, rerun without the
+11. If Kimi reports `error: pi_kimi_credential_expired` after `--no-refresh`, rerun without the
     flag so quota-axi can renew the grant, or run Pi. A rejected renewal is `auth_required`.
 12. If Grok reports the `pi:xai` source, Grok is authenticated through Pi rather than through a
     `~/.grok/auth.json`. That fallback is used only when no Grok auth location is configured;

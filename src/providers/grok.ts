@@ -157,10 +157,12 @@ async function fetchQuotaWithDependencies(
   let transientConsumerFailure = false;
 
   const allowIndependentPi = independentPiSourceAllowed();
-  const piResolution = allowIndependentPi
+  const piResolutionProbe = allowIndependentPi
     ? await dependencies.piXaiBroker.resolve()
     : ({ status: "missing" } satisfies PiXaiCredentialResolution);
   const cliState = await readCredentialState(options);
+  const piResolution =
+    piResolutionFromCredentialState(cliState) ?? piResolutionProbe;
   const piAttempt = allowIndependentPi
     ? piSourceAttempt(piResolution)
     : undefined;
@@ -318,6 +320,9 @@ async function inspectAuthWithDependencies(
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
   const cliState = await readCredentialState(options);
+  if (cliState.source.source === PI_XAI_CREDENTIAL_SOURCE) {
+    return { provider: "grok", sources: [cliState.source] };
+  }
   const piInspection = await dependencies.piXaiBroker.inspect();
   const piStatus: AuthSourceReport["status"] =
     piInspection.status === "available"
@@ -343,6 +348,28 @@ async function inspectAuthWithDependencies(
       },
     ],
   };
+}
+
+function piResolutionFromCredentialState(
+  state: CredentialState,
+): PiXaiCredentialResolution | undefined {
+  if (state.source.source !== PI_XAI_CREDENTIAL_SOURCE) return undefined;
+  if (state.status === "available") {
+    return {
+      status: "available",
+      kind: "oauth",
+      credential: state.credentials.key,
+    };
+  }
+  if (state.status === "expired") {
+    return {
+      status: "expired",
+      refreshable:
+        state.refreshable && state.refreshDefinitive !== true,
+    };
+  }
+  if (state.status === "invalid") return { status: "invalid" };
+  return { status: "missing" };
 }
 
 function classifyGrokAuthStatus(
