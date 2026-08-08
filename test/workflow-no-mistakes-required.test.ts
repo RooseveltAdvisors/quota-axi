@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 import { load as loadYaml } from "js-yaml";
 
 const WORKFLOW_PATH = ".github/workflows/no-mistakes-required.yml";
@@ -67,6 +68,20 @@ function stringValues(value: unknown): string[] {
   return record ? Object.values(record).flatMap(stringValues) : [];
 }
 
+function executeVerification(body: string) {
+  const run = loadVerificationStep().run;
+  expect(typeof run).toBe("string");
+  return spawnSync("bash", ["-euo", "pipefail", "-c", run as string], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PR_BODY: body,
+      PR_AUTHOR: "workflow-test",
+      PR_NUMBER: "123",
+    },
+  });
+}
+
 describe("no-mistakes-required workflow (hardened pull_request_target gate)", () => {
   it("triggers on pull_request_target so base branch copy always runs", () => {
     const on = loadWorkflowOn();
@@ -105,15 +120,23 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
     );
   });
 
-  it("checks for the deterministic no-mistakes PR body signature marker", () => {
-    const run = loadVerificationStep().run;
-    expect(typeof run).toBe("string");
-    expect(run).toContain(
-      "Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)",
+  it("accepts signed and rejects unsigned PR bodies", () => {
+    const accepted = executeVerification(
+      [
+        "## Pipeline",
+        "Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)",
+        '\"; exit 73; #',
+      ].join("\n"),
     );
+    expect(accepted.status).toBe(0);
+    expect(accepted.error).toBeUndefined();
+
+    const rejected = executeVerification("ordinary pull request body");
+    expect(rejected.status).toBe(1);
+    expect(rejected.error).toBeUndefined();
   });
 
-  it("reads PR body via environment variable (not direct interpolation)", () => {
+  it("passes the PR metadata through the verification step environment", () => {
     const step = loadVerificationStep();
     const env = objectValue(step.env);
     expect(env).toMatchObject({
@@ -121,7 +144,6 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
       PR_AUTHOR: "${{ github.event.pull_request.user.login }}",
       PR_NUMBER: "${{ github.event.pull_request.number }}",
     });
-    expect(step.run).not.toContain("${{ github.event.pull_request.body }}");
   });
 
   it("has no secrets reference and does not checkout PR head", () => {
