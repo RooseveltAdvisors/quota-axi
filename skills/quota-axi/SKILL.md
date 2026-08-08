@@ -34,10 +34,10 @@ first-party model request to read rate-limit headers, which can consume a small 
 It reads local provider auth sources and calls first-party provider quota, usage, billing, or
 entitlement endpoints. By default, near-expiry Grok and Kimi OAuth grants may be renewed and
 atomically written back to their existing local auth files; use `--no-refresh` or
-`QUOTA_AXI_NO_REFRESH=1` to prevent refresh requests and local credential writes. It never launches
-the Claude, Grok, Pi, or Kimi CLIs. Default output has no ordering preference. The explicit
-`models --sort runway` comparator only orders quota evidence, preserves ties, and is never a
-recommendation.
+`QUOTA_AXI_NO_REFRESH=1` to prevent refresh requests and local credential writes. It never
+launches the Claude, Grok, Pi, or Kimi CLIs. Default output has no ordering preference. The
+explicit `models --sort runway` comparator only orders quota evidence, preserves ties, and is
+never a recommendation.
 
 ## When to use
 
