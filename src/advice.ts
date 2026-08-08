@@ -83,15 +83,16 @@ function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   if (provider.provider !== "grok" || provider.state.status === "fresh") {
     return undefined;
   }
-  if (provider.state.error === GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR) {
-    return PI_TOKEN_REFRESH_REMEDY_COMMAND;
+  // Do not gate this source-specific advice on aggregate authStatus: Pi model
+  // auth can remain usable while the independent Grok CLI session is expired.
+  switch (provider.state.error) {
+    case GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR:
+      return PI_TOKEN_REFRESH_REMEDY_COMMAND;
+    case GROK_ACCESS_TOKEN_EXPIRED_ERROR:
+      return GROK_TOKEN_REFRESH_REMEDY_COMMAND;
+    default:
+      return undefined;
   }
-  // Pi model auth can remain usable while the Grok CLI session is expired;
-  // keep the CLI renewal advice for that independent credential.
-  if (provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR) {
-    return GROK_TOKEN_REFRESH_REMEDY_COMMAND;
-  }
-  return undefined;
 }
 
 function isBlockedCredentialAttempt(attempt: SourceAttempt): boolean {
