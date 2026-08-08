@@ -1,6 +1,6 @@
 {
   "name": "quota-axi",
-  "version": "0.1.15",
+  "version": "0.1.19",
   "packageManager": "pnpm@11.1.1",
   "description": "AXI CLI that reports local agent-provider quota windows without routing or provider-side mutation",
   "type": "module",
@@ -21,6 +21,13 @@
   "bin": {
     "quota-axi": "./dist/bin/quota-axi.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "types": "./dist/src/index.d.ts",
   "files": [
     "dist",
     "skills/quota-axi",
@@ -38,7 +45,7 @@
   "scripts": {
     "build": "tsc",
     "build:skill": "tsx scripts/build-skill.ts",
-    "test": "vitest run",
+    "test": "pnpm run build && vitest run",
     "test:watch": "vitest",
     "dev": "tsx bin/quota-axi.ts",
     "lint": "eslint bin src test scripts",
@@ -52,13 +59,15 @@
   },
   "dependencies": {
     "@toon-format/toon": "2.1.0",
-    "axi-sdk-js": "^0.1.7"
+    "axi-sdk-js": "^0.1.10"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "22.0.0",
     "eslint": "10.1.0",
     "globals": "17.7.0",
+    "js-yaml": "^4.1.1",
     "prettier": "3.8.1",
     "tsx": "4.23.1",
     "typescript": "6.0.3",

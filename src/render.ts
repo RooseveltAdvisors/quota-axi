@@ -3,6 +3,7 @@ import { quotaHelpLines } from "./advice.js";
 import { collapseHome } from "./lib/fs.js";
 import type {
   AuthProviderReport,
+  ModelsResponse,
   ProviderQuota,
   QuotaAxiResponse,
   SourceAttempt,
@@ -22,6 +23,7 @@ export function renderQuotaToon(
     plan: provider.plan ?? "unknown",
     source: provider.source,
     status: provider.state.status,
+    authStatus: provider.state.authStatus ?? "unknown",
     refreshedAt: provider.state.refreshedAt ?? "none",
   }));
   const windows = response.providers.flatMap((provider) =>
@@ -32,7 +34,6 @@ export function renderQuotaToon(
       percentRemaining: window.percentRemaining ?? "unknown",
       resetsAt: window.resetsAt ?? window.resetText ?? "unknown",
       pace: window.pace?.status ?? "unknown",
-      reserve: window.pace?.reservePercentPoints ?? "unknown",
       state: provider.state.status,
     })),
   );
@@ -45,10 +46,13 @@ export function renderQuotaToon(
         effectivePercentRemaining: "unknown" as string | number,
         boundedBy: "none",
         limitingWindowIds: "unknown",
-        pace: "unknown",
-        aheadWindows: "none",
-        unknownPace: "none",
-        worstReserve: "unknown" as string | number,
+        runway: "unknown",
+        usableRunwaySeconds: "unknown" as string | number,
+        projectedExhaustedAt: "unknown",
+        limitingWindowId: "unknown",
+        projectionConfidence: "unknown",
+        projectionBasis: "unknown",
+        unmeasurableWindowIds: "none",
         unresolvedWindowIds:
           semantics?.unresolvedWindowIds?.join(" + ") ?? "none",
         relationshipStatus: semantics?.status ?? ("unknown" as const),
@@ -63,11 +67,19 @@ export function renderQuotaToon(
       boundedBy: availability.boundedBy.join(" + ") || "none",
       limitingWindowIds:
         availability.limitingWindowIds?.join(" + ") ?? "unknown",
-      pace: availability.pace?.status ?? "unknown",
-      aheadWindows: availability.pace?.aheadWindowIds?.join(" + ") ?? "none",
-      unknownPace: availability.pace?.unknownWindowIds?.join(" + ") ?? "none",
-      worstReserve:
-        availability.pace?.worstReservePercentPoints ?? ("unknown" as const),
+      runway: availability.runway?.status ?? "unknown",
+      usableRunwaySeconds:
+        availability.runway?.usableRunwaySeconds ?? ("unknown" as const),
+      projectedExhaustedAt:
+        availability.runway?.projectedExhaustedAt ?? ("unknown" as const),
+      limitingWindowId:
+        availability.runway?.limitingWindowId ?? ("unknown" as const),
+      projectionConfidence:
+        availability.runway?.projectionConfidence ?? ("unknown" as const),
+      projectionBasis:
+        availability.runway?.projectionBasis ?? ("unknown" as const),
+      unmeasurableWindowIds:
+        availability.runway?.unmeasurableWindowIds?.join(" + ") ?? "none",
       unresolvedWindowIds: semantics.unresolvedWindowIds?.join(" + ") ?? "none",
       relationshipStatus: semantics.status,
     }));
@@ -95,6 +107,37 @@ export function renderQuotaToon(
   if (advice.length > 0) blocks.push(encode({ advice }));
 
   if (full) {
+    const windowPace = response.providers.flatMap((provider) =>
+      provider.windows.map((window) => ({
+        provider: provider.provider,
+        id: window.id,
+        reserve: window.pace?.reservePercentPoints ?? "unknown",
+        burnMultiple: window.pace?.burnMultiple ?? "unknown",
+        projectedExhaustedAt:
+          window.pace?.projectedExhaustedAt ?? ("unknown" as const),
+        projectionConfidence:
+          window.pace?.projectionConfidence ?? ("unknown" as const),
+        projectionBasis: window.pace?.projectionBasis ?? ("unknown" as const),
+      })),
+    );
+    const effectivePace = response.providers.flatMap((provider) =>
+      (provider.quotaSemantics?.effectiveAvailability ?? []).map(
+        (availability) => ({
+          provider: provider.provider,
+          scope: availability.scope,
+          pace: availability.pace?.status ?? "unknown",
+          aheadWindowIds:
+            availability.pace?.aheadWindowIds?.join(" + ") ?? "none",
+          unknownWindowIds:
+            availability.pace?.unknownWindowIds?.join(" + ") ?? "none",
+          worstReserve:
+            availability.pace?.worstReservePercentPoints ??
+            ("unknown" as const),
+          worstReserveWindowId:
+            availability.pace?.worstReserveWindowId ?? ("unknown" as const),
+        }),
+      ),
+    );
     const accounts = response.providers.map((provider) => ({
       provider: provider.provider,
       email: provider.account?.email ?? "hidden",
@@ -105,6 +148,8 @@ export function renderQuotaToon(
     const attempts = response.providers.flatMap((provider) =>
       (provider.attempts ?? []).map((attempt) => attemptRow(provider, attempt)),
     );
+    blocks.push(encode({ windowPace }));
+    blocks.push(encode({ effectivePace }));
     blocks.push(encode({ accounts }));
     blocks.push(encode({ attempts }));
   }
@@ -137,6 +182,64 @@ export function renderAuthToon(
       "Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access",
     ]),
   ].join("\n");
+}
+
+export function renderModelsToon(
+  response: ModelsResponse,
+  binPath: string,
+  full: boolean,
+): string {
+  const models = response.models.map((model) => ({
+    provider: model.provider,
+    id: model.id,
+    label: model.label,
+    intelligence: model.intelligence,
+    quotaScopes: model.quotaScopes.join(" + ") || "unknown",
+    status: model.state.status,
+    stale: model.state.stale,
+    effectivePercentRemaining:
+      model.effective?.effectivePercentRemaining ?? ("unknown" as const),
+    runway: model.effective?.runway?.status ?? "unknown",
+    usableRunwaySeconds:
+      model.effective?.runway?.usableRunwaySeconds ?? ("unknown" as const),
+  }));
+  const blocks = [
+    encode({
+      bin: collapseHome(binPath),
+      description:
+        "Join curated provider-native model intelligence buckets with local quota evidence",
+      generatedAt: response.generatedAt,
+      catalogVersion: response.catalog.version,
+    }),
+    encode({ models }),
+  ];
+  if (response.sort) blocks.push(encode({ sort: response.sort }));
+  if (response.unmatchedWindowIds?.length) {
+    blocks.push(encode({ unmatchedWindowIds: response.unmatchedWindowIds }));
+  }
+  if (full) {
+    const evidence = response.models.map((model) => ({
+      provider: model.provider,
+      id: model.id,
+      boundedBy: model.effective?.boundedBy.join(" + ") ?? "unknown",
+      limitingWindowIds:
+        model.effective?.limitingWindowIds?.join(" + ") ?? "unknown",
+      projectedExhaustedAt:
+        model.effective?.runway?.projectedExhaustedAt ?? "unknown",
+      authStatus: model.state.authStatus ?? "unknown",
+      reason: model.state.reason ?? "none",
+      remedyCommand: model.state.remedyCommand ?? "none",
+    }));
+    blocks.push(encode({ evidence }));
+  }
+  blocks.push(
+    renderHelp([
+      "Default model order is deterministic and non-preferential (provider, then id)",
+      "Run `quota-axi models --sort runway` for the documented opt-in runway comparator",
+      "Run `quota-axi models --json` for catalog provenance and full quota evidence",
+    ]),
+  );
+  return blocks.join("\n");
 }
 
 export function redactedResponse(

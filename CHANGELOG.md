@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.19](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.18...quota-axi-v0.1.19) (2026-08-08)
+
+
+### Features
+
+* **tui:** make the human report live and act on captain feedback, fix Pi Kimi OAuth ([#68](https://github.com/kunchenguid/quota-axi/issues/68)) ([fcc9aa3](https://github.com/kunchenguid/quota-axi/commit/fcc9aa3b11dab333cbcb295bbdece303b730fd4e))
+
+## [0.1.18](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.17...quota-axi-v0.1.18) (2026-08-07)
+
+
+### Features
+
+* **cli:** add human terminal quota report ([#66](https://github.com/kunchenguid/quota-axi/issues/66)) ([7c5bb5e](https://github.com/kunchenguid/quota-axi/commit/7c5bb5e538951973cc4de01a74f55cf0a9aa45a2))
+* **models:** add intelligence-aware quota evidence ([#64](https://github.com/kunchenguid/quota-axi/issues/64)) ([229ad37](https://github.com/kunchenguid/quota-axi/commit/229ad37fd6ed368b08f76439c1db15959510a4f7))
+
+
+### Bug Fixes
+
+* **cli:** fast-path bare version checks ([#67](https://github.com/kunchenguid/quota-axi/issues/67)) ([f9d5b9f](https://github.com/kunchenguid/quota-axi/commit/f9d5b9f5fdd7d98817f29ef83935acd9b33093d4))
+
+## [0.1.17](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.16...quota-axi-v0.1.17) (2026-07-31)
+
+
+### Features
+
+* report effective usable runway ([#57](https://github.com/kunchenguid/quota-axi/issues/57)) ([19d0403](https://github.com/kunchenguid/quota-axi/commit/19d04035e4adc2fa8c0ec280ba40d613de56bc22))
+
+## [0.1.16](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.15...quota-axi-v0.1.16) (2026-07-28)
+
+
+### Bug Fixes
+
+* **providers:** correct Codex and Grok auth classification ([#51](https://github.com/kunchenguid/quota-axi/issues/51)) ([d4383e6](https://github.com/kunchenguid/quota-axi/commit/d4383e694472e6f689b26b636ba8a9cb15fef7f6))
+
 ## [0.1.15](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.14...quota-axi-v0.1.15) (2026-07-28)
 
 

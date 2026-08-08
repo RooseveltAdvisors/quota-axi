@@ -125,6 +125,41 @@ describe("quota semantics", () => {
     ).toBe(true);
   });
 
+  it("does not block Claude effective runway when five_hour has not been triggered yet (no resetsAt)", () => {
+    const result = withQuotaSemantics(
+      provider("claude", [
+        window("five_hour", "session", 100, {
+          percentUsed: 0,
+          windowSeconds: 18_000,
+          // No resetsAt: the 5h clock has not started (first request not
+          // yet made this window). This must not make runway `unknown`.
+        }),
+        window("seven_day", "weekly", 90, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.5),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+
+    const allModels = result.quotaSemantics?.effectiveAvailability.find(
+      (item) => item.scope === "all_models",
+    );
+    expect(allModels?.status).toBe("known");
+    expect(allModels?.effectivePercentRemaining).toBe(90);
+    expect(allModels?.runway?.status).not.toBe("unknown");
+    expect(["through_reset", "projected_exhaustion"]).toContain(
+      allModels?.runway?.status,
+    );
+    expect(allModels?.runway?.unmeasurableWindowIds).toBeUndefined();
+
+    const fiveHour = result.windows.find((item) => item.id === "five_hour");
+    expect(fiveHour?.pace).toEqual({
+      status: "unknown",
+      reason: "missing_cycle",
+    });
+  });
+
   it("surfaces pace on a non-currently-limiting bounding window that is ahead", () => {
     const result = withQuotaSemantics(
       provider("claude", [
@@ -161,6 +196,45 @@ describe("quota semantics", () => {
     expect(
       result.windows.find((item) => item.id === "seven_day")?.pace?.status,
     ).toBe("ahead");
+  });
+
+  it("uses a model-specific bound when it projects earlier exhaustion than its account bounds", () => {
+    const fiveHourResetsAt = new Date(
+      Date.parse(GENERATED_AT) + 0.75 * 18_000 * 1000,
+    ).toISOString();
+    const result = withQuotaSemantics(
+      provider("claude", [
+        window("five_hour", "session", 90, {
+          windowSeconds: 18_000,
+          resetsAt: fiveHourResetsAt,
+        }),
+        window("seven_day", "weekly", 50, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.25),
+        }),
+        window("model:fable", "model", 25, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.25),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(
+      result.quotaSemantics?.effectiveAvailability.find(
+        ({ scope }) => scope === "model:fable",
+      ),
+    ).toMatchObject({
+      status: "known",
+      boundedBy: ["five_hour", "seven_day", "model:fable"],
+      runway: {
+        status: "projected_exhaustion",
+        limitingWindowId: "model:fable",
+        usableRunwaySeconds: 50_400,
+        projectionConfidence: "established",
+        projectionBasis: "cycle_average",
+      },
+    });
   });
 
   it("applies Codex base windows to named model windows", () => {
@@ -250,6 +324,10 @@ describe("quota semantics", () => {
             status: "unknown",
             unknownWindowIds: ["weekly"],
           },
+          runway: {
+            status: "unknown",
+            unmeasurableWindowIds: ["weekly", "limit:2"],
+          },
         },
       ],
       unresolvedWindowIds: ["limit:2"],
@@ -304,6 +382,32 @@ describe("quota semantics", () => {
         },
       ],
       unresolvedWindowIds: ["limit:2"],
+    });
+  });
+
+  it("still fails Claude effective runway closed when a triggered window's reset already expired", () => {
+    const result = withQuotaSemantics(
+      provider("claude", [
+        window("five_hour", "session", 91, {
+          windowSeconds: 18_000,
+          // Present but already in the past: a real, expired reset - unlike
+          // an absent resetsAt this is genuine unmeasurability.
+          resetsAt: new Date(Date.parse(GENERATED_AT) - 1_000).toISOString(),
+        }),
+        window("seven_day", "weekly", 90, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.5),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+
+    const allModels = result.quotaSemantics?.effectiveAvailability.find(
+      (item) => item.scope === "all_models",
+    );
+    expect(allModels?.runway).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["five_hour"],
     });
   });
 

@@ -1,23 +1,34 @@
 import { runAxiCli } from "axi-sdk-js";
-import { authCommand, quotaCommand, type QuotaContext } from "./commands.js";
-import { loadUserEnv } from "./lib/env.js";
+import {
+  authCommand,
+  modelsCommand,
+  quotaCommand,
+  type QuotaContext,
+} from "./commands.js";
 import { VERSION } from "./version.js";
 
 export const DESCRIPTION =
-  "Report local agent-provider quota windows for routing-aware agents.";
+  "Report local agent-provider quota windows and model quota evidence.";
 
-export const TOP_HELP = `usage: quota-axi [auth] [flags]
-commands[2]:
-  (none)=quota, auth
-flags[7]:
-  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --allow-keychain-prompt, --no-refresh, --help, -v/--version
+export const TOP_HELP = `usage: quota-axi [quota|auth|models] [flags]
+commands[3]:
+  (none)=quota, auth, models
+output:
+  Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits).
+flags[12]:
+  --provider <claude,codex,cursor,copilot,grok,kimi,alibaba>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --no-refresh, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude
   quota-axi --provider cursor,copilot,grok,kimi,alibaba
   quota-axi --json
   quota-axi --full
+  quota-axi --tui
+  quota-axi --tui --refresh 1m
+  quota-axi --tui --once
   quota-axi auth
+  quota-axi models --intelligence high
+  quota-axi models --sort runway
 `;
 
 type MainOptions = {
@@ -27,7 +38,6 @@ type MainOptions = {
 };
 
 export async function main(options: MainOptions = {}): Promise<void> {
-  loadUserEnv();
   const binPath = options.binPath ?? process.argv[1] ?? "quota-axi";
   const argv = normalizeArgv(options.argv ?? process.argv.slice(2));
 
@@ -40,13 +50,16 @@ export async function main(options: MainOptions = {}): Promise<void> {
     commands: {
       quota: quotaCommand,
       auth: authCommand,
+      models: modelsCommand,
     },
     // `quota` is the implicit default command, so the bare-invocation home view
     // is never reached (see normalizeArgv); wiring it keeps the SDK contract.
     home: quotaCommand,
     resolveContext: () => ({ binPath }),
     getCommandHelp: (command) =>
-      command === "quota" || command === "auth" ? TOP_HELP : undefined,
+      command === "quota" || command === "auth" || command === "models"
+        ? TOP_HELP
+        : undefined,
   });
 }
 
@@ -78,7 +91,12 @@ export function normalizeArgv(raw: string[]): string[] {
   if (raw.length === 1 && isTopLevelFlag(first)) {
     return raw;
   }
-  if (first === "quota" || first === "auth" || first === "update") {
+  if (
+    first === "quota" ||
+    first === "auth" ||
+    first === "models" ||
+    first === "update"
+  ) {
     return raw;
   }
   if (first.startsWith("-")) {
@@ -117,7 +135,14 @@ function findCommand(raw: string[]): number {
       index++;
       continue;
     }
-    if (arg === "quota" || arg === "auth" || arg === "update") return index;
+    if (
+      arg === "quota" ||
+      arg === "auth" ||
+      arg === "models" ||
+      arg === "update"
+    ) {
+      return index;
+    }
   }
   return -1;
 }

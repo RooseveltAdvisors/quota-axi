@@ -16,7 +16,7 @@ Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
 quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows in one [AXI](https://axi.md)-shaped call. Alibaba uses first-party console/API paths when configured and remains explicit when no authoritative usage source is available.
-It reports data without routing, recommending, proxying, intercepting, logging in, or importing browser cookies. Multi-seat Claude may make a bounded one-token first-party model request to read rate-limit headers; see [Multi-seat Claude](README.md#multi-seat-claude). By default, it may renew short-lived OAuth access tokens in local auth files when those refresh tokens are already present; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` when the credential files must remain read-only.
+It is data only: it never routes, recommends a provider, model, harness, credential, or route, proxies, intercepts, logs in, imports browser cookies, or changes provider-side state. Multi-seat Claude may make a bounded one-token first-party model request to read rate-limit headers; see [Multi-seat Claude](README.md#multi-seat-claude). By default, it may renew short-lived OAuth access tokens in local auth files when those refresh tokens are already present; use `--no-refresh` or `QUOTA_AXI_NO_REFRESH=1` when the credential files must remain read-only. Default output has no ordering preference. The opt-in `models --sort runway` surface applies only its documented deterministic comparator to quota evidence, preserves all evidence and explicit ties, and is not a recommendation.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
 - **Local first** - quota and auth reports run on the machine that holds the credentials; their network calls go to first-party provider endpoints, never a third-party relay.
@@ -33,53 +33,50 @@ Legacy markers created before account-pinned lookup are not reused, so an upgrad
 
 Grok and Kimi OAuth access tokens are renewed on read when they are near expiry. Renewal is locked and atomically persisted to the local auth file; refresh tokens never appear in quota output. `--no-refresh` (or `QUOTA_AXI_NO_REFRESH=1`) disables those writes and sends no refresh request. A separate timer can remain as an optional backup for multi-process races, but is not required for normal freshness.
 
-### User env file
-
-Bare `quota-axi` automatically loads KEY=VALUE pairs from `$XDG_CONFIG_HOME/quota-axi/env`, or `~/.config/quota-axi/env` when `XDG_CONFIG_HOME` is unset, before reading provider auth. Blank lines and `#` comments are ignored, unreadable or missing files are skipped, and variables already set in the process environment are never overridden. Set `QUOTA_AXI_ENV_FILE` to use another file. The `quota-axi-with-secrets` wrapper remains an optional convenience rather than a requirement.
-
 ```sh
 $ npx -y quota-axi
 bin: ~/.npm/_npx/.../quota-axi
 description: Report local agent-provider quota windows for routing-aware agents
 generatedAt: "2026-03-15T16:42:00.000Z"
-providers[7]{provider,plan,source,status,refreshedAt}:
-  claude,pro,oauth,fresh,"2026-03-15T16:41:55.000Z"
-  codex,plus,cli-rpc,fresh,"2026-03-15T16:41:58.000Z"
-  cursor,pro,api,fresh,"2026-03-15T16:41:59.000Z"
-  copilot,individual,api,fresh,"2026-03-15T16:42:00.000Z"
-  grok,unknown,web,fresh,"2026-03-15T16:42:00.000Z"
-  kimi,unknown,api,fresh,"2026-03-15T16:42:00.000Z"
-  alibaba,"Alibaba Coding Plan",api,fresh,"2026-03-15T16:42:00.000Z"
-windows[15]{provider,id,label,percentRemaining,resetsAt,pace,reserve,state}:
-  claude,five_hour,session,82,"2026-03-15T20:10:48.000Z",behind,12.4,fresh
-  claude,seven_day,week,64,"2026-03-20T17:59:45.600Z",ahead,-8.2,fresh
-  claude,seven_day_opus,opus week,93,"2026-03-20T17:29:31.200Z",behind,21.1,fresh
-  claude,"model:fable",Fable week,71,"2026-03-20T08:25:12.000Z",behind,4.5,fresh
-  codex,five_hour,session,58,"2026-03-15T19:36:54.000Z",on_pace,-0.3,fresh
-  codex,weekly,week,47,"2026-03-19T09:54:28.800Z",ahead,-6.1,fresh
-  codex,"model:gpt-5.1-codex:5h",GPT-5.1-Codex session,100,"2026-03-15T20:48:00.000Z",behind,18.0,fresh
-  cursor,included_usage,included usage,72,"2026-04-01T00:00:00.000Z",unknown,unknown,fresh
-  cursor,auto_usage,auto usage,91,"2026-04-01T00:00:00.000Z",unknown,unknown,fresh
-  cursor,api_usage,API usage,100,"2026-04-01T00:00:00.000Z",unknown,unknown,fresh
-  copilot,chat,chat,84,"2026-04-01T00:00:00.000Z",unknown,unknown,fresh
-  copilot,premium_interactions,premium interactions,53,"2026-04-01T00:00:00.000Z",unknown,unknown,fresh
-  grok,credits,credits,67,"2026-04-01T00:00:00.000Z",behind,3.6,fresh
-  kimi,weekly,week,74,"2026-03-20T12:17:02.400Z",behind,5.2,fresh
-  kimi,five_hour,session,88,"2026-03-15T20:45:00.000Z",behind,7.0,fresh
-effective[10]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,pace,aheadWindows,unknownPace,worstReserve,unresolvedWindowIds,relationshipStatus}:
-  claude,all_models,64,"five_hour + seven_day",seven_day,mixed,seven_day,none,-8.2,none,known
-  claude,"model:fable",64,"five_hour + seven_day + model:fable",seven_day,mixed,seven_day,none,-8.2,none,known
-  claude,seven_day_opus,64,"five_hour + seven_day + seven_day_opus",seven_day,mixed,seven_day,none,-8.2,none,known
-  codex,all_models,47,"five_hour + weekly",weekly,ahead,weekly,none,-6.1,none,known
-  codex,"model:gpt-5.1-codex",47,"five_hour + weekly + model:gpt-5.1-codex:5h",weekly,mixed,weekly,none,-6.1,none,known
-  cursor,unresolved,unknown,none,unknown,unknown,none,none,unknown,"included_usage + auto_usage + api_usage",unknown
-  copilot,unresolved,unknown,none,unknown,unknown,none,none,unknown,"chat + premium_interactions",unknown
-  grok,all_products,67,credits,credits,behind,none,none,3.6,none,known
-  kimi,all_models,74,"weekly + five_hour",weekly,behind,none,none,5.2,none,known
-  alibaba,unresolved,unknown,none,unknown,unknown,none,none,unknown,none,unknown
-help[3]:
+providers[7]{provider,plan,source,status,authStatus,refreshedAt}:
+  claude,pro,oauth,fresh,unknown,"2026-03-15T16:41:55.000Z"
+  codex,plus,cli-rpc,fresh,unknown,"2026-03-15T16:41:58.000Z"
+  cursor,pro,api,fresh,unknown,"2026-03-15T16:41:59.000Z"
+  copilot,individual,api,fresh,unknown,"2026-03-15T16:42:00.000Z"
+  grok,unknown,web,fresh,usable,"2026-03-15T16:42:00.000Z"
+  kimi,unknown,api,fresh,unknown,"2026-03-15T16:42:00.000Z"
+  alibaba,"Alibaba Coding Plan",api,fresh,unknown,"2026-03-15T16:42:00.000Z"
+windows[15]{provider,id,label,percentRemaining,resetsAt,pace,state}:
+  claude,five_hour,session,82,"2026-03-15T20:10:48.000Z",behind,fresh
+  claude,seven_day,week,64,"2026-03-20T17:59:45.600Z",ahead,fresh
+  claude,seven_day_opus,opus week,93,"2026-03-20T17:29:31.200Z",behind,fresh
+  claude,"model:fable",Fable week,71,"2026-03-20T08:25:12.000Z",behind,fresh
+  codex,five_hour,session,58,"2026-03-15T19:36:54.000Z",on_pace,fresh
+  codex,weekly,week,47,"2026-03-19T09:54:28.800Z",ahead,fresh
+  codex,"model:gpt-5.1-codex:5h",GPT-5.1-Codex session,100,"2026-03-15T20:48:00.000Z",behind,fresh
+  cursor,included_usage,included usage,72,"2026-04-01T00:00:00.000Z",unknown,fresh
+  cursor,auto_usage,auto usage,91,"2026-04-01T00:00:00.000Z",unknown,fresh
+  cursor,api_usage,API usage,100,"2026-04-01T00:00:00.000Z",unknown,fresh
+  copilot,chat,chat,84,"2026-04-01T00:00:00.000Z",unknown,fresh
+  copilot,premium_interactions,premium interactions,53,"2026-04-01T00:00:00.000Z",unknown,fresh
+  grok,credits,credits,67,"2026-04-01T00:00:00.000Z",behind,fresh
+  kimi,weekly,week,74,"2026-03-20T12:17:02.400Z",behind,fresh
+  kimi,five_hour,session,88,"2026-03-15T20:45:00.000Z",behind,fresh
+effective[10]{provider,scope,effectivePercentRemaining,boundedBy,limitingWindowIds,runway,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId,projectionConfidence,projectionBasis,unmeasurableWindowIds,unresolvedWindowIds,relationshipStatus}:
+  claude,all_models,64,"five_hour + seven_day",seven_day,projected_exhaustion,298906,"2026-03-19T03:43:45.600Z",seven_day,established,cycle_average,none,none,known
+  claude,"model:fable",64,"five_hour + seven_day + model:fable",seven_day,projected_exhaustion,298906,"2026-03-19T03:43:45.600Z",seven_day,established,cycle_average,none,none,known
+  claude,seven_day_opus,64,"five_hour + seven_day + seven_day_opus",seven_day,projected_exhaustion,298906,"2026-03-19T03:43:45.600Z",seven_day,established,cycle_average,none,none,known
+  codex,all_models,47,"five_hour + weekly",weekly,through_reset,unknown,unknown,unknown,established,cycle_average,none,none,known
+  codex,"model:gpt-5.1-codex",47,"five_hour + weekly + model:gpt-5.1-codex:5h",weekly,through_reset,unknown,unknown,unknown,established,cycle_average,none,none,known
+  cursor,unresolved,unknown,none,unknown,unknown,unknown,unknown,unknown,unknown,unknown,none,"included_usage + auto_usage + api_usage",unknown
+  copilot,unresolved,unknown,none,unknown,unknown,unknown,unknown,unknown,unknown,unknown,none,"chat + premium_interactions",unknown
+  grok,all_products,67,credits,credits,through_reset,unknown,unknown,unknown,established,cycle_average,none,none,known
+  kimi,all_models,74,"weekly + five_hour",weekly,through_reset,unknown,unknown,unknown,established,cycle_average,none,none,known
+  alibaba,unresolved,unknown,none,unknown,unknown,unknown,unknown,unknown,unknown,none,none,unknown
+help[4]:
+  Default TOON reports effective headroom and usable runway; use --json or --full for reserve diagnostics
   Run `quota-axi --provider claude --json` for JSON output
-  Run `quota-axi --full` to include account and source-attempt details
+  Run `quota-axi --full` to include account, source-attempt, and reserve details
   Run `quota-axi auth` to inspect local auth source availability without printing secrets
 ```
 
@@ -177,6 +174,14 @@ $ quota-axi --provider claude --json
               "behindWindowIds": ["five_hour"],
               "worstReservePercentPoints": -8.2,
               "worstReserveWindowId": "seven_day"
+            },
+            "runway": {
+              "status": "projected_exhaustion",
+              "usableRunwaySeconds": 298906,
+              "projectedExhaustedAt": "2026-03-19T03:43:45.600Z",
+              "limitingWindowId": "seven_day",
+              "projectionConfidence": "established",
+              "projectionBasis": "cycle_average"
             }
           },
           {
@@ -191,6 +196,14 @@ $ quota-axi --provider claude --json
               "behindWindowIds": ["five_hour", "model:fable"],
               "worstReservePercentPoints": -8.2,
               "worstReserveWindowId": "seven_day"
+            },
+            "runway": {
+              "status": "projected_exhaustion",
+              "usableRunwaySeconds": 298906,
+              "projectedExhaustedAt": "2026-03-19T03:43:45.600Z",
+              "limitingWindowId": "seven_day",
+              "projectionConfidence": "established",
+              "projectionBasis": "cycle_average"
             }
           }
         ]
@@ -293,7 +306,7 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 └─────┬─────────┘       └──────┬───────┘
       ▼                        ▼
 ┌───────────────┐       ┌──────────────┐
-│ stale cache   │ ◀───  │ TOON or JSON │
+│ stale cache   │ ◀───  │ TOON/JSON/TUI│
 └───────────────┘       └──────────────┘
 ```
 
@@ -304,28 +317,53 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ## CLI Reference
 
-| Command          | Description                                                |
-| ---------------- | ---------------------------------------------------------- |
-| `quota-axi`      | Report supported local quota windows and entitlement state |
-| `auth`           | Report local auth-source availability, no values           |
-| `update`         | Upgrade quota-axi to the latest published version          |
-| `update --check` | Report current vs. latest without installing               |
+| Command          | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| `quota-axi`      | Report supported local quota windows                 |
+| `auth`           | Report local auth-source availability, no values     |
+| `models`         | Join curated model buckets with local quota evidence |
+| `update`         | Upgrade quota-axi to the latest published version    |
+| `update --check` | Report current vs. latest without installing         |
 
 ### Flags
 
-| Flag                                                       | Description                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------ |
-| `--provider claude,codex,cursor,copilot,grok,kimi,alibaba` | Scope providers                                        |
-| `--json`                                                   | Emit normalized JSON instead of TOON for quota or auth |
-| `--full`                                                   | Include quota account identity and source attempts     |
-| `--allow-keychain-prompt`                                  | Permit macOS Claude Keychain access that could prompt  |
-| `--no-refresh`                                             | Disable local OAuth renewal and credential-file writes |
-| `-h`, `--help`                                             | Print terse [AXI](https://axi.md) help                 |
-| `-v`, `-V`, `--version`                                    | Print version                                          |
+| Flag                                                       | Description                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------ |
+| `--provider claude,codex,cursor,copilot,grok,kimi,alibaba` | Scope providers                                                    |
+| `--json`                                                   | Emit normalized JSON instead of TOON for quota, auth, or models    |
+| `--full`                                                   | Include account, source attempts, and reserve details              |
+| `--tui`                                                    | Render the live human terminal report instead of TOON (quota only) |
+| `--refresh 30s\|5m\|1h`                                    | Live `--tui` refresh interval, default 5m (30s-24h)                |
+| `--once`                                                   | Render one `--tui` frame and exit instead of staying live          |
+| `--allow-keychain-prompt`                                  | Permit macOS Claude Keychain access that could prompt              |
+| `--no-refresh`                                             | Disable local OAuth renewal and credential-file writes             |
+| `--intelligence high\|medium\|low`                         | Filter `models` by editorial intelligence bucket                   |
+| `--sort runway`                                            | Explicitly sort `models` by documented usable-runway evidence      |
+| `-h`, `--help`                                             | Print terse [AXI](https://axi.md) help                             |
+| `-v`, `-V`, `--version`                                    | Print version                                                      |
+
+### Human terminal report (`--tui`)
+
+`quota-axi --tui` renders the same redacted report as a live human terminal view instead of TOON: a two-up provider card grid with thin headroom bars and a `┃` linear-pace marker whenever pace is known. It is presentation only and is not part of the machine-readable contract.
+
+- On an interactive terminal the report stays up and refreshes every 5 minutes until you press `q` (or Ctrl+C), with a `Press q to quit` footer hint. `--refresh` sets the interval (30s-24h) and `--once` renders a single frame. A non-TTY stdout or stdin (pipes, CI, screenshots) always renders one frame and exits.
+- Live frames paint on the alternate screen and repaint immediately on terminal resize; quitting restores the screen and prints the final frame so the last report stays in scrollback.
+- Each live card leads with the `effective[]` rollup (min across bounding windows), colored by headroom: >=50% healthy, 20-50% tight, <20% critical. Per-window rows, including per-model breakouts, are the supporting detail.
+- The bar fill is current headroom; the `┃` marker sits at `pace.timeRemainingPercent`, the fill position of exactly linear burn. Fill ending left of the marker means burning faster than the reset clock. The marker is omitted when pace is unknown.
+- Pace is shown by the bar and marker alone, never as a numeric burn multiple. The runway verdict on the headline reads `on pace ✓` for `through_reset` and `empty in 7h 21m` for `projected_exhaustion`. Two-up rows keep both card bottoms aligned by padding the shorter card inside its border. The JSON and TOON surfaces keep the `through_reset` vocabulary and the full `pace` object.
+- Signed-out and failed providers stay visible as dimmed cards and are excluded from the fleet totals in the header.
+- Width comes from the terminal, clamped to 80-120 columns; below the two-up width the grid reflows to one column. Color honors `NO_COLOR`, `TERM=dumb`, and non-TTY stdout (the glyph skeleton is kept), re-enables with `FORCE_COLOR`, and uses truecolor when `COLORTERM` advertises it, falling back to 256-color then ANSI-16.
+- `--tui` composes with `--provider` scoping and `--full` (account identity and source-attempt footers). It is mutually exclusive with `--json` and only supported by the `quota` command.
 
 ## Output Model
 
-`--json` emits `schemaVersion: 3`.
+The `quota` command's `--json` emits `schemaVersion: 3`.
+
+### Normalized schema contract
+
+The package publishes TypeScript declarations from its package root, so consumers can use `import type { QuotaAxiResponse, ModelsResponse } from "quota-axi"`. The adapter contract is `ProviderAdapter` in and normalized `ProviderQuota` out: adapters report observed quota data, never rank, mutate provider state, or retain raw responses.
+
+`schemaVersion` is command-specific. Additive optional fields do not bump it. A semantic or incompatible shape change does. The `quota` report is version 3, `auth` is version 1, and `models` is version 1.
 
 ### Quota report shape
 
@@ -341,17 +379,18 @@ Claude `identityStatus` is `verified` only when Anthropic returns an authoritati
 
 ### Provider `state`
 
-| Field                | Description                                                              |
-| -------------------- | ------------------------------------------------------------------------ |
-| `status`             | Provider status                                                          |
-| `stale`              | Whether the provider report is stale                                     |
-| `sourcesTried`       | Sources tried for the provider                                           |
-| `refreshedAt`        | Optional refresh timestamp                                               |
-| `error`              | Optional error                                                           |
-| `retryAfter`         | Optional retry-after state                                               |
-| `reason`             | Optional reason                                                          |
-| `remedyCommand`      | Optional remedy command                                                  |
-| `untrustedWindowIds` | Optional identifiers for limits that could not be parsed authoritatively |
+| Field                | Description                                                                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`             | Provider status                                                                                                                                             |
+| `stale`              | Whether the provider report is stale                                                                                                                        |
+| `sourcesTried`       | Sources tried for the provider                                                                                                                              |
+| `refreshedAt`        | Optional refresh timestamp                                                                                                                                  |
+| `error`              | Optional error                                                                                                                                              |
+| `retryAfter`         | Optional retry-after state                                                                                                                                  |
+| `reason`             | Optional reason                                                                                                                                             |
+| `remedyCommand`      | Optional remedy command                                                                                                                                     |
+| `untrustedWindowIds` | Optional identifiers for limits that could not be parsed authoritatively                                                                                    |
+| `authStatus`         | Optional machine-readable local auth usability: `usable`, `expired_refreshable`, or `unusable`. Distinct from quota freshness and from human `error` prose. |
 
 When stale or unavailable quota is likely fixable by a one-time macOS Keychain grant, `state.reason` is `keychain_access_required`, `state.remedyCommand` is `quota-axi --allow-keychain-prompt`, and JSON includes an agent-directed `help` entry.
 When Grok's local OIDC session is near expiry, quota-axi renews it on read using the local refresh grant and atomically updates the auth file. If `--no-refresh` is set, the expired-token report retains `state.error: Grok access token expired`, `state.reason: credentials_expired`, and `state.remedyCommand: grok`; rerun without `--no-refresh` or use the provider CLI. A rejected renewal reports `auth_required` with a non-secret error, does not send the dead access token, and does not use stale cache as a substitute.
@@ -368,6 +407,8 @@ The coding catalog metadata includes `qwen3.8-max` (Limited-time Night 50% Off; 
 
 When no authoritative source is configured, authentication is missing/expired, the console requires login, or a response is unavailable/malformed, Alibaba reports an actionable non-fresh error or, for Coding Plan only, an explicit active-plan-without-windows state. It never substitutes an entitlement or locally estimated percentage. The `pi:alibaba-plan` `refresh` value remains endpoint configuration rather than a refresh grant, so expired credentials fail closed; `--no-refresh` remains a read-only escape hatch.
 
+Grok `state.authStatus` remains distinct from quota freshness: `expired_refreshable` is soft expiry, while `unusable` indicates no locally usable source. When consumer windows are unavailable despite a usable Pi or CLI credential, the report preserves `authStatus: usable` rather than claiming sign-out.
+
 Claude credential failures without a usable access token preserve the precise `credentials_missing` or `credentials_invalid` error. A usage response with HTTP 401/403 reports `Claude sign-in required`. These definitive failures return no windows and retire the Claude cache instead of masking current authentication state with stale quota.
 
 ### Quota windows
@@ -377,13 +418,13 @@ Claude credential failures without a usable access token preserve the precise `c
 | Required  | `id`, `label`, `kind`                                                                                                                          |
 | Optional  | `accounting`, raw `used`/`limit`/`multiplier`, percentages, `startsAt`, reset fields, `windowSeconds`, credit-spend fields, and derived `pace` |
 
-Do not interpret a model window's percentage in isolation. `quotaSemantics.effectiveAvailability` reports the effective percentage for each understood scope, the complete `boundedBy` window set used to compute it, and the currently limiting window IDs. `all_models` applies to any model without a more specific scope; a matching `model:*` scope includes both account and model-specific bounds. Grok uses the analogous `all_products` and `product:*` scopes.
+Do not interpret a model window's percentage in isolation. `quotaSemantics.effectiveAvailability` reports the effective percentage for each understood scope, the complete `boundedBy` window set used to compute it, the currently limiting window IDs, and an effective `runway` aggregate. `all_models` applies to any model without a more specific scope; a matching `model:*` scope includes both account and model-specific bounds. Grok uses the analogous `all_products` and `product:*` scopes.
 
 A model-specific `scope` names the model window or the shared model prefix when multiple period windows describe one Codex model.
 
 `quotaSemantics.status` is `known` only when quota-axi understands the relationships needed for the reported scopes. A non-definitive availability entry omits `effectivePercentRemaining`. Unfamiliar vendor windows produce `partial` or `unknown` semantics and are named in `unresolvedWindowIds`; an empty provider report is `unknown` without inventing an unresolved window.
 
-For every stale provider report, raw windows remain available for diagnostics but effective availability is always `unknown` and omits `effectivePercentRemaining` and `limitingWindowIds`. Window pace is `unknown` with reason `stale`, and each effective pace summary is also `unknown`. Routing agents must not treat a stale raw percentage as current headroom.
+For every stale provider report, raw windows remain available for diagnostics but effective availability is always `unknown` and omits `effectivePercentRemaining` and `limitingWindowIds`. Window pace is `unknown` with reason `stale`, and each effective pace summary and effective `runway` is also `unknown` with its unmeasurable bounds named. Routing agents must not treat a stale raw percentage as current headroom.
 
 ### Pace signals
 
@@ -419,9 +460,24 @@ Pace is calculated only from trusted cycle evidence:
 - Otherwise use provider-owned `windowSeconds` with `resetsAt` (Codex durations; Claude fixed 5h/7d; Kimi fixed 5h/weekly).
 - Do not infer monthly, rolling, or unlabeled periods.
 
-Default TOON keeps token cost low: window rows expose `pace` status and signed `reserve` only. Full projection evidence is in `--json`. Pace is recomputed on every report from `generatedAt` and is not written to the quota cache.
+Default TOON keeps token cost low: window rows expose `pace` status, while effective rows make effective headroom and usable runway primary. It intentionally omits raw numeric reserve columns. `--full` adds reserve and per-window projection diagnostics to TOON, and `--json` always retains them. Pace is recomputed on every report from `generatedAt` and is not written to the quota cache.
 
 Each `effectiveAvailability` entry also carries a compact `pace` summary over **every** bounding window for that scope (not only the current lowest-remaining limiter): per-status window lists, including `aheadWindowIds` and `unknownWindowIds`, plus `worstReservePercentPoints` / `worstReserveWindowId` (most negative signed reserve among known-pace windows). Different windows keep their own reset horizons; quota-axi does not invent one synthetic reset for a scope. This is factual inspectable data, never a provider/model routing recommendation.
+
+### Effective usable runway
+
+`effectiveAvailability[].runway` is an optional, additive `schemaVersion: 3` field derived from every authoritative `boundedBy` window using the report's single `generatedAt` clock. It is completion-risk evidence, not a score or recommendation.
+
+| `runway.status`        | Meaning                                                                                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `exhausted_now`        | A bounding window reports zero remaining now. `usableRunwaySeconds` is `0`; `limitingWindowId` names that bound.                                                                                                                                 |
+| `projected_exhaustion` | Every bound is measurable and one or more cycle-average projections exhaust before their own resets. The earliest one supplies `usableRunwaySeconds`, `projectedExhaustedAt`, `limitingWindowId`, `projectionConfidence`, and `projectionBasis`. |
+| `through_reset`        | Every measurable bound reaches its own current-cycle reset before projected exhaustion. There is deliberately no synthetic finite deadline or combined reset timestamp.                                                                          |
+| `unknown`              | A stale, missing, malformed, or otherwise unmeasurable authoritative bound prevents a sound aggregate conclusion. `unmeasurableWindowIds` names the blockers.                                                                                    |
+
+`usableRunwaySeconds` is nonnegative and is present only for finite results. `projectionConfidence` is `early` or `established`; `projectionBasis` is currently `cycle_average`. Zero observed usage with a valid current cycle proves `through_reset` under that same cycle-average basis. Named model or product windows are additional bounds only for their applicable scopes, so they can become the effective limiting window without changing other scopes.
+
+A bounding window with no `resetsAt` at all has not been triggered yet (e.g. a Claude `five_hour` window before its first request this window) rather than being a data gap. When that untriggered window also reports zero usage (100% remaining, 0% used), it is treated as fully available and excluded from `unmeasurableWindowIds`, so it never forces `runway.status: unknown` by itself; the report's other bounding windows still determine the aggregate. Its 100% can still contribute to `effectivePercentRemaining` as a headroom bound. quota-axi never synthesizes a `resetsAt` or starts the countdown client-side. A missing `resetsAt` paired with any other usage shape (unknown usage, or nonzero usage without an active clock) is a real data gap, not "not yet triggered," and still fails closed into `unmeasurableWindowIds` - alongside stale data, missing usage percent, an expired or malformed `resetsAt` that is actually present, and a missing projection when usage is nonzero and the cycle is known.
 
 ### Quota enums
 
@@ -433,6 +489,7 @@ Each `effectiveAvailability` entry also carries a compact `pace` summary over **
 | Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`             |
 | Window pace statuses             | `ahead`, `on_pace`, `behind`, or `unknown`                                   |
 | Effective pace statuses          | `ahead`, `on_pace`, `behind`, `mixed`, or `unknown`                          |
+| Effective runway statuses        | `exhausted_now`, `projected_exhaustion`, `through_reset`, or `unknown`       |
 | Pace projection confidence       | `early` or `established`                                                     |
 | Pace cycle basis                 | `starts_at_resets_at` or `window_seconds`                                    |
 | Quota relationship statuses      | `known`, `partial`, or `unknown`                                             |
@@ -453,8 +510,19 @@ Source attempts can include `credentialPresent` when a non-secret probe confirms
 | Alibaba Token Plan     | Uses only the explicit `ALIBABA_TOKEN_PLAN_COOKIE` console source (`web`). Reports percentage-based `five_hour`, `weekly`, and additional server-provided periods as `accounting: token_plan`, preserving reset timestamps when supplied and never inventing counters, limits, credits, or resets.                                                                                                                                                                                                                                                                     |
 | Alibaba Coding Plan    | Uses the legacy configured regional cookie console path (`web`), then `pi:alibaba-plan` or documented API-key aliases (`api`). Reports server-defined `five_hour`, `weekly`, and `monthly` request-quota windows, reset timestamps, raw counters, plan/instance/model metadata, and multipliers when present. Token Plan accounting is not treated as request quota; unavailable sources remain explicit and windowless.                                                                                                                                               |
 | Grok                   | Reports the shared `credits` window, optional product-scoped `product:<slug>` windows, the current-period `startsAt` and reset, and optional prepaid credit balance from the consumer Usage-page operation. Top-level `credits.remaining` is prepaid/on-demand balance, distinct from the shared period `windows` credits percentage used for effective availability. Pace prefers the startsAt/resetsAt pair.                                                                                                                                                         |
+| Grok                   | With a usable Grok CLI or house Pi `xai` bearer, can report the shared `credits` window, optional product-scoped `product:<slug>` windows, the current-period `startsAt` and reset, and optional prepaid credit balance from the consumer Usage-page operation. Pi-only model auth can still establish usability when consumer windows are unavailable. Top-level `credits.remaining` is prepaid/on-demand balance, distinct from the shared period `windows` credits percentage used for effective availability. Pace prefers the startsAt/resetsAt pair.             |
 | Grok proto3 zero       | For the exact consumer operation only, an omitted usage float is the official proto3 zero when a valid weekly or monthly current period proves the config is present; quota-axi reports `0` used and `100` remaining rather than deriving usage from money.                                                                                                                                                                                                                                                                                                            |
 | Kimi                   | Reports the principal `weekly` subscription window (with trusted 604,800s duration) plus every valid self-described limit in wire order. Only a limit whose normalized duration is exactly 18,000 seconds is identified as `five_hour`; future limits remain `limit:<index>` unknown windows.                                                                                                                                                                                                                                                                          |
+
+### Model catalog and `models`
+
+`quota-axi models [--intelligence high|medium|low] [--sort runway] [--provider ...] [--json|--full]` joins a reviewed catalog of native Claude, Codex, Grok, and Kimi models to the provider's effective quota evidence. It queries those four catalog-backed providers by default and accepts only those providers in an explicit models scope. Cursor and Copilot are excluded from this first catalog because their hosted model availability and quota relationships are plan-dependent and currently unknown.
+
+Catalog buckets are coarse editorial classifications relative to the current frontier, not scores. They are curated from public provider material and public leaderboards, including [Artificial Analysis](https://artificialanalysis.ai/) as an informing source. quota-axi does not reproduce Artificial Analysis scores, has no runtime Artificial Analysis dependency, and never commits an Artificial Analysis key. `scripts/refresh-model-kb.ts` is a maintainer-only review aid: it may use a private `AA_API_KEY` to suggest changes, but it never writes the catalog.
+
+Every models response includes `catalog.version` and `catalog.provenance`; callers must treat catalog freshness and unmapped `unmatchedWindowIds` as explicit uncertainty. A model row exposes the applicable effective quota scope and provider state. When no model-specific scope is known, the provider account scope remains the evidence rather than an invented model limit.
+
+Default model order is deterministic and non-preferential: provider, then model ID. `--sort runway` is an explicit, evidence-preserving comparator only: finite `usableRunwaySeconds` descend, then `through_reset`, then `exhausted_now`, with unknown evidence last. Equal evidence appears in `sort.tieGroups`; no hidden score or model, provider, harness, credential, or route recommendation is implied. The comparator registry is intentionally extensible for a future separately sourced `cost` comparator, which is not shipped in v1.
 
 ### `auth --json` shape
 
@@ -468,8 +536,8 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 | Name                 | Values                                                                                                                                                                                                                                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth source statuses | `available`, `missing`, `invalid`, `expired`, or `skipped`                                                                                                                                                                                                                                                   |
-| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cli-rpc`, `pi:xai`, `pi:kimi-coding`, `kimi-code-cli`, `cookie:alibaba-token-plan`, `cookie:alibaba-coding-plan`, `env:alibaba-api-key`, and `pi:alibaba-plan`; multi-seat Claude additionally uses `claude:<seat>:<source>` |
+| Auth source statuses | `available`, `missing`, `invalid`, `expired`, `skipped`, or `error`                                                                                                                                                                                                                                         |
+| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cli-rpc`, `pi:xai`, `pi:kimi-coding`, `kimi-code-cli`, `cookie:alibaba-token-plan`, `cookie:alibaba-coding-plan`, `env:alibaba-api-key`, and `pi:alibaba-plan`; multi-seat Claude additionally uses `claude:<seat>:<source>`
 
 ## Security Posture
 
@@ -477,13 +545,24 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 | Provider       | Credential sources read                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json`, `~/.claude/.credentials.json`, the platform-delimited `$CLAUDE_CONFIG_DIRS` seat directories, or the documented `/opt/claude` house layouts; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls |
+| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; the platform-delimited `$CLAUDE_CONFIG_DIRS` seat directories or documented `/opt/claude` house layouts; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls |
 | Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                                                                                                                                |
 | Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                                                                                                                                           |
 | GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                                                                                                                                         |
-| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; only when none of those is configured and the default session is missing or expired, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth grant                                                                                                                                                       |
+| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`; when that session is unavailable, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) `xai` OAuth or literal API-key source                                                                                                                                                           |
 | Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a `kimi-coding` API key or OAuth access token first, then an official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`); near-expiry OAuth grants renew on read by default                                                                                                        |
 | Alibaba        | `$ALIBABA_TOKEN_PLAN_COOKIE` first, then `$ALIBABA_CODING_PLAN_COOKIE`, Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) exact `alibaba-plan` OAuth entry, and `$ALIBABA_CODING_PLAN_API_KEY`, `$ALIBABA_QWEN_API_KEY`, or `$DASHSCOPE_API_KEY`; Token Plan usage accepts only its explicit cookie source, and Alibaba's endpoint configuration JSON in `refresh` is not treated as a refresh grant                       |
+
+<!-- upstream table variant folded into the Alibaba-preserving table:
+| Provider       | Credential sources read                                                                                                                                                                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value pinned to Claude Code's validated current-user account, with `--allow-keychain-prompt` or, after a profile-and-account-scoped non-secret access marker exists, on plain calls |
+| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                                                                                    |
+| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                                                                                               |
+| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                                                                                             |
+| Grok           | Grok CLI session auth from `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`, plus Pi's independent `$PI_CODING_AGENT_DIR/auth.json` `xai` entry (default `~/.pi/agent/auth.json`) for OAuth or literal API-key model auth                                                  |
+| Kimi           | Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) for a literal `kimi-coding` API key or unexpired OAuth access token first, then a fresh official Kimi Code CLI access token from `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `$HOME/.kimi-code/credentials/kimi-code.json`)                        |
+-->
 
 ### Provider notes
 
@@ -509,7 +588,7 @@ Fresh multi-seat snapshots are reused for up to 60 seconds from the normal quota
 **Codex**
 
 - Codex `auth.json` support is OAuth-token only; API key values such as `OPENAI_API_KEY` are treated as invalid for quota usage calls and are not sent to ChatGPT usage endpoints.
-- A valid access token remains usable when only the JWT `id_token` metadata is expired. Codex access-token renewal is not enabled because its refresh endpoint is not a stable supported path here; an expired access grant falls through to the read-only CLI-RPC probe.
+- Access-token JWT usability is authoritative for the OAuth bearer probe. An expired `id_token` alone does not mark `auth-json` expired or skip OAuth; identity-token expiry is diagnostic metadata only. A missing or expired `access_token` still skips OAuth and preserves the read-only CLI fallback.
 - It may run `codex -s read-only -a untrusted app-server` for Codex JSON-RPC fallback.
 - Set `QUOTA_AXI_CODEX_BINARY` to an absolute executable path when the fallback must use a specific Codex installation. Auth inspection and the app-server probe resolve the same path, and an invalid override fails closed instead of consulting `PATH`.
 
@@ -535,6 +614,20 @@ Fresh multi-seat snapshots are reused for up to 60 seconds from the normal quota
 - It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) with a strict 64 KiB cap and guaranteed descriptor cleanup. It accepts only the exact `kimi-coding` entry, either with `type: "api_key"` and a nonempty, control-byte-free literal string `key`, or with `type: "oauth"` and an equally constrained literal `access` token; any other `type` remains `unsupported_credential_type`.
 - An OAuth `access` token whose `expires` instant is within 30 seconds is renewed through `https://auth.kimi.com/api/oauth/token` when a refresh grant is present, using the shared lock-and-atomic-write path. Invalid or revoked grants fail closed as `auth_required`; the dead token is never sent and stale Kimi cache is not substituted. `--no-refresh` reports the expired source without reading the refresh token.
 - If Pi has no supported credential, it reads the official Kimi Code CLI credential at `$KIMI_CODE_HOME/credentials/kimi-code.json`, defaulting to `$HOME/.kimi-code/credentials/kimi-code.json`. Its OAuth access token is renewed within its 60-second freshness window by the same token endpoint and atomic persistence path, unless refresh is disabled.
+<!-- Upstream's independent-source auth classification is retained here as an implementation note:
+- It checks two independent usability sources: Grok CLI session auth and Pi's `xai` credential in `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`). Grok is locally usable when either source is usable, including asymmetric cases where the other source is absent, malformed, stale, or expired. True sign-out requires every applicable source to be unavailable or definitively rejected; `authStatus: unusable` can also accompany an indeterminate local credential-resolution failure, but that failure remains `state.status: error` rather than `auth_required`.
+- Grok CLI session-scoped auth is preferred for the consumer credits probe. It selects session-scoped entries instead of API-key entries and sends a read-only gRPC-web request to Grok's consumer `grok_api_v2.GrokBuildBilling.GetGrokCreditsConfig` operation. Observed Grok CLI OIDC access tokens are short-lived (about six hours on current CLI sessions) while a refresh token remains present for CLI-owned recovery.
+- Session-scoped Grok auth includes web/session scopes and OIDC records scoped to `auth.x.ai` with `auth_mode` or `authMode` set to `oidc`, including scope keys with `::<client id>` suffixes.
+- Pi `xai` auth follows Pi's auth-file contract: `type: "oauth"` with literal `access` / optional `refresh` / `expires`, or `type: "api_key"` with a literal `key`. Environment, template, and command references are not resolved. Ambient `XAI_API_KEY` is not a quota-axi credential source. A locally usable Pi credential establishes model usability even when it cannot expose consumer quota windows; that case is `authStatus: usable` with empty windows, not logged out. Because quota-axi makes no Pi model request, this local classification does not assert that the credential was accepted remotely.
+- The Grok CLI owns OIDC access-token refresh and rewrites `~/.grok/auth.json`; Pi owns refresh of its own `auth.json` OAuth entries. quota-axi only reads the resulting sessions and never refreshes tokens, launches Grok or Pi, or writes either auth file. Expired-session classification and recovery fields are documented under [Provider `state`](#provider-state).
+- Source availability is distinct from remote validity: local expiry gates which bearer is offered to the consumer probe, while HTTP 401/403 and auth-class gRPC codes are definitive rejection. Transient network/rate-limit failures stay non-auth and remain stale-cache eligible for same-source web snapshots.
+- It does not send browser cookies, launch the Grok CLI, refresh credentials, perform OAuth, retain raw response bodies, or derive usage from monetary fields.
+
+**Kimi**
+
+- It opens Pi's `$PI_CODING_AGENT_DIR/auth.json` (default `~/.pi/agent/auth.json`) read-only with a strict 64 KiB cap and guaranteed descriptor cleanup. It accepts only the exact `kimi-coding` entry, either `type: "api_key"` with a nonempty, control-byte-free literal string `key`, or `type: "oauth"` with such an `access` token whose optional `expires` is still in the future; any other type is unsupported, an expired OAuth record is reported as expired (with whether a refresh token exists) and never refreshed, and malformed or oversized files, unsafe shapes, and environment, template, or command references are unavailable without resolving or executing their values. Auth and quota inspection do not create, rewrite, or otherwise manage Pi provider state.
+- If Pi has no supported credential, it reads the official Kimi Code CLI credential at `$KIMI_CODE_HOME/credentials/kimi-code.json`, defaulting to `$HOME/.kimi-code/credentials/kimi-code.json`. It accepts only a non-empty `access_token` whose Unix-seconds `expires_at` (a JSON number or numeric string) is more than 60 seconds in the future.
+  -->
 - The Pi source always has priority. Ambient API-key environment variables are not a credential source. Transport, decoding, timeout, cancellation, and server failures do not trigger credential switching.
 - It sends one redirect-disabled `GET` to the fixed `https://api.kimi.com/coding/v1/usages` endpoint with a 15 second total deadline and a 262,144-byte decoded-body cap.
 - It never accepts a custom Kimi origin, launches Pi or Kimi, makes a model request, creates a device ID, imports cookies, sends device identity, retains raw responses, or exposes account, plan, token, or fingerprint data. Refresh tokens are sent only to the fixed first-party token endpoint and are never returned in reports.

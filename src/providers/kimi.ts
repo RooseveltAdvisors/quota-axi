@@ -122,7 +122,7 @@ export function createKimiAdapter(
         piInspection === "unsupported"
           ? "unsupported_credential_type"
           : piInspection === "expired"
-            ? "pi_credential_expired"
+            ? "pi_kimi_credential_expired"
             : piInspection === "error"
               ? "credential_resolution_failed"
               : undefined;
@@ -152,8 +152,7 @@ export function createKimiAdapter(
             status:
               piInspection === "available"
                 ? "available"
-                : // A lapsed grant remains distinguishable from missing auth.
-                  piInspection === "expired"
+                : piInspection === "expired"
                   ? "expired"
                   : piError
                     ? "invalid"
@@ -199,7 +198,7 @@ async function acquireKimiQuota(
     let credentialSource: string;
 
     if (piResolution.status === "available") {
-      credential = piResolution.apiKey;
+      credential = piResolution.credential;
       credentialSource = PI_KIMI_CREDENTIAL_SOURCE;
       attempts = [{ source: credentialSource, status: "failed" }];
     } else {
@@ -373,7 +372,7 @@ function credentialFailureFor(
     return new KimiFailure(
       resolution.refreshFailed
         ? "kimi_credential_refresh_failed"
-        : "pi_credential_expired",
+        : "pi_kimi_credential_expired",
       {
         status: "auth_required",
         staleEligible: refreshFailed && !refreshDefinitive,

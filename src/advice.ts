@@ -35,8 +35,9 @@ export function annotateQuotaAdvice(
 export function quotaHelpLines(response: QuotaAxiResponse): string[] {
   return [
     ...(response.help ?? []),
+    "Default TOON reports effective headroom and usable runway; use --json or --full for reserve diagnostics",
     "Run `quota-axi --provider claude --json` for JSON output",
-    "Run `quota-axi --full` to include account and source-attempt details",
+    "Run `quota-axi --full` to include account, source-attempt, and reserve details",
     "Run `quota-axi auth` to inspect local auth source availability without printing secrets",
   ];
 }
@@ -85,7 +86,8 @@ function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   if (provider.state.error === GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR) {
     return PI_TOKEN_REFRESH_REMEDY_COMMAND;
   }
-  return provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
+  return provider.state.authStatus === "expired_refreshable" &&
+    provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
     ? GROK_TOKEN_REFRESH_REMEDY_COMMAND
     : undefined;
 }
