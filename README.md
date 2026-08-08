@@ -33,6 +33,10 @@ Legacy markers created before account-pinned lookup are not reused, so an upgrad
 
 Grok and Kimi OAuth access tokens are renewed on read when they are near expiry. Renewal is locked and atomically persisted to the local auth file; refresh tokens never appear in quota output. `--no-refresh` (or `QUOTA_AXI_NO_REFRESH=1`) disables those writes and sends no refresh request. A separate timer can remain as an optional backup for multi-process races, but is not required for normal freshness.
 
+### User env file
+
+Bare `quota-axi` automatically loads KEY=VALUE pairs from `$XDG_CONFIG_HOME/quota-axi/env`, or `~/.config/quota-axi/env` when `XDG_CONFIG_HOME` is unset, before reading provider auth. Blank lines and `#` comments are ignored, unreadable or missing files are skipped, and variables already set in the process environment are never overridden. Set `QUOTA_AXI_ENV_FILE` to use another file. The `quota-axi-with-secrets` wrapper remains an optional convenience rather than a requirement.
+
 ```sh
 $ npx -y quota-axi
 bin: ~/.npm/_npx/.../quota-axi

@@ -20,6 +20,9 @@ const originalGrokProvider = PROVIDERS.grok;
 const originalKimiProvider = PROVIDERS.kimi;
 const originalAlibabaProvider = PROVIDERS.alibaba;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalQuotaAxiEnvFile = process.env.QUOTA_AXI_ENV_FILE;
+const originalAlibabaTokenPlanCookie = process.env.ALIBABA_TOKEN_PLAN_COOKIE;
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -32,6 +35,14 @@ afterEach(() => {
   PROVIDERS.alibaba = originalAlibabaProvider;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  if (originalQuotaAxiEnvFile === undefined)
+    delete process.env.QUOTA_AXI_ENV_FILE;
+  else process.env.QUOTA_AXI_ENV_FILE = originalQuotaAxiEnvFile;
+  if (originalAlibabaTokenPlanCookie === undefined)
+    delete process.env.ALIBABA_TOKEN_PLAN_COOKIE;
+  else process.env.ALIBABA_TOKEN_PLAN_COOKIE = originalAlibabaTokenPlanCookie;
+  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
   process.exitCode = undefined;
@@ -146,6 +157,37 @@ describe("argv normalization", () => {
 });
 
 describe("CLI quota rendering", () => {
+  it("loads the user env file before provider auth reads", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "quota-axi-cli-env-"));
+    const envFile = join(tempDir, "env");
+    process.env.QUOTA_AXI_ENV_FILE = envFile;
+    process.env.XDG_CACHE_HOME = join(tempDir, "cache");
+    delete process.env.ALIBABA_TOKEN_PLAN_COOKIE;
+    writeFileSync(envFile, "ALIBABA_TOKEN_PLAN_COOKIE=cli-cookie-fixture\n");
+    let observedCookie: string | undefined;
+    PROVIDERS.alibaba = {
+      id: "alibaba",
+      label: "Alibaba",
+      async fetchQuota() {
+        observedCookie = process.env.ALIBABA_TOKEN_PLAN_COOKIE;
+        return {
+          provider: "alibaba",
+          label: "Alibaba",
+          source: "web",
+          windows: [],
+          state: { status: "fresh", stale: false, sourcesTried: ["web"] },
+        };
+      },
+      async inspectAuth() {
+        return { provider: "alibaba", sources: [] };
+      },
+    };
+
+    await capture(["--provider", "alibaba"]);
+
+    expect(observedCookie).toBe("cli-cookie-fixture");
+  });
+
   it("renders live quota when cache persistence fails", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "quota-axi-cli-cache-"));
     const blockedCacheRoot = join(tempDir, "cache-root");
