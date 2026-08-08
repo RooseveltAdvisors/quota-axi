@@ -81,6 +81,13 @@ export async function runLiveTui<T>({
   let stdinResumed = false;
   let alternateScreenEntered = false;
   let value: T | undefined;
+  const bestEffort = (action: () => void): void => {
+    try {
+      action();
+    } catch {
+      return;
+    }
+  };
   try {
     stopResize = io.onResize?.(() => {
       notify("resize");
@@ -128,12 +135,24 @@ export async function runLiveTui<T>({
       }
     }
   } finally {
-    if (alternateScreenEntered) io.stdout.write(LEAVE_SCREEN);
-    if (dataSubscribed) io.stdin.off("data", onData);
-    if (rawModeSet) io.stdin.setRawMode?.(false);
-    if (stdinResumed) io.stdin.pause?.();
-    stopResize?.();
-    stopSignal?.();
+    bestEffort(() => {
+      if (alternateScreenEntered) io.stdout.write(LEAVE_SCREEN);
+    });
+    bestEffort(() => {
+      if (dataSubscribed) io.stdin.off("data", onData);
+    });
+    bestEffort(() => {
+      if (rawModeSet) io.stdin.setRawMode?.(false);
+    });
+    bestEffort(() => {
+      if (stdinResumed) io.stdin.pause?.();
+    });
+    bestEffort(() => {
+      stopResize?.();
+    });
+    bestEffort(() => {
+      stopSignal?.();
+    });
   }
   return value;
 }
