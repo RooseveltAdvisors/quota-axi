@@ -145,30 +145,6 @@ describe("Claude multi-seat quota", () => {
     ).toHaveLength(3);
   });
 
-  it("preserves every seat name when all multi-seat requests fail", async () => {
-    const arcs = seat("arcs");
-    const jr = seat("jr");
-    const nyu = seat("nyu");
-    process.env.CLAUDE_CONFIG_DIRS = [arcs, jr, nyu].join(":");
-    const fetchMock = vi.fn(async () => {
-      throw new TypeError("seat network unavailable");
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { fetchQuota } = await import("../../src/providers/claude.js");
-    const result = await fetchQuota({ allowKeychainPrompt: false });
-
-    expect(result).toMatchObject({
-      label: "Claude (arcs, jr, nyu)",
-      state: { status: "error" },
-    });
-    expect(result.attempts?.map(({ source }) => source)).toEqual([
-      "claude:arcs",
-      "claude:jr",
-      "claude:nyu",
-    ]);
-  });
-
   it("falls back to OAuth usage when probe headers are unavailable", async () => {
     const arcs = seat("arcs");
     const jr = seat("jr");

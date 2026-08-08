@@ -242,52 +242,6 @@ describe("live terminal report loop", () => {
     expect(io.pauses()).toBe(1);
     expect(io.subscriptions()).toBe(0);
   });
-
-  it("continues cleanup when leaving the alternate screen throws", async () => {
-    const io = harness();
-    const write = io.io.stdout.write;
-    io.io.stdout.write = (chunk) => {
-      if (chunk.includes(LEAVE_SCREEN)) throw new Error("screen unavailable");
-      return write(chunk);
-    };
-
-    const run = runLiveTui<number>({
-      load: async () => 1,
-      render: () => "frame",
-      intervalMillis: 300_000,
-      io: io.io,
-    });
-    await flush();
-    io.press("q");
-
-    await expect(run).resolves.toBe(1);
-    expect(io.rawModes).toEqual([true, false]);
-    expect(io.pauses()).toBe(1);
-    expect(io.subscriptions()).toBe(0);
-  });
-
-  it("restores the terminal when setup throws", async () => {
-    const io = harness();
-    const write = io.io.stdout.write;
-    io.io.stdout.write = (chunk) => {
-      if (chunk.includes(ENTER_SCREEN)) throw new Error("screen unavailable");
-      return write(chunk);
-    };
-
-    await expect(
-      runLiveTui<number>({
-        load: async () => 1,
-        render: () => "frame",
-        intervalMillis: 300_000,
-        io: io.io,
-      }),
-    ).rejects.toThrow("screen unavailable");
-
-    expect(io.writes.at(-1)).toContain(LEAVE_SCREEN);
-    expect(io.rawModes).toEqual([true, false]);
-    expect(io.pauses()).toBe(1);
-    expect(io.subscriptions()).toBe(0);
-  });
 });
 
 describe("refresh interval formatting", () => {

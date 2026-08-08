@@ -1,4 +1,3 @@
-import { splitClaudeSeatScope } from "./claude-scope.js";
 import { MODEL_CATALOG } from "./model-kb.js";
 import type {
   EffectiveAvailability,
@@ -69,7 +68,7 @@ export function createModelsResponse(
         (options.intelligence === undefined ||
           entry.intelligence === options.intelligence),
     )
-    .flatMap((entry) => modelRecords(entry, providers.get(entry.provider)!))
+    .map((entry) => modelRecord(entry, providers.get(entry.provider)!))
     .sort(compareModelIdentity);
   const unmatchedWindowIds = quota.providers.flatMap((provider) =>
     unmatchedModelWindowIds(provider, catalog.entries),
@@ -152,123 +151,55 @@ export function validateModelCatalog(catalog: ModelCatalog): void {
     if (seen.has(key)) throw new Error(`duplicate model catalog entry: ${key}`);
     seen.add(key);
     for (const windowId of entry.windowIds ?? []) {
-      if (!/^(?:model:[a-z0-9][a-z0-9_.:-]*|seven_day_opus)$/i.test(windowId)) {
+      if (!/^model:[a-z0-9][a-z0-9_.:-]*$/i.test(windowId)) {
         throw new Error(`model catalog window id is invalid: ${windowId}`);
       }
     }
   }
 }
 
-type ModelEvidence = {
-  effective: EffectiveAvailability;
-  seat?: string;
-};
-
-function modelRecords(
+function modelRecord(
   entry: ModelCatalogEntry,
   provider: ProviderQuota,
-): ModelQuotaRecord[] {
-  const evidence = availabilityFor(entry, provider);
-  if (evidence.length === 0) {
-    return [
-      {
-        provider: entry.provider,
-        id: entry.id,
-        label: entry.label,
-        intelligence: entry.intelligence,
-        quotaScopes: [],
-        state: stateSummary(provider),
-      },
-    ];
-  }
-  return evidence.map(({ effective, seat }) => ({
+): ModelQuotaRecord {
+  const effective = availabilityFor(entry, provider);
+  return {
     provider: entry.provider,
     id: entry.id,
     label: entry.label,
     intelligence: entry.intelligence,
-    ...(seat === undefined ? {} : { seat }),
-    quotaScopes: [effective.scope],
-    effective,
+    quotaScopes: effective ? [effective.scope] : [],
+    ...(effective ? { effective } : {}),
     state: stateSummary(provider),
-  }));
+  };
 }
 
 function availabilityFor(
   entry: ModelCatalogEntry,
   provider: ProviderQuota,
-): ModelEvidence[] {
+): EffectiveAvailability | undefined {
   const availability = provider.quotaSemantics?.effectiveAvailability ?? [];
-  const seatNames =
-    provider.provider === "claude"
-      ? claudeSeatNames(provider, availability)
-      : [];
-
-  if (seatNames.length > 0) {
-    return seatNames.flatMap((seat) => {
-      const specific = (entry.windowIds ?? [])
-        .map((windowId) => normalizedModelScope(windowId))
-        .map((scope) =>
-          availability.find(
-            (candidate) => candidate.scope === `${seat}:${scope}`,
-          ),
-        )
-        .find((candidate): candidate is EffectiveAvailability =>
-          Boolean(candidate),
-        );
-      const effective =
-        specific ??
-        availability.find(
-          (candidate) => candidate.scope === `${seat}:all_models`,
-        );
-      return effective ? [{ effective, seat }] : [];
-    });
-  }
-
   for (const windowId of entry.windowIds ?? []) {
     const found = availability.find(
       (candidate) => candidate.scope === normalizedModelScope(windowId),
     );
-    if (found) return [{ effective: found }];
+    if (found) return found;
   }
-  const fallback = availability.find(
+  return availability.find(
     (candidate) =>
       candidate.scope === "all_models" || candidate.scope === "all_products",
   );
-  return fallback ? [{ effective: fallback }] : [];
-}
-
-function claudeSeatNames(
-  provider: ProviderQuota,
-  availability: EffectiveAvailability[],
-): string[] {
-  const names = new Set<string>();
-  for (const scope of [
-    ...provider.windows.map(({ id }) => normalizedModelScope(id)),
-    ...availability.map(({ scope }) => normalizedModelScope(scope)),
-  ]) {
-    const split = splitClaudeSeatScope(scope);
-    if (split) names.add(split.seat);
-  }
-  return [...names].sort((left, right) => left.localeCompare(right));
 }
 
 function unmatchedModelWindowIds(
   provider: ProviderQuota,
   entries: ModelCatalogEntry[],
 ): string[] {
-  const seatNames =
-    provider.provider === "claude" ? claudeSeatNames(provider, []) : [];
   const knownScopes = new Set(
     entries
       .filter((entry) => entry.provider === provider.provider)
-      .flatMap((entry) =>
-        (entry.windowIds ?? [])
-          .map(normalizedModelScope)
-          .flatMap((scope) => [
-            scope,
-            ...seatNames.map((seat) => `${seat}:${scope}`),
-          ]),
-      ),
+      .flatMap((entry) => entry.windowIds ?? [])
+      .map(normalizedModelScope),
   );
   const unmatchedScopes = new Set<string>();
   return provider.windows
@@ -308,8 +239,7 @@ function compareModelIdentity(
 ): number {
   return (
     left.provider.localeCompare(right.provider) ||
-    left.id.localeCompare(right.id) ||
-    (left.seat ?? "").localeCompare(right.seat ?? "")
+    left.id.localeCompare(right.id)
   );
 }
 
@@ -342,11 +272,7 @@ function tieGroups(
     const group: ModelReference[] = [];
     while (index < models.length && comparator.tieKey(models[index]!) === key) {
       const model = models[index++]!;
-      group.push({
-        provider: model.provider,
-        id: model.id,
-        ...(model.seat === undefined ? {} : { seat: model.seat }),
-      });
+      group.push({ provider: model.provider, id: model.id });
     }
     if (group.length > 1) groups.push(group);
   }

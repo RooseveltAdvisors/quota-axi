@@ -5,7 +5,6 @@ import {
   PI_EXPIRY_SKEW_MS,
   piAuthFilePath,
   piGrantExpired,
-  piOAuthExpiryMs,
   usablePiCredential,
   type PiEnvironment,
 } from "./pi-auth.js";
@@ -166,7 +165,7 @@ async function oauthAccessToken(
 ): Promise<KimiCredentialResolution> {
   const accessToken = usablePiCredential(entry.access);
   if (accessToken === undefined) return { status: "missing" };
-  const expiresAtMs = piOAuthExpiryMs(entry.expires);
+  const expiresAtMs = timestampMs(entry.expires);
   if (Object.hasOwn(entry, "expires") && expiresAtMs === undefined) {
     return { status: "missing" };
   }
@@ -222,6 +221,24 @@ async function oauthAccessToken(
       refreshDefinitive: isDefinitiveOAuthRefreshError(error),
     };
   }
+}
+
+/* Upstream expiry parsing is retained for ISO and epoch-string Pi grants. */
+function timestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Pi stores numeric OAuth expiry values as epoch milliseconds. Keep the
+    // numeric form exact; small values are useful in deterministic probes.
+    return value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

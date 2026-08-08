@@ -18,7 +18,7 @@ export const MODEL_CATALOG: ModelCatalog = {
       id: "claude-opus-4-5",
       label: "Claude Opus 4.5",
       intelligence: "high",
-      windowIds: ["model:fable", "seven_day_opus"],
+      windowIds: ["model:fable"],
       aliases: ["Fable", "claude-opus-4.5"],
     },
     {

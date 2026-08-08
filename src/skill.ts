@@ -4,7 +4,8 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 // Kept terse and outcome-focused so it fires on "check quota/rate limits" intents.
 export const SKILL_DESCRIPTION =
   "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, Kimi, and Alibaba Coding Plan or Token Plan quota windows via the quota-axi CLI - remaining " +
-  "percentages, reset times, cycle-average pace vs the reset clock, provider status, effective usable runway, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable, with no routing, provider mutation, or default ordering preference. Multi-seat Claude may make a bounded one-token first-party model request to read rate-limit headers. Short-lived local OAuth tokens may renew on read by default; use --no-refresh for a pure read. Use before deciding whether it is safe " +
+  "percentages, reset times, cycle-average pace vs the reset clock, provider status, and Alibaba plan metadata, request-quota counters, token-plan percentages, and credential validity read from local auth sources. Alibaba stays honest when its console/API source is unavailable. " +
+  "effective usable runway, percentages, reset times, cycle-average pace vs the reset clock, and credential validity read from local auth sources, with no routing, provider mutation, or default ordering preference. Short-lived local OAuth tokens may renew on read by default; use --no-refresh to prevent refresh requests and local credential writes. Use before deciding whether it is safe " +
   "to keep spending a provider's quota, when the user asks about usage, rate limits, pace, or " +
   "remaining quota, or when comparing local provider headroom.";
 
@@ -87,9 +88,8 @@ or when comparing supported local provider headroom side by side.
    \`usableRunwaySeconds\`, \`projectedExhaustedAt\`, limiting window, and confidence; \`through_reset\`
    deliberately has no synthetic deadline; \`exhausted_now\` is zero runway; and \`unknown\` names
    unmeasurable bounds instead of inventing a conclusion. Read each window's \`pace\` (and the
-   effective scope's pace summary) for diagnostics. Default TOON includes window reserve and
-   effective pace summaries; \`--json\` and \`--full\` retain the complete normalized diagnostics.
-   If relationship status is \`partial\` or \`unknown\`, do not infer
+   effective scope's pace summary) for diagnostics. Default TOON omits raw numeric reserve;
+   \`--json\` and \`--full\` retain it. If relationship status is \`partial\` or \`unknown\`, do not infer
    one. Stale reports keep raw windows for diagnostics, but effective availability, pace, and
    runway are always unknown; never route from a stale raw percentage as though it were current
    headroom. Default output has no ordering preference. For a provider-native model evidence join,
@@ -117,10 +117,9 @@ or when comparing supported local provider headroom side by side.
    expiry, while \`unusable\` is sign-in failure. If Grok reports \`reason: credentials_expired\`
    (or \`error: Grok access token expired\`) after
    a \`--no-refresh\` read, rerun without that flag so quota-axi can renew the local session, or
-   open the Grok CLI (\`grok\`). A rejected renewal never produces fresh quota; without
-   independent usable Pi auth it is an authentication failure. If instead the error is
-   \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed grant is Pi's;
-   rerun without \`--no-refresh\` or run Pi.
+   open the Grok CLI (\`grok\`). A rejected renewal is an authentication failure, not fresh quota.
+   If instead the error is \`Grok access token expired in Pi\` (\`remedyCommand: pi\`), the lapsed
+   grant is Pi's; rerun without \`--no-refresh\` or run Pi.
 9. For a managed Codex installation, set \`QUOTA_AXI_CODEX_BINARY\` to its absolute executable
    path. quota-axi uses that exact executable for auth inspection and the read-only app-server
    fallback, and fails closed if the override is invalid.
@@ -131,14 +130,12 @@ or when comparing supported local provider headroom side by side.
    \`$KIMI_CODE_HOME/credentials/kimi-code.json\` (default
    \`$HOME/.kimi-code/credentials/kimi-code.json\`), renewing near-expiry OAuth grants on read
    unless refresh is disabled.
-11. If Kimi reports \`error: pi_kimi_credential_expired\` after \`--no-refresh\`, rerun without the
+11. If Kimi reports \`error: pi_credential_expired\` after \`--no-refresh\`, rerun without the
    flag so quota-axi can renew the grant, or run Pi. A rejected renewal is \`auth_required\`.
 12. If Grok reports the \`pi:xai\` source, Grok is authenticated through Pi rather than through a
-   \`~/.grok/auth.json\`. That source fallback is available only when none of
-   \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` is set.
-   \`$GROK_AUTH_JSON\` and inline \`$GROK_AUTH\` may still allow independent Pi model-auth
-   inspection; \`$GROK_AUTH_PATH\` or \`$GROK_HOME\` pins the standalone session. Pi credentials
-   are never sent to the consumer quota endpoint.
+   \`~/.grok/auth.json\`. That fallback is used only when no Grok auth location is configured;
+   setting \`$GROK_AUTH_JSON\`, \`$GROK_AUTH\`, \`$GROK_AUTH_PATH\`, or \`$GROK_HOME\` pins Grok
+   to that location instead.
 13. Alibaba tries explicit \`$ALIBABA_TOKEN_PLAN_COOKIE\`, explicit CodexBar-compatible
    \`$ALIBABA_CODING_PLAN_COOKIE\`, the Pi \`pi:alibaba-plan\` entry, then documented API-key
    aliases. \`quota-axi auth\` lists this order and \`--full\` shows attempts. The Token Plan cookie

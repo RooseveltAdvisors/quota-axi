@@ -136,7 +136,6 @@ export async function modelsCommand(
   const flags = parseModelsFlags(args);
   const options: ProviderOptions = {
     allowKeychainPrompt: flags.allowKeychainPrompt,
-    refreshCredentials: !flags.noRefresh,
   };
   const quota = await fetchQuota(flags.providers, options);
   writeCachedProvidersBestEffort(quota.providers);

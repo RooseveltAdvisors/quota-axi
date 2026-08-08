@@ -85,7 +85,6 @@ describe("models command", () => {
 
     const toon = await capture(["models", "--provider", "claude"]);
     expect(toon).toContain("models[");
-    expect(toon).toContain("catalogProvenance");
     expect(toon).toContain("claude-opus-4-5");
     expect(toon).toContain(
       "Default model order is deterministic and non-preferential",
@@ -137,22 +136,6 @@ describe("models command", () => {
     );
     expect(fetches).toBe(1);
     expect(json.unmatchedWindowIds).toEqual(["claude/model:unmapped"]);
-  });
-
-  it("passes read-only refresh settings to model providers", async () => {
-    let refreshCredentials: boolean | undefined;
-    const quota = failedQuota("grok");
-    PROVIDERS.grok = {
-      ...adapter(quota),
-      async fetchQuota(options) {
-        refreshCredentials = options.refreshCredentials;
-        return quota;
-      },
-    };
-
-    await capture(["models", "--provider", "grok", "--no-refresh", "--json"]);
-
-    expect(refreshCredentials).toBe(false);
   });
 
   it("fails when every catalog provider fails and rejects non-catalog scopes", async () => {

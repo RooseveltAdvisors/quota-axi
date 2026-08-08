@@ -28,29 +28,17 @@ export function piOAuthGrant(
 ): PiOAuthGrant | undefined {
   const accessToken = usablePiCredential(entry.access);
   if (accessToken === undefined) return undefined;
-  const hasExpiry = Object.hasOwn(entry, "expires");
-  const expiresAtMs = piOAuthExpiryMs(entry.expires);
-  if (hasExpiry && expiresAtMs === undefined) return undefined;
+  const expires = entry.expires;
   return {
     accessToken,
-    expiresAtMs,
+    expiresAtMs:
+      typeof expires === "number" && Number.isFinite(expires)
+        ? expires
+        : undefined,
     // Keep only presence in the grant summary; the refresh token stays private
     // and is read again under the shared file lock only when renewal is enabled.
-    refreshable: usablePiCredential(entry.refresh) !== undefined,
+    refreshable: typeof entry.refresh === "string" && entry.refresh !== "",
   };
-}
-
-export function piOAuthExpiryMs(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const asNumber = Number(value);
-    if (Number.isFinite(asNumber)) {
-      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
-    }
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-  return undefined;
 }
 
 export function piGrantExpired(

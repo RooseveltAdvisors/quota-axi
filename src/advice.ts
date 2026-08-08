@@ -14,11 +14,6 @@ export const PI_TOKEN_REFRESH_REMEDY_COMMAND = "pi";
 export const GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR =
   "Grok access token expired in Pi";
 
-const GROK_TOKEN_REMEDIES: Readonly<Record<string, string>> = {
-  [GROK_ACCESS_TOKEN_EXPIRED_ERROR]: GROK_TOKEN_REFRESH_REMEDY_COMMAND,
-  [GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR]: PI_TOKEN_REFRESH_REMEDY_COMMAND,
-};
-
 const BLOCKED_CREDENTIAL_ERRORS = new Set([
   "credentials_expired",
   "credentials_missing",
@@ -40,7 +35,7 @@ export function annotateQuotaAdvice(
 export function quotaHelpLines(response: QuotaAxiResponse): string[] {
   return [
     ...(response.help ?? []),
-    "Default TOON reports effective headroom, usable runway, and pace diagnostics; use --full for account, source-attempt, and projection details",
+    "Default TOON reports effective headroom and usable runway; use --json or --full for reserve diagnostics",
     "Run `quota-axi --provider claude --json` for JSON output",
     "Run `quota-axi --full` to include account, source-attempt, and reserve details",
     "Run `quota-axi auth` to inspect local auth source availability without printing secrets",
@@ -88,10 +83,12 @@ function grokTokenRefreshRemedy(provider: ProviderQuota): string | undefined {
   if (provider.provider !== "grok" || provider.state.status === "fresh") {
     return undefined;
   }
-  // Do not gate this source-specific advice on aggregate authStatus: Pi model
-  // auth can remain usable while the independent Grok CLI session is expired.
-  return provider.state.error
-    ? GROK_TOKEN_REMEDIES[provider.state.error]
+  if (provider.state.error === GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR) {
+    return PI_TOKEN_REFRESH_REMEDY_COMMAND;
+  }
+  return provider.state.authStatus === "expired_refreshable" &&
+    provider.state.error === GROK_ACCESS_TOKEN_EXPIRED_ERROR
+    ? GROK_TOKEN_REFRESH_REMEDY_COMMAND
     : undefined;
 }
 

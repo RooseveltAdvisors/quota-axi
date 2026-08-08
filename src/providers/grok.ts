@@ -157,19 +157,22 @@ async function fetchQuotaWithDependencies(
   let transientConsumerFailure = false;
 
   const allowIndependentPi = independentPiSourceAllowed();
-  const piResolutionProbe = allowIndependentPi
+  const piResolution = allowIndependentPi
     ? await dependencies.piXaiBroker.resolve()
     : ({ status: "missing" } satisfies PiXaiCredentialResolution);
-  const cliState = await readCredentialState(options);
-  const piResolution =
-    piResolutionFromCredentialState(cliState) ?? piResolutionProbe;
-  const cliStateIsPi = cliState.source.source === PI_XAI_CREDENTIAL_SOURCE;
-  const piAttempt =
-    allowIndependentPi && !cliStateIsPi
-      ? piSourceAttempt(piResolution)
-      : undefined;
+  // If Pi already has a usable grant, prefer that source without first
+  // renewing an unrelated expired Grok CLI session. Pi API keys remain
+  // model-auth-only and are never sent to the consumer endpoint.
+  const cliState = await readCredentialState(
+    piResolution.status === "available"
+      ? { ...options, refreshCredentials: false }
+      : options,
+  );
+  const piAttempt = allowIndependentPi
+    ? piSourceAttempt(piResolution)
+    : undefined;
 
-  if (cliState.status === "available" && !cliStateIsPi) {
+  if (cliState.status === "available") {
     attempts.push({ source: GROK_SOURCE, status: "failed" });
     try {
       const quota = await fetchGrokConsumerQuota(cliState.credentials);
@@ -208,8 +211,6 @@ async function fetchQuotaWithDependencies(
         transientConsumerFailure = true;
       }
     }
-  } else if (cliStateIsPi) {
-    attempts.push(piSourceAttempt(piResolution));
   } else {
     attempts.push({
       source: cliState.source.source,
@@ -225,32 +226,18 @@ async function fetchQuotaWithDependencies(
     consumerAuthRejected,
   );
   const cached = readCachedProvider("grok");
-  const refreshDefinitive =
-    cliState.status === "expired" && cliState.refreshDefinitive === true;
-  const definitiveAuthFailure = refreshDefinitive || consumerAuthRejected;
-  const expiredConsumerCredentialError =
-    cliState.status === "expired" && !refreshDefinitive
-      ? (cliState.refreshError ??
-        (cliState.refreshable
-          ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
-            ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
-            : GROK_ACCESS_TOKEN_EXPIRED_ERROR
-          : GROK_SIGN_IN_REQUIRED_ERROR))
-      : undefined;
 
   if (authStatus === "usable") {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
+    const cached = readCachedProvider("grok");
     if (
-      !definitiveAuthFailure &&
       cached?.source === GROK_SOURCE &&
       (transientConsumerFailure || cliState.status !== "available")
     ) {
       return withAuthStatus(
         staleFromCache(
           cached,
-          finalError ??
-            expiredConsumerCredentialError ??
-            GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
+          finalError ?? GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
           sourceNames(attempts),
           attempts,
         ),
@@ -271,8 +258,7 @@ async function fetchQuotaWithDependencies(
         error:
           finalError && transientConsumerFailure
             ? finalError
-            : (expiredConsumerCredentialError ??
-              GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
+            : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR,
         retryAfter,
         sourcesTried: sourceNames(attempts),
         attempts,
@@ -281,17 +267,21 @@ async function fetchQuotaWithDependencies(
     );
   }
 
-  if (cliState.status === "expired" && cliState.refreshDefinitive === true) {
-    finalError = cliState.refreshError ?? GROK_SIGN_IN_REQUIRED_ERROR;
-  } else if (authStatus === "expired_refreshable") {
+  if (authStatus === "expired_refreshable") {
     finalError =
-      cliState.status === "expired" && cliState.refreshable
+      (cliState.status === "expired" && cliState.refreshDefinitive === true
+        ? cliState.refreshError
+        : undefined) ??
+      (cliState.status === "expired" && cliState.refreshable
         ? cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
           : GROK_ACCESS_TOKEN_EXPIRED_ERROR
         : piResolution.status === "expired" && piResolution.refreshable
           ? GROK_PI_ACCESS_TOKEN_EXPIRED_ERROR
-          : GROK_SIGN_IN_REQUIRED_ERROR;
+          : GROK_SIGN_IN_REQUIRED_ERROR);
+    // Preserve the richer transient-renewal diagnostic when a same-source
+    // cache is the safe fallback. Without a cache, the stable expiry wording
+    // is the upstream auth-classification contract.
     const cliRefreshError =
       cliState.status === "expired" ? cliState.refreshError : undefined;
     if (cached?.source === GROK_SOURCE && cliRefreshError) {
@@ -305,8 +295,10 @@ async function fetchQuotaWithDependencies(
     finalError = GROK_SIGN_IN_REQUIRED_ERROR;
   }
 
+  const refreshDefinitive =
+    cliState.status === "expired" && cliState.refreshDefinitive === true;
   const resolvedError = finalError ?? GROK_SIGN_IN_REQUIRED_ERROR;
-  if (!definitiveAuthFailure && cached?.source === GROK_SOURCE) {
+  if (!refreshDefinitive && cached?.source === GROK_SOURCE) {
     return withAuthStatus(
       staleFromCache(cached, resolvedError, sourceNames(attempts), attempts),
       authStatus,
@@ -334,13 +326,6 @@ async function inspectAuthWithDependencies(
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
   const cliState = await readCredentialState(options);
-  const allowIndependentPi = independentPiSourceAllowed();
-  if (
-    !allowIndependentPi ||
-    cliState.source.source === PI_XAI_CREDENTIAL_SOURCE
-  ) {
-    return { provider: "grok", sources: [cliState.source] };
-  }
   const piInspection = await dependencies.piXaiBroker.inspect();
   const piStatus: AuthSourceReport["status"] =
     piInspection.status === "available"
@@ -368,27 +353,6 @@ async function inspectAuthWithDependencies(
   };
 }
 
-function piResolutionFromCredentialState(
-  state: CredentialState,
-): PiXaiCredentialResolution | undefined {
-  if (state.source.source !== PI_XAI_CREDENTIAL_SOURCE) return undefined;
-  if (state.status === "available") {
-    return {
-      status: "available",
-      kind: "oauth",
-      credential: state.credentials.key,
-    };
-  }
-  if (state.status === "expired") {
-    return {
-      status: "expired",
-      refreshable: state.refreshable && state.refreshDefinitive !== true,
-    };
-  }
-  if (state.status === "invalid") return { status: "invalid" };
-  return { status: "missing" };
-}
-
 function classifyGrokAuthStatus(
   cliState: CredentialState,
   piResolution: PiXaiCredentialResolution,
@@ -399,10 +363,7 @@ function classifyGrokAuthStatus(
   // unless an independent Pi credential still establishes model usability.
   const cliUsable = cliState.status === "available" && !consumerAuthRejected;
   if (cliUsable || piUsable) return "usable";
-  const cliRefreshable =
-    cliState.status === "expired" &&
-    cliState.refreshable &&
-    cliState.refreshDefinitive !== true;
+  const cliRefreshable = cliState.status === "expired" && cliState.refreshable;
   const piRefreshable =
     piResolution.status === "expired" && piResolution.refreshable;
   if (cliRefreshable || piRefreshable) return "expired_refreshable";

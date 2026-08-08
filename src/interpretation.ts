@@ -1,4 +1,3 @@
-import { splitClaudeSeatScope } from "./claude-scope.js";
 import {
   computeEffectiveRunway,
   computeWindowPace,
@@ -202,15 +201,16 @@ function claudeMultiSeatSemantics(
 function claudeSeatWindow(
   window: QuotaWindow,
 ): { seat: string; id: string } | undefined {
-  const split = splitClaudeSeatScope(window.id);
-  if (!split) return undefined;
+  if (window.id.startsWith("model:")) return undefined;
+  const separator = window.id.indexOf(":");
+  if (separator <= 0) return undefined;
+  const seat = window.id.slice(0, separator);
+  const id = window.id.slice(separator + 1);
   if (
-    ["five_hour", "seven_day", "seven_day_opus", "extra_usage"].includes(
-      split.scope,
-    ) ||
-    (window.kind === "model" && split.scope.startsWith("model:"))
+    ["five_hour", "seven_day", "extra_usage"].includes(id) ||
+    (window.kind === "model" && id.startsWith("model:"))
   ) {
-    return { seat: split.seat, id: split.scope };
+    return { seat, id };
   }
   return undefined;
 }
@@ -325,11 +325,13 @@ function kimiSemantics(
                 status: "unknown",
                 boundedBy: recognized.map(({ id }) => id),
                 pace: summarizeEffectivePace(recognized),
-                runway: kimiPartialRunway(
-                  recognized,
-                  unresolvedWindowIds,
-                  generatedAt,
-                ),
+                runway: {
+                  status: "unknown",
+                  unmeasurableWindowIds: [
+                    ...recognized.map(({ id }) => id),
+                    ...unresolvedWindowIds,
+                  ],
+                },
               },
             ]
           : [],
@@ -344,23 +346,6 @@ function kimiSemantics(
     effectiveAvailability,
     "Kimi's weekly and five-hour account windows jointly bound every model, so effective remaining is the minimum across the named windows.",
   );
-}
-
-function kimiPartialRunway(
-  recognized: QuotaWindow[],
-  unresolvedWindowIds: string[],
-  generatedAt: string,
-) {
-  const recognizedRunway = computeEffectiveRunway(recognized, generatedAt);
-  if (recognizedRunway.status === "exhausted_now") return recognizedRunway;
-  const unmeasurableWindowIds = [
-    ...(recognizedRunway.unmeasurableWindowIds ?? []),
-    ...unresolvedWindowIds,
-  ];
-  return {
-    status: "unknown" as const,
-    unmeasurableWindowIds: [...new Set(unmeasurableWindowIds)],
-  };
 }
 
 function availability(
