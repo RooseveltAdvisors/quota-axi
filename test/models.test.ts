@@ -175,6 +175,67 @@ describe("model quota join", () => {
     expect(response.unmatchedWindowIds).toBeUndefined();
   });
 
+  it("maps the legacy Claude Opus window to Opus evidence", () => {
+    const opusEntry = MODEL_CATALOG.entries.find(
+      (entry) => entry.id === "claude-opus-4-5",
+    );
+    expect(opusEntry).toBeDefined();
+    if (!opusEntry) return;
+
+    const response = createModelsResponse(
+      {
+        generatedAt,
+        schemaVersion: 3,
+        providers: [
+          {
+            provider: "claude",
+            label: "Claude",
+            source: "oauth",
+            windows: [
+              {
+                id: "five_hour",
+                label: "session",
+                kind: "session",
+                percentRemaining: 90,
+              },
+              {
+                id: "seven_day_opus",
+                label: "opus week",
+                kind: "model",
+                percentRemaining: 35,
+              },
+            ],
+            quotaSemantics: {
+              status: "known",
+              description: "legacy Opus test",
+              effectiveAvailability: [
+                {
+                  scope: "seven_day_opus",
+                  status: "known",
+                  effectivePercentRemaining: 35,
+                  boundedBy: ["five_hour", "seven_day_opus"],
+                },
+              ],
+            },
+            state: { status: "fresh", stale: false, sourcesTried: ["oauth"] },
+          },
+        ],
+      },
+      { catalog: { ...MODEL_CATALOG, entries: [opusEntry] } },
+    );
+
+    expect(response.models).toHaveLength(1);
+    expect(response.models[0]).toMatchObject({
+      id: "claude-opus-4-5",
+      quotaScopes: ["seven_day_opus"],
+      effective: {
+        scope: "seven_day_opus",
+        effectivePercentRemaining: 35,
+      },
+    });
+    expect(response.unmatchedWindowIds).toBeUndefined();
+  });
+
   it("filters intelligence without inventing availability for failed providers", () => {
     const response = createModelsResponse(quotaResponse(), {
       catalog: testCatalog(),

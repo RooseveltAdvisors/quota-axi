@@ -207,52 +207,32 @@ function buildLiveCard(provider: ProviderQuota, generatedAtMs: number): Card {
     interior([], "border"),
   ];
 
-  const headline = pickHeadlineAvailability(provider);
-  const effectivePct = headline?.effectivePercentRemaining;
-  const markerPct = effectiveMarkerPercent(provider, headline);
+  const seats = claudeSeatNames(provider);
+  const groups: (string | undefined)[] =
+    seats.length > 0 ? seats : [undefined];
+  const groupedWindowIds = new Set<string>();
+  for (const [index, seat] of groups.entries()) {
+    if (index > 0) lines.push(interior([], "border"));
+    appendEffectiveSummary(lines, provider, generatedAtMs, stale, seat);
 
-  const left: Line =
-    effectivePct !== undefined
-      ? [
-          {
-            text: `${Math.round(effectivePct)}%`,
-            style: boldHealthStyle(effectivePct),
-          },
-          { text: ` ${scopeLabel(headline?.scope)}`, style: "dim" },
-        ]
-      : [
-          {
-            text: stale ? "stale · effective unknown" : "effective unknown",
-            style: "dim",
-          },
-        ];
-  const verdict = runwayVerdict(headline);
-  lines.push(
-    interior(
-      [
-        { text: "   " },
-        ...padBetween(left, verdict, EFFECTIVE_BAR_WIDTH),
-        { text: "   " },
-      ],
-      "border",
-    ),
-  );
-  lines.push(
-    interior(
-      [
-        { text: "   " },
-        ...thinBar(effectivePct, markerPct, EFFECTIVE_BAR_WIDTH),
-        { text: "   " },
-      ],
-      "border",
-    ),
-  );
+    const windows =
+      seat === undefined
+        ? provider.windows
+        : provider.windows.filter((window) => {
+            const scope = claudeSeatScope(window.id);
+            return scope?.seat === seat;
+          });
+    for (const window of windows) groupedWindowIds.add(window.id);
+    appendWindowRows(lines, windows, generatedAtMs);
+  }
 
-  if (provider.windows.length > 0) {
+  const ungroupedWindows =
+    seats.length > 0
+      ? provider.windows.filter((window) => !groupedWindowIds.has(window.id))
+      : [];
+  if (ungroupedWindows.length > 0) {
     lines.push(interior([], "border"));
-    for (const window of provider.windows) {
-      lines.push(interior(windowRow(window, generatedAtMs), "border"));
-    }
+    appendWindowRows(lines, ungroupedWindows, generatedAtMs);
   }
 
   for (const note of cardNotes(provider)) {
@@ -412,16 +392,122 @@ export function thinBar(
   return coalesce(cells);
 }
 
+function appendEffectiveSummary(
+  lines: Line[],
+  provider: ProviderQuota,
+  generatedAtMs: number,
+  stale: boolean,
+  seat?: string,
+): void {
+  const headline = pickHeadlineAvailability(provider, seat);
+  const effectivePct = headline?.effectivePercentRemaining;
+  const markerPct = effectiveMarkerPercent(provider, headline);
+  const seatPrefix = seat === undefined ? "" : `${seat} · `;
+  const left: Line =
+    effectivePct !== undefined
+      ? [
+          ...(seat === undefined
+            ? []
+            : [{ text: seatPrefix, style: "label" as const }]),
+          {
+            text: `${Math.round(effectivePct)}%`,
+            style: boldHealthStyle(effectivePct),
+          },
+          { text: ` ${scopeLabel(headline?.scope, seat)}`, style: "dim" },
+        ]
+      : [
+          {
+            text: `${seatPrefix}${stale ? "stale · effective unknown" : "effective unknown"}`,
+            style: "dim",
+          },
+        ];
+  const verdict = runwayVerdict(headline);
+  lines.push(
+    interior(
+      [
+        { text: "   " },
+        ...padBetween(left, verdict, EFFECTIVE_BAR_WIDTH),
+        { text: "   " },
+      ],
+      "border",
+    ),
+  );
+  lines.push(
+    interior(
+      [
+        { text: "   " },
+        ...thinBar(effectivePct, markerPct, EFFECTIVE_BAR_WIDTH),
+        { text: "   " },
+      ],
+      "border",
+    ),
+  );
+}
+
+function appendWindowRows(
+  lines: Line[],
+  windows: QuotaWindow[],
+  generatedAtMs: number,
+): void {
+  if (windows.length === 0) return;
+  lines.push(interior([], "border"));
+  for (const window of windows) {
+    lines.push(interior(windowRow(window, generatedAtMs), "border"));
+  }
+}
+
+function claudeSeatNames(provider: ProviderQuota): string[] {
+  if (provider.provider !== "claude") return [];
+  const names = new Set<string>();
+  for (const scope of [
+    ...provider.windows.map(({ id }) => id),
+    ...(provider.quotaSemantics?.effectiveAvailability ?? []).map(
+      ({ scope }) => scope,
+    ),
+  ]) {
+    const split = claudeSeatScope(scope);
+    if (split) names.add(split.seat);
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function claudeSeatScope(
+  scope: string,
+): { seat: string; scope: string } | undefined {
+  const separator = scope.indexOf(":");
+  if (separator <= 0) return undefined;
+  const seat = scope.slice(0, separator);
+  const nestedScope = scope.slice(separator + 1);
+  if (
+    ["five_hour", "seven_day", "extra_usage", "all_models"].includes(
+      nestedScope,
+    ) ||
+    nestedScope.startsWith("model:")
+  ) {
+    return { seat, scope: nestedScope };
+  }
+  return undefined;
+}
+
 function pickHeadlineAvailability(
   provider: ProviderQuota,
+  seat?: string,
 ): EffectiveAvailability | undefined {
   const availability = provider.quotaSemantics?.effectiveAvailability ?? [];
+  const scoped =
+    seat === undefined
+      ? availability
+      : availability.filter((entry) => entry.scope.startsWith(`${seat}:`));
   return (
-    availability.find(
-      (entry) => entry.scope.startsWith("all_") && entry.status === "known",
+    scoped.find(
+      (entry) =>
+        (seat === undefined
+          ? entry.scope.startsWith("all_")
+          : entry.scope === `${seat}:all_models`) &&
+        entry.status === "known",
     ) ??
-    availability.find((entry) => entry.status === "known") ??
-    availability[0]
+    scoped.find((entry) => entry.status === "known") ??
+    scoped[0]
   );
 }
 
@@ -471,9 +557,13 @@ function cardNotes(provider: ProviderQuota): string[] {
   return notes;
 }
 
-function scopeLabel(scope: string | undefined): string {
+function scopeLabel(scope: string | undefined, seat?: string): string {
   if (scope === undefined) return "unknown scope";
-  return humanize(scope.replace(/^all_/, "all "));
+  const withoutSeat =
+    seat !== undefined && scope.startsWith(`${seat}:`)
+      ? scope.slice(seat.length + 1)
+      : scope;
+  return humanize(withoutSeat.replace(/^all_/, "all "));
 }
 
 /**

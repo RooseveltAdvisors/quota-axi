@@ -355,6 +355,62 @@ describe("renderQuotaTui structure", () => {
     expect(lines.join("\n")).not.toContain("▲ empty in");
   });
 
+  it("renders each Claude seat with its own effective summary", () => {
+    const response = fixtureResponse();
+    const claude = response.providers[0]!;
+    claude.windows = [
+      {
+        id: "arcs:five_hour",
+        label: "arcs session",
+        kind: "session",
+        percentRemaining: 20,
+        resetsAt: "2026-08-07T04:00:00.000Z",
+        windowSeconds: 18_000,
+      },
+      {
+        id: "jr:five_hour",
+        label: "jr session",
+        kind: "session",
+        percentRemaining: 80,
+        resetsAt: "2026-08-07T04:00:00.000Z",
+        windowSeconds: 18_000,
+      },
+    ];
+    claude.quotaSemantics = {
+      status: "known",
+      description: "multi-seat test",
+      effectiveAvailability: [
+        {
+          scope: "arcs:all_models",
+          status: "known",
+          effectivePercentRemaining: 20,
+          boundedBy: ["arcs:five_hour"],
+          limitingWindowIds: ["arcs:five_hour"],
+          runway: {
+            status: "projected_exhaustion",
+            usableRunwaySeconds: 3_600,
+          },
+        },
+        {
+          scope: "jr:all_models",
+          status: "known",
+          effectivePercentRemaining: 80,
+          boundedBy: ["jr:five_hour"],
+          limitingWindowIds: ["jr:five_hour"],
+          runway: { status: "through_reset" },
+        },
+      ],
+    };
+
+    const output = renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+    });
+    expect(output).toContain("arcs · 20% all models");
+    expect(output).toContain("jr · 80% all models");
+    expect(output).toContain("empty in 1h 0m");
+    expect(output).toContain("on pace ✓");
+  });
+
   it("omits the triangle for the no-seconds exhaustion fallback", () => {
     const response = fixtureResponse();
     const runway =

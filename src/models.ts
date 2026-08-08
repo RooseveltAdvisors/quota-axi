@@ -151,7 +151,9 @@ export function validateModelCatalog(catalog: ModelCatalog): void {
     if (seen.has(key)) throw new Error(`duplicate model catalog entry: ${key}`);
     seen.add(key);
     for (const windowId of entry.windowIds ?? []) {
-      if (!/^model:[a-z0-9][a-z0-9_.:-]*$/i.test(windowId)) {
+      if (
+        !/^(?:model:[a-z0-9][a-z0-9_.:-]*|seven_day_opus)$/i.test(windowId)
+      ) {
         throw new Error(`model catalog window id is invalid: ${windowId}`);
       }
     }
