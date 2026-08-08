@@ -1187,12 +1187,7 @@ describe("Grok expired access-token classification", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const json = JSON.parse(
-      await captureCli([
-        "--provider",
-        "grok",
-        "--json",
-        "--no-refresh",
-      ]),
+      await captureCli(["--provider", "grok", "--json", "--no-refresh"]),
     ) as QuotaAxiResponse;
 
     expect(json.providers[0]).toMatchObject({
@@ -1575,7 +1570,6 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       "pi-xai-refresh-token-fixture",
     );
   });
-
 
   it("renews Grok CLI OAuth before using consumer quota with a Pi api_key", async () => {
     writeAuth({
@@ -2012,9 +2006,7 @@ describe("Grok cache provenance", () => {
   it("does not serve web cache after consumer auth rejection", async () => {
     writeValidAuth();
     writeCachedProviders([cachedGrok("web")]);
-    const fetchMock = vi.fn(
-      async () => new Response(null, { status: 401 }),
-    );
+    const fetchMock = vi.fn(async () => new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchQuota({ allowKeychainPrompt: false });

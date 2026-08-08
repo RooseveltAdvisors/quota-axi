@@ -34,8 +34,7 @@ function configuredManifestFile(): string | undefined {
   const releaseJob = objectValue(jobs?.["release-please"]);
   const steps = Array.isArray(releaseJob?.steps) ? releaseJob.steps : [];
   const releaseStep = steps.find(
-    (step) =>
-      objectValue(step)?.uses === "googleapis/release-please-action@v4",
+    (step) => objectValue(step)?.uses === "googleapis/release-please-action@v4",
   );
   const inputs = objectValue(objectValue(releaseStep)?.with);
   const manifest = inputs?.["manifest-file"];
@@ -209,13 +208,15 @@ describe("release-please CI exclusions", () => {
       "no-mistakes-required.yml",
     ]);
     expect(
-      prWorkflows.find((workflow) => workflow.name === "guard-generated-files.yml")
-        ?.filter,
+      prWorkflows.find(
+        (workflow) => workflow.name === "guard-generated-files.yml",
+      )?.filter,
     ).toEqual({ kind: "unfiltered" });
 
     expect(
-      prWorkflows.find((workflow) => workflow.name === "no-mistakes-required.yml")
-        ?.filter,
+      prWorkflows.find(
+        (workflow) => workflow.name === "no-mistakes-required.yml",
+      )?.filter,
     ).toEqual({ kind: "unfiltered" });
 
     const failures: string[] = [];

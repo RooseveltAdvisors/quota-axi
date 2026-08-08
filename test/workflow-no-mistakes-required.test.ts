@@ -98,7 +98,12 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
 
   it("declares the four relevant PR event types", () => {
     const trigger = loadPullRequestTargetTrigger();
-    expect(trigger.types).toEqual(["opened", "edited", "synchronize", "reopened"]);
+    expect(trigger.types).toEqual([
+      "opened",
+      "edited",
+      "synchronize",
+      "reopened",
+    ]);
   });
 
   it("uses contents: read only and no write permissions", () => {
@@ -122,7 +127,7 @@ describe("no-mistakes-required workflow (hardened pull_request_target gate)", ()
       [
         "## Pipeline",
         "Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)",
-        '\"; exit 73; #',
+        '"; exit 73; #',
       ].join("\n"),
     );
     expect(accepted.status).toBe(0);
