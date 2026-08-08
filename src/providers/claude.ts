@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir, userInfo } from "node:os";
-import { basename, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
 import {
   claudeKeychainAccessMarkerPath,
@@ -53,6 +53,8 @@ const DEFAULT_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const DEFAULT_KEYCHAIN_ACCOUNT = "claude-code-user";
 const SAFE_KEYCHAIN_ACCOUNT = /^[a-zA-Z0-9._-]+$/;
 const SAFE_SEAT_NAME = /^[a-zA-Z0-9_-]+$/;
+const CLAUDE_CONFIG_DIRS_DELIMITER =
+  process.platform === "win32" ? ";" : delimiter;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
 const FIVE_HOURS_SECONDS = 18_000;
@@ -188,13 +190,7 @@ async function fetchSingleSeatQuota(
         state.status === "available" || state.status === "expired",
     )
     .map((state) => state.credentials)
-    .sort((a, b) => {
-      if (process.platform === "darwin") {
-        if (a.source === "keychain" && b.source !== "keychain") return -1;
-        if (b.source === "keychain" && a.source !== "keychain") return 1;
-      }
-      return (b.expiresAt ?? 0) - (a.expiresAt ?? 0);
-    });
+    .sort(sortClaudeCredentials);
 
   for (const state of credentialStates) {
     if (state.status === "available" || state.status === "expired") continue;
@@ -332,15 +328,18 @@ async function fetchMultiSeatQuota(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
-  if (failedSeats.length === 0) return report;
-  return {
-    ...report,
-    state: {
-      ...report.state,
-      reason: "partial_seat_failure",
-      error: `unavailable_seats:${failedSeatNames.join(",")}`,
-    },
-  };
+  const finalReport =
+    failedSeats.length === 0
+      ? report
+      : {
+          ...report,
+          state: {
+            ...report.state,
+            reason: "partial_seat_failure",
+            error: `unavailable_seats:${failedSeatNames.join(",")}`,
+          },
+        };
+  return attachClaudeSeatCacheIdentity(finalReport, seats);
 }
 
 async function fetchSeatQuota(
@@ -361,7 +360,7 @@ async function fetchSeatQuota(
         state.status === "available" || state.status === "expired",
     )
     .map((state) => state.credentials)
-    .sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0));
+    .sort(sortClaudeCredentials);
 
   for (const state of credentialStates) {
     if (state.status === "available" || state.status === "expired") continue;
@@ -378,7 +377,8 @@ async function fetchSeatQuota(
     });
   }
 
-  let failure: ClaudeFailure | undefined;
+  let definitiveFailure: ClaudeFailure | undefined;
+  let transientFailure: ClaudeFailure | undefined;
   for (const credential of credentials) {
     try {
       const quota = await fetchSeatCredential(credential);
@@ -388,12 +388,14 @@ async function fetchSeatQuota(
       });
       return { seat, attempts, quota };
     } catch (error) {
-      failure = claudeFailureFor(error);
+      const failure = claudeFailureFor(error);
       attempts.push({
         source: seatAttemptSource(seat.name),
         status: "failed",
         error: failure.code,
       });
+      if (failure.definitiveAuth) definitiveFailure ??= failure;
+      else transientFailure ??= failure;
     }
   }
 
@@ -401,27 +403,39 @@ async function fetchSeatQuota(
     const skipped = credentialStates.find(
       (state): state is SkippedCredentialState => state.status === "skipped",
     );
-    failure = skipped
-      ? new ClaudeFailure(skipped.source.error ?? "Claude quota unavailable", {
-          staleEligible: true,
-        })
-      : new ClaudeFailure(
-          credentialStates.some((state) => state.status === "invalid")
-            ? "credentials_invalid"
-            : "credentials_missing",
-          { status: "auth_required", definitiveAuth: true },
-        );
+    if (skipped) {
+      transientFailure = new ClaudeFailure(
+        skipped.source.error ?? "Claude quota unavailable",
+        { staleEligible: true },
+      );
+    } else {
+      definitiveFailure = new ClaudeFailure(
+        credentialStates.some((state) => state.status === "invalid")
+          ? "credentials_invalid"
+          : "credentials_missing",
+        { status: "auth_required", definitiveAuth: true },
+      );
+    }
   }
 
-  return { seat, attempts, failure };
+  return {
+    seat,
+    attempts,
+    failure: definitiveFailure ?? transientFailure,
+  };
 }
 
 async function fetchSeatCredential(
   credentials: ClaudeCredentials,
 ): Promise<ClaudeSeatQuota["quota"]> {
   const headerQuota = await fetchHeaderProbe(credentials);
-  if (headerQuota) return headerQuota;
-  return fetchOauthUsage(credentials);
+  if (!headerQuota) return fetchOauthUsage(credentials);
+  try {
+    return await fetchOauthUsage(credentials);
+  } catch (error) {
+    if (error instanceof ClaudeFailure && error.definitiveAuth) throw error;
+    return headerQuota;
+  }
 }
 
 async function mapWithConcurrency<T, R>(
@@ -447,12 +461,46 @@ function seatAttemptSource(name: string): string {
   return `claude:${name}`;
 }
 
+function sortClaudeCredentials(
+  a: ClaudeCredentials,
+  b: ClaudeCredentials,
+): number {
+  if (process.platform === "darwin") {
+    if (a.source === "keychain" && b.source !== "keychain") return -1;
+    if (b.source === "keychain" && a.source !== "keychain") return 1;
+  }
+  return (b.expiresAt ?? 0) - (a.expiresAt ?? 0);
+}
+
 function prefixSeatWindow(seat: string, window: QuotaWindow): QuotaWindow {
   return {
     ...window,
     id: `${seat}:${window.id}`,
     label: `${seat} ${window.label}`,
   };
+}
+
+function attachClaudeSeatCacheIdentity(
+  report: ProviderQuota,
+  seats: ClaudeSeat[],
+): ProviderQuota {
+  Object.defineProperty(report.state, "cacheIdentity", {
+    value: claudeSeatCacheIdentity(seats),
+    enumerable: false,
+    configurable: true,
+  });
+  return report;
+}
+
+function claudeSeatCacheIdentity(seats: ClaudeSeat[]): string {
+  return createHash("sha256")
+    .update(
+      seats
+        .map(({ name, locations }) => `${name}\0${locations.credentialFile}`)
+        .sort()
+        .join("\0"),
+    )
+    .digest("hex");
 }
 
 function failureReport(
@@ -509,7 +557,14 @@ function readFreshMultiSeatCache(
     Date.now() - refreshedAt >= HEADER_CACHE_TTL_MS
   )
     return undefined;
-  if (!hasSeatWindows(cached.windows, seats)) return undefined;
+  const cacheIdentity = (
+    cached.state as ProviderQuota["state"] & { cacheIdentity?: string }
+  ).cacheIdentity;
+  if (
+    cacheIdentity !== claudeSeatCacheIdentity(seats) ||
+    !hasSeatWindows(cached.windows, seats)
+  )
+    return undefined;
   return {
     ...cached,
     label: `Claude (${seats.map(({ name }) => name).join(", ")})`,
@@ -520,8 +575,16 @@ function readFreshMultiSeatCache(
 }
 
 function hasSeatWindows(windows: QuotaWindow[], seats: ClaudeSeat[]): boolean {
-  return seats.every(({ name }) =>
-    windows.some((window) => window.id.startsWith(`${name}:`)),
+  const expected = new Set(seats.map(({ name }) => name));
+  const found = new Set<string>();
+  for (const window of windows) {
+    const separator = window.id.indexOf(":");
+    if (separator <= 0) return false;
+    found.add(window.id.slice(0, separator));
+  }
+  return (
+    found.size === expected.size &&
+    [...expected].every((name) => found.has(name))
   );
 }
 
@@ -540,7 +603,16 @@ function staleClaudeReport(
   ) {
     return undefined;
   }
-  if (seats && !hasSeatWindows(cached.windows, seats)) return undefined;
+  if (seats) {
+    const cacheIdentity = (
+      cached.state as ProviderQuota["state"] & { cacheIdentity?: string }
+    ).cacheIdentity;
+    if (
+      cacheIdentity !== claudeSeatCacheIdentity(seats) ||
+      !hasSeatWindows(cached.windows, seats)
+    )
+      return undefined;
+  }
   const refreshedAt = Date.parse(cached.state.refreshedAt);
   if (!Number.isFinite(refreshedAt) || refreshedAt > now) return undefined;
   const ageMilliseconds = now - refreshedAt;
@@ -962,7 +1034,10 @@ export function resolveClaudeSeats(): ClaudeSeat[] {
 
   if (configuredDirs !== undefined) {
     if (existsSync(primary.locations.credentialFile)) add(primary);
-    for (const configDir of configuredDirs.split(":").filter(Boolean)) {
+    for (const configDir of configuredDirs
+      .split(CLAUDE_CONFIG_DIRS_DELIMITER)
+      .filter(Boolean)
+      .sort()) {
       const normalized = configDir.normalize("NFC");
       add({
         name: safeSeatName(basename(normalized)),
@@ -987,7 +1062,9 @@ function discoverHouseSeats(): ClaudeSeat[] {
   const configRoot = join(root, "config");
   try {
     if (existsSync(configRoot)) {
-      for (const entry of readdirSync(configRoot, { withFileTypes: true })) {
+      for (const entry of readdirSync(configRoot, { withFileTypes: true }).sort(
+        (a, b) => a.name.localeCompare(b.name),
+      )) {
         if (!entry.isDirectory() || !SAFE_SEAT_NAME.test(entry.name)) continue;
         const configDir = join(configRoot, entry.name);
         const credentialFile = join(configDir, ".credentials.json");
@@ -1000,7 +1077,9 @@ function discoverHouseSeats(): ClaudeSeat[] {
       }
     }
     if (seats.length > 0 || !existsSync(root)) return seats;
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
+    for (const entry of readdirSync(root, { withFileTypes: true }).sort(
+      (a, b) => a.name.localeCompare(b.name),
+    )) {
       const match = /^credentials-([a-zA-Z0-9_-]+)\.json$/.exec(entry.name);
       if (!entry.isFile() || !match) continue;
       const credentialFile = join(root, entry.name);
@@ -1211,8 +1290,16 @@ async function fetchHeaderProbe(
       }),
       signal: controller.signal,
     });
+    if (response.status === 401 || response.status === 403) {
+      throw new ClaudeFailure("Claude sign-in required", {
+        status: "auth_required",
+        definitiveAuth: true,
+      });
+    }
+    if (!response.ok) return undefined;
     return normalizeClaudeRateLimitHeaders(response.headers, credentials.plan);
-  } catch {
+  } catch (error) {
+    if (error instanceof ClaudeFailure) throw error;
     return undefined;
   } finally {
     clearTimeout(timer);
