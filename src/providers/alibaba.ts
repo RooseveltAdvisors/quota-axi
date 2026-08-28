@@ -1,7 +1,4 @@
-import {
-  execFileText,
-  findCommandPath,
-} from "../lib/process.js";
+import { execFileText, findCommandPath } from "../lib/process.js";
 import { readCachedProvider } from "../cache.js";
 import { parseEpochOrIso } from "../lib/time.js";
 import type {

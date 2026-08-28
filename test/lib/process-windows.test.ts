@@ -31,12 +31,7 @@ describe("execFileText", () => {
 
     expect(execFile).toHaveBeenCalledWith(
       "C:\\Windows\\System32\\cmd.exe",
-      [
-        "/d",
-        "/s",
-        "/c",
-        '"C:\\Tools\\bl.cmd" "usage" "token-plan"',
-      ],
+      ["/d", "/s", "/c", '"C:\\Tools\\bl.cmd" "usage" "token-plan"'],
       { timeout: 1000, maxBuffer: 1024 * 1024 },
       expect.any(Function),
     );
