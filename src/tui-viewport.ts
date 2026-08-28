@@ -87,22 +87,26 @@ export function scrollFrame(
   let maxOffset = Math.max(0, scrolling.length - pageLines);
   let offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
   const status: ScrollStatus = { scrollable: true, offset, maxOffset };
-  const statusLine = statusRows === 1 ? options.status?.(status) : undefined;
-
-  const candidate = visibleLines(
-    bodyLines,
-    scrolling,
-    headerRows,
-    offset,
-    pageLines,
-    statusLine,
-  );
   let lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
+  if (columns !== undefined && Number.isFinite(columns) && columns > 0) {
+    while (pageLines > 1 && physicalRows(lines, columns) > rows) {
+      pageLines -= 1;
+      maxOffset = Math.max(0, scrolling.length - pageLines);
+      offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
+      status.offset = offset;
+      status.maxOffset = maxOffset;
+      lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
+    }
+  }
+  // Size the content first. The hint must describe these final bounds, and
+  // only then can we decide whether its own wrapped text fits.
+  const statusLine = statusRows === 1 ? options.status?.(status) : undefined;
   if (
+    statusLine !== undefined &&
     columns !== undefined &&
     Number.isFinite(columns) &&
     columns > 0 &&
-    physicalRows(candidate, columns) > rows
+    physicalRows([...lines, statusLine], columns) > rows
   ) {
     statusRows = 0;
     pageLines = rows - headerRows;
@@ -111,8 +115,6 @@ export function scrollFrame(
     status.offset = offset;
     status.maxOffset = maxOffset;
     lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
-  }
-  if (columns !== undefined && Number.isFinite(columns) && columns > 0) {
     while (pageLines > 1 && physicalRows(lines, columns) > rows) {
       pageLines -= 1;
       maxOffset = Math.max(0, scrolling.length - pageLines);
