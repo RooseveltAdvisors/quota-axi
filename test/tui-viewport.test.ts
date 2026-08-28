@@ -214,6 +214,22 @@ describe("live report viewport", () => {
     expect(frame.pageLines).toBe(1);
   });
 
+  it("counts wide graphemes when checking physical rows", () => {
+    const frame = scrollFrame(`${"a".repeat(79)}界`, {
+      rows: 1,
+      columns: 80,
+    });
+    expect(frame.scrollable).toBe(true);
+  });
+
+  it("does not count combining graphemes as extra cells", () => {
+    const frame = scrollFrame(`${"a".repeat(80)}\u0301`, {
+      rows: 1,
+      columns: 80,
+    });
+    expect(frame.scrollable).toBe(false);
+  });
+
   it("keeps the resting hint verbatim and swaps it for scroll help", () => {
     expect(
       scrollHint({ scrollable: false, offset: 0, maxOffset: 0 }, HINT),

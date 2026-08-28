@@ -8,6 +8,12 @@
  * reachable. Pure string math - no ANSI, no terminal I/O, no derivation.
  */
 
+import {
+  sanitizeTerminalText,
+  terminalTextUnits,
+  terminalUnitWidth,
+} from "./tui.js";
+
 /** Rows below which the report header stops being pinned to make room. */
 const STICKY_HEADER_MIN_ROWS = 5;
 
@@ -160,14 +166,20 @@ function physicalRows(lines: string[], columns: number): number {
   let column = 0;
   let wrapPending = false;
   for (const [index, line] of lines.entries()) {
-    const plainLine = line.replace(ansiEscape, "");
-    for (const character of plainLine) {
+    const plainLine = sanitizeTerminalText(line.replace(ansiEscape, ""));
+    for (const unit of terminalTextUnits(plainLine)) {
+      const unitWidth = terminalUnitWidth(unit);
+      if (unitWidth === 0) continue;
       if (wrapPending) {
         rows += 1;
         column = 0;
         wrapPending = false;
       }
-      column += character.length;
+      if (column + unitWidth > columns) {
+        rows += 1;
+        column = 0;
+      }
+      column += unitWidth;
       if (column === columns) wrapPending = true;
     }
     if (index < lines.length - 1) {
