@@ -191,6 +191,7 @@ async function requestUsage(
 ): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = await Promise.race([
       fetchImplementation(OPENCODE_GO_USAGE_URL, {
@@ -203,9 +204,12 @@ async function requestUsage(
         redirect: "manual",
         signal: controller.signal,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("provider_timeout")), deadlineMs),
-      ),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("provider_timeout")),
+          deadlineMs,
+        );
+      }),
     ]);
     if (response.status === 401 || response.status === 403)
       throw new Error("provider_auth_rejected");
@@ -227,6 +231,7 @@ async function requestUsage(
     throw new Error("network_unavailable", { cause: error });
   } finally {
     clearTimeout(timer);
+    if (timeout) clearTimeout(timeout);
   }
 }
 

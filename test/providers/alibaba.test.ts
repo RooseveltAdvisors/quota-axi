@@ -113,8 +113,8 @@ describe("Alibaba provider", () => {
       plan: "DashScope",
       windows: [
         {
-          id: "weekly",
-          kind: "weekly",
+          id: "model:qwen3-max:weekly",
+          kind: "model",
           percentRemaining: 75,
         },
       ],

@@ -199,6 +199,7 @@ async function requestQuota(
 ): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = await Promise.race([
       fetchImplementation(ALIBABA_QUOTA_URL, {
@@ -211,9 +212,12 @@ async function requestQuota(
         redirect: "manual",
         signal: controller.signal,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("provider_timeout")), deadlineMs),
-      ),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("provider_timeout")),
+          deadlineMs,
+        );
+      }),
     ]);
     if (response.status === 401 || response.status === 403)
       throw new Error("provider_auth_rejected");
@@ -235,6 +239,7 @@ async function requestQuota(
     throw new Error("network_unavailable", { cause: error });
   } finally {
     clearTimeout(timer);
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -355,13 +360,16 @@ function normalizeKnownWindows(
       objectValue(entry?.workspace_limit) ?? objectValue(entry?.model_limit);
     if (!entry || !limit) continue;
     const period = numberValue(limit.usage_limit_period);
+    const model = stringValue(entry.model);
     const window = normalizeWindow(
       { ...entry, ...limit },
-      period === WEEK ? "weekly" : `model:${stringValue(entry.model) ?? index}`,
       period === WEEK
-        ? "week"
-        : (stringValue(entry.model) ?? `model ${index + 1}`),
-      period === WEEK ? "weekly" : "model",
+        ? `model:${model ?? index}:weekly`
+        : `model:${model ?? index}`,
+      period === WEEK
+        ? (model ?? `model ${index + 1}`)
+        : (model ?? `model ${index + 1}`),
+      "model",
       period === WEEK ? WEEK : undefined,
     );
     if (window) windows.push(window);

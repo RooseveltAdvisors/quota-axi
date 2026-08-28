@@ -120,18 +120,37 @@ function rollingWindowSemantics(
   const recognized = windows.filter(({ id }) =>
     ["five_hour", "weekly", "monthly"].includes(id),
   );
-  const unresolved = windows.filter((window) => !recognized.includes(window));
+  const modelWindows = windows.filter(({ id }) => id.startsWith("model:"));
+  const unresolved = windows.filter(
+    (window) => !recognized.includes(window) && !modelWindows.includes(window),
+  );
   if (unresolved.length > 0) {
     return partialSemantics(
       unresolved,
       "The provider reports rolling quota windows, but unfamiliar windows prevent a definitive combined percentage.",
     );
   }
+  const effectiveAvailability: EffectiveAvailability[] = [];
+  if (recognized.length > 0) {
+    effectiveAvailability.push(
+      availability("all_models", recognized, generatedAt),
+    );
+  }
+  const models = new Map<string, QuotaWindow[]>();
+  for (const window of modelWindows) {
+    const scope = window.id.split(":").slice(0, 2).join(":");
+    const scoped = models.get(scope) ?? [];
+    scoped.push(window);
+    models.set(scope, scoped);
+  }
+  for (const [scope, scoped] of models) {
+    effectiveAvailability.push(
+      availability(scope, [...recognized, ...scoped], generatedAt),
+    );
+  }
   return knownSemantics(
-    recognized.length > 0
-      ? [availability("all_models", recognized, generatedAt)]
-      : [],
-    "The provider's reported five-hour, weekly, and monthly windows jointly bound model usage.",
+    effectiveAvailability,
+    "The provider's reported account windows jointly bound model usage; model-scoped windows only bind their named model.",
   );
 }
 
