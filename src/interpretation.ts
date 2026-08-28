@@ -137,7 +137,7 @@ function alibabaSemantics(
   }
   const models = new Map<string, QuotaWindow[]>();
   for (const window of modelWindows) {
-    const scope = window.id.split(":").slice(0, 2).join(":");
+    const scope = window.id;
     const scoped = models.get(scope) ?? [];
     scoped.push(window);
     models.set(scope, scoped);

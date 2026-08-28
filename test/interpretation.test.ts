@@ -242,6 +242,30 @@ describe("quota semantics", () => {
     ]);
   });
 
+  it("keeps model names containing colons in separate Alibaba scopes", () => {
+    const result = withQuotaSemantics(
+      provider("alibaba", [
+        window("weekly", "weekly", 80),
+        window("model:qwen:latest", "model", 11),
+        window("model:qwen:reasoning", "model", 22),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(
+      result.quotaSemantics?.effectiveAvailability.map(
+        ({ scope, effectivePercentRemaining }) => [
+          scope,
+          effectivePercentRemaining,
+        ],
+      ),
+    ).toEqual([
+      ["all_models", 80],
+      ["model:qwen:latest", 11],
+      ["model:qwen:reasoning", 22],
+    ]);
+  });
+
   it("does not claim independent OpenCode Go windows jointly bind all models", () => {
     const result = withQuotaSemantics(
       provider("opencode-go", [
