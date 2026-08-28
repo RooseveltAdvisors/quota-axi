@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("Alibaba bl usage provider", () => {
-  it("runs the official bl command and normalizes fixture windows", async () => {
+  it("runs the official Token Plan command and normalizes its weekly window", async () => {
     const argsFile = join(tempDir, "args");
     installMockBl(argsFile, readFixture());
     process.env.PATH = tempDir;
@@ -37,9 +37,7 @@ describe("Alibaba bl usage provider", () => {
 
     expect(readFileSync(argsFile, "utf8").trim().split("\n")).toEqual([
       "usage",
-      "summary",
-      "--days",
-      "1",
+      "token-plan",
       "--output",
       "json",
     ]);
@@ -47,7 +45,7 @@ describe("Alibaba bl usage provider", () => {
       provider: "alibaba",
       label: "Alibaba Coding Plan",
       source: "cli",
-      plan: "Alibaba Coding Plan Pro",
+      plan: "Alibaba Coding Plan",
       state: {
         status: "fresh",
         stale: false,
@@ -57,49 +55,42 @@ describe("Alibaba bl usage provider", () => {
     });
     expect(report.windows).toEqual([
       {
-        id: "model:qwen3.8-max",
-        label: "qwen3.8-max",
-        kind: "model",
-        percentUsed: 25,
-        percentRemaining: 75,
-        resetsAt: "2026-10-31T00:00:00.000Z",
-      },
-      {
-        id: "model:kimi-k3",
-        label: "kimi-k3",
-        kind: "model",
-        percentUsed: 75,
-        percentRemaining: 25,
-        resetsAt: "2026-11-16T00:00:00.000Z",
+        id: "weekly",
+        label: "week",
+        kind: "weekly",
+        percentUsed: 99.76594735176,
+        percentRemaining: 0.23405264824,
+        resetsAt: "2026-09-03T15:00:00.000Z",
       },
     ]);
   });
 
-  it("accepts remaining and total when remainingPercent is absent", () => {
+  it("accepts a percentage already expressed from zero to one hundred", () => {
     expect(
       normalizeAlibabaUsage({
         plan: "Coding Plan",
-        freeTier: [
-          {
-            model: "fixture-model",
-            remaining: 2,
-            total: 8,
-            resetAt: 1_800_000_000,
-          },
-        ],
+        per1WeekPercentage: 25,
+        per1WeekResetTime: 1_800_000_000,
       }),
     ).toEqual({
       plan: "Coding Plan",
       windows: [
         {
-          id: "model:fixture-model",
-          label: "fixture-model",
-          kind: "model",
+          id: "weekly",
+          label: "week",
+          kind: "weekly",
           percentUsed: 75,
           percentRemaining: 25,
           resetsAt: "2027-01-15T08:00:00.000Z",
         },
       ],
+    });
+  });
+
+  it("returns no windows for malformed Token Plan data", () => {
+    expect(normalizeAlibabaUsage({ per1WeekResetTime: 1 })).toEqual({
+      plan: "Alibaba Coding Plan",
+      windows: [],
     });
   });
 

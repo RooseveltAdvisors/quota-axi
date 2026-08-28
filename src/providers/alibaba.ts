@@ -21,7 +21,7 @@ import {
 
 const BL_COMMAND = "bl";
 const BL_SOURCE = "bl-cli";
-const BL_ARGS = ["usage", "summary", "--days", "1", "--output", "json"];
+const BL_ARGS = ["usage", "token-plan", "--output", "json"];
 const BL_TIMEOUT_MS = 15_000;
 const LABEL = "Alibaba Coding Plan";
 
@@ -143,74 +143,30 @@ async function inspectAuthWithDependencies(
   return { provider: "alibaba", sources: [source] };
 }
 
-/** Normalize the stable fields emitted by `bl usage summary --output json`. */
+/** Normalize the stable fields emitted by `bl usage token-plan --output json`. */
 export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
   const root = objectValue(raw);
   if (!root) return { windows: [] };
-  const data = objectValue(root.data) ?? root;
-  const entries = firstArray(data, ["freeTier", "free_tier", "quotas"]);
-  const windows = (entries ?? [])
-    .map((entry, index) => normalizeWindow(entry, index))
-    .filter((window): window is QuotaWindow => window !== undefined);
-
-  return {
-    plan:
-      stringValue(root.planName) ??
-      stringValue(root.plan_name) ??
-      stringValue(root.plan) ??
-      stringValue(data.planName) ??
-      stringValue(data.plan_name) ??
-      stringValue(data.plan) ??
-      LABEL,
-    windows,
-  };
-}
-
-function normalizeWindow(
-  value: unknown,
-  index: number,
-): QuotaWindow | undefined {
-  const entry = objectValue(value);
-  if (!entry) return undefined;
-
-  const remaining =
-    numberValue(entry.remainingPercent) ??
-    numberValue(entry.remaining_percent) ??
-    ratioAsPercent(entry.remaining, entry.total);
-  if (remaining === undefined) return undefined;
-
-  const model =
-    stringValue(entry.model) ??
-    stringValue(entry.modelName) ??
-    stringValue(entry.model_name);
-  const id = model ? `model:${model}` : `free_tier:${index}`;
-  const reset = parseEpochOrIso(
-    entry.resetsAt ??
-      entry.resetAt ??
-      entry.reset_at ??
-      entry.nextResetTime ??
-      entry.next_reset_time ??
-      entry.expires,
+  const remaining = numberValue(root.per1WeekPercentage);
+  if (remaining === undefined) return { plan: LABEL, windows: [] };
+  const percentRemaining = clampPercentage(
+    remaining <= 1 ? remaining * 100 : remaining,
   );
+  const reset = parseAlibabaReset(root.per1WeekResetTime);
 
   return {
-    id,
-    label: model ?? `Free tier ${index + 1}`,
-    kind: model ? "model" : "unknown",
-    percentUsed: 100 - clampPercent(remaining),
-    percentRemaining: clampPercent(remaining),
-    ...(reset ? { resetsAt: reset } : {}),
+    plan: stringValue(root.planName) ?? stringValue(root.plan) ?? LABEL,
+    windows: [
+      {
+        id: "weekly",
+        label: "week",
+        kind: "weekly",
+        percentUsed: 100 - percentRemaining,
+        percentRemaining,
+        ...(reset ? { resetsAt: reset } : {}),
+      },
+    ],
   };
-}
-
-function firstArray(
-  value: Record<string, unknown>,
-  keys: string[],
-): unknown[] | undefined {
-  for (const key of keys) {
-    if (Array.isArray(value[key])) return value[key];
-  }
-  return undefined;
 }
 
 async function commandOnPath(command: string): Promise<boolean> {
@@ -231,22 +187,6 @@ async function commandOnPath(command: string): Promise<boolean> {
     }
   }
   return false;
-}
-
-function ratioAsPercent(
-  remaining: unknown,
-  total: unknown,
-): number | undefined {
-  const remainingValue = numberValue(remaining);
-  const totalValue = numberValue(total);
-  if (
-    remainingValue === undefined ||
-    totalValue === undefined ||
-    totalValue <= 0
-  ) {
-    return undefined;
-  }
-  return (remainingValue / totalValue) * 100;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
@@ -273,8 +213,17 @@ function numberValue(value: unknown): number | undefined {
   return undefined;
 }
 
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(0, Math.round(value)));
+function clampPercentage(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function parseAlibabaReset(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(
+      value > 100_000_000_000 ? value : value * 1000,
+    ).toISOString();
+  }
+  return parseEpochOrIso(value);
 }
 
 function errorMessage(error: unknown): string {
