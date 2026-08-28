@@ -147,11 +147,10 @@ async function inspectAuthWithDependencies(
 export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
   const root = objectValue(raw);
   if (!root) return { windows: [] };
-  const remaining = numberValue(root.per1WeekPercentage);
-  if (remaining === undefined) return { plan: LABEL, windows: [] };
-  const percentRemaining = clampPercentage(
-    remaining <= 1 ? remaining * 100 : remaining,
-  );
+  const usage = numberValue(root.per1WeekPercentage);
+  if (usage === undefined) return { plan: LABEL, windows: [] };
+  const percentUsed = clampPercentage(usage <= 1 ? usage * 100 : usage);
+  const percentRemaining = 100 - percentUsed;
   const reset = parseAlibabaReset(root.per1WeekResetTime);
 
   return {
@@ -161,7 +160,7 @@ export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
         id: "weekly",
         label: "week",
         kind: "weekly",
-        percentUsed: 100 - percentRemaining,
+        percentUsed,
         percentRemaining,
         ...(reset ? { resetsAt: reset } : {}),
       },

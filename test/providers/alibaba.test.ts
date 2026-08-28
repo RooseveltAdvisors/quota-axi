@@ -58,14 +58,14 @@ describe("Alibaba bl usage provider", () => {
         id: "weekly",
         label: "week",
         kind: "weekly",
-        percentUsed: 99.76594735176,
-        percentRemaining: 0.23405264824,
+        percentUsed: 0.23405264824,
+        percentRemaining: 99.76594735176,
         resetsAt: "2026-09-03T15:00:00.000Z",
       },
     ]);
   });
 
-  it("accepts a percentage already expressed from zero to one hundred", () => {
+  it("accepts used percentages already expressed from zero to one hundred", () => {
     expect(
       normalizeAlibabaUsage({
         plan: "Coding Plan",
@@ -79,8 +79,8 @@ describe("Alibaba bl usage provider", () => {
           id: "weekly",
           label: "week",
           kind: "weekly",
-          percentUsed: 75,
-          percentRemaining: 25,
+          percentUsed: 25,
+          percentRemaining: 75,
           resetsAt: "2027-01-15T08:00:00.000Z",
         },
       ],
