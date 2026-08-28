@@ -257,15 +257,7 @@ async function readResponseBody(
     parsedLength > RESPONSE_LIMIT_BYTES
   )
     throw new Error("response_too_large");
-  if (!response.body) {
-    if (!usableLength) throw new Error("response_size_unverifiable");
-    const body = new Uint8Array(
-      await raceWithAbort(response.arrayBuffer(), signal),
-    );
-    if (body.length > RESPONSE_LIMIT_BYTES)
-      throw new Error("response_too_large");
-    return body;
-  }
+  if (!response.body) throw new Error("response_size_unverifiable");
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

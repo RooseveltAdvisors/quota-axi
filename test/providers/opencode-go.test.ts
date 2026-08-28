@@ -142,11 +142,17 @@ describe("OpenCode Go provider", () => {
             ({
               status: 200,
               ok: true,
-              headers: new Headers({ "content-length": "47" }),
-              arrayBuffer: async () =>
-                new TextEncoder().encode(
-                  JSON.stringify({ usage: { weekly: { percent: 1 } } }),
-                ).buffer,
+              headers: new Headers(),
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      JSON.stringify({ usage: { weekly: { percent: 1 } } }),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
             }) as Response,
         ),
       }).fetchQuota(OPTIONS);
@@ -252,6 +258,29 @@ describe("OpenCode Go provider", () => {
       error: "response_size_unverifiable",
     });
     expect(unverifiableArrayBuffer).not.toHaveBeenCalled();
+
+    const falselyDeclaredArrayBuffer = vi.fn(
+      async () => new ArrayBuffer(262_145),
+    );
+    const falselyDeclaredReport = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            body: null,
+            headers: new Headers({ "content-length": "1" }),
+            arrayBuffer: falselyDeclaredArrayBuffer,
+          }) as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(falselyDeclaredReport.state).toMatchObject({
+      status: "error",
+      error: "response_size_unverifiable",
+    });
+    expect(falselyDeclaredArrayBuffer).not.toHaveBeenCalled();
   });
 
   it("does not wait indefinitely for a stalled response body", async () => {
