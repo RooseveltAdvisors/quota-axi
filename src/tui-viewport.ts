@@ -155,7 +155,7 @@ function physicalRows(lines: string[], columns: number): number {
   let rows = 1;
   let column = 0;
   let wrapPending = false;
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const plainLine = line.replace(ansiEscape, "");
     for (const character of plainLine) {
       if (wrapPending) {
@@ -166,7 +166,7 @@ function physicalRows(lines: string[], columns: number): number {
       column += character.length;
       if (column === columns) wrapPending = true;
     }
-    if (line !== lines.at(-1)) {
+    if (index < lines.length - 1) {
       rows += wrapPending ? 2 : 1;
       column = 0;
       wrapPending = false;

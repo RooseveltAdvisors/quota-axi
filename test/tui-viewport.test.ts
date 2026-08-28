@@ -196,6 +196,15 @@ describe("live report viewport", () => {
     expect(scrollFrame("a\n\n").text).toBe("a\n");
   });
 
+  it("counts repeated lines when protecting the physical row budget", () => {
+    const frame = scrollFrame("x\nx\nx", {
+      rows: 3,
+      columns: 1,
+      status: () => "x",
+    });
+    expect(frame.text).toBe("x\nx");
+  });
+
   it("keeps the resting hint verbatim and swaps it for scroll help", () => {
     expect(
       scrollHint({ scrollable: false, offset: 0, maxOffset: 0 }, HINT),
