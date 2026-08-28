@@ -21,6 +21,7 @@ type Harness = {
   setRows(rows: number | undefined): void;
   resize(rows?: number): void;
   frame(): string;
+  physicalRows(columns: number): number;
   signal(): void;
   tick(): void;
 };
@@ -100,6 +101,13 @@ function harness(): Harness {
         .find((chunk) => chunk.startsWith(CLEAR_SCREEN));
       return (painted ?? "").slice(CLEAR_SCREEN.length);
     },
+    physicalRows: (columns) => terminalRows(
+      [...writes]
+        .reverse()
+        .find((chunk) => chunk.startsWith(CLEAR_SCREEN))
+        ?.slice(CLEAR_SCREEN.length) ?? "",
+      columns,
+    ),
     signal: () => {
       for (const listener of [...signalListeners]) listener();
     },
@@ -110,6 +118,28 @@ function harness(): Harness {
       callback();
     },
   };
+}
+
+function terminalRows(text: string, columns: number): number {
+  let rows = 1;
+  let column = 0;
+  let wrapPending = false;
+  for (const character of text) {
+    if (character === "\n") {
+      rows += 1;
+      column = 0;
+      wrapPending = false;
+      continue;
+    }
+    if (wrapPending) {
+      rows += 1;
+      column = 0;
+      wrapPending = false;
+    }
+    column += 1;
+    if (column === columns) wrapPending = true;
+  }
+  return rows;
 }
 
 function flush(): Promise<void> {
@@ -338,6 +368,7 @@ describe("live terminal report at short heights", () => {
     expect(lines[0]).toBe(fullWidthLine);
     expect(lines.at(-1)).toContain("scroll");
     expect(lines.every((line) => line.length <= 80)).toBe(true);
+    expect(io.physicalRows(80)).toBe(3);
     await stop({ io, run });
   });
 
