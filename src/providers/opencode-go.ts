@@ -241,6 +241,12 @@ async function requestUsage(
 }
 
 async function readResponseBody(response: Response): Promise<Uint8Array> {
+  const declaredLength = response.headers?.get("content-length")?.trim();
+  if (declaredLength) {
+    const length = Number(declaredLength);
+    if (Number.isFinite(length) && length > RESPONSE_LIMIT_BYTES)
+      throw new Error("response_too_large");
+  }
   if (!response.body) {
     const body = new Uint8Array(await response.arrayBuffer());
     if (body.length > RESPONSE_LIMIT_BYTES)

@@ -177,4 +177,27 @@ describe("OpenCode Go provider", () => {
     });
     expect(pulls).toBeLessThanOrEqual(2);
   });
+
+  it("rejects oversized no-body responses before reading the array buffer", async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(262_145));
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            body: null,
+            headers: new Headers({ "content-length": "262145" }),
+            arrayBuffer,
+          }) as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "response_too_large",
+    });
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
 });
