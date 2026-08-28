@@ -1,7 +1,7 @@
-import { execFileText } from "../lib/process.js";
-import { access, stat } from "node:fs/promises";
-import { constants } from "node:fs";
-import * as path from "node:path";
+import {
+  commandExists as commandOnPath,
+  execFileText,
+} from "../lib/process.js";
 import { readCachedProvider } from "../cache.js";
 import { parseEpochOrIso } from "../lib/time.js";
 import type {
@@ -238,26 +238,6 @@ function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
     });
   }
   return windows;
-}
-
-async function commandOnPath(command: string): Promise<boolean> {
-  const pathValue = process.env.PATH;
-  if (!pathValue || command.includes("/") || command.includes("\\")) {
-    return false;
-  }
-  const delimiter = process.platform === "win32" ? ";" : ":";
-  for (const directory of pathValue.split(delimiter)) {
-    const candidate = path.join(directory || ".", command);
-    try {
-      const info = await stat(candidate);
-      if (!info.isFile()) continue;
-      await access(candidate, constants.X_OK);
-      return true;
-    } catch {
-      // Try the next PATH entry; execFile reports any eventual launch error.
-    }
-  }
-  return false;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
