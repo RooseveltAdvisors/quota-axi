@@ -107,7 +107,32 @@ function semanticsFor(
         provider.windows,
         `quota-axi does not know whether ${provider.label ?? provider.provider}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
       );
+    case "alibaba":
+    case "opencode-go":
+      return rollingWindowSemantics(provider.windows, generatedAt);
   }
+}
+
+function rollingWindowSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const recognized = windows.filter(({ id }) =>
+    ["five_hour", "weekly", "monthly"].includes(id),
+  );
+  const unresolved = windows.filter((window) => !recognized.includes(window));
+  if (unresolved.length > 0) {
+    return partialSemantics(
+      unresolved,
+      "The provider reports rolling quota windows, but unfamiliar windows prevent a definitive combined percentage.",
+    );
+  }
+  return knownSemantics(
+    recognized.length > 0
+      ? [availability("all_models", recognized, generatedAt)]
+      : [],
+    "The provider's reported five-hour, weekly, and monthly windows jointly bound model usage.",
+  );
 }
 
 function claudeSemantics(
