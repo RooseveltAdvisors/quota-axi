@@ -85,6 +85,14 @@ describe("OpenCode Go provider", () => {
     ).toEqual([]);
   });
 
+  it("rejects non-numeric usage values instead of coercing them to zero", () => {
+    for (const percent of [null, "", "  ", true, false]) {
+      expect(
+        normalizeOpenCodeGoPayload({ usage: { weekly: { percent } } }).windows,
+      ).toEqual([]);
+    }
+  });
+
   it("uses provider cycle durations and omits unsupported defaults", () => {
     expect(
       normalizeOpenCodeGoPayload({

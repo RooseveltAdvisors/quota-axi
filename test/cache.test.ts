@@ -157,6 +157,22 @@ describe("quota cache", () => {
     expect(payload.providers.every((provider) => !provider.account)).toBe(true);
   });
 
+  it("retains CLI-sourced snapshots for stale fallback", () => {
+    useTempCache();
+    const alibaba = {
+      ...quota("alibaba", 18),
+      source: "cli" as const,
+    };
+
+    writeCachedProviders([alibaba]);
+
+    expect(readCachedProvider("alibaba")).toMatchObject({
+      provider: "alibaba",
+      source: "cli",
+      windows: [{ percentUsed: 18 }],
+    });
+  });
+
   it("stores Claude cache provenance as an opaque context identifier", () => {
     useTempCache();
     const contextDir = join(tempDir!, "synthetic-claude-context");

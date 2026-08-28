@@ -339,6 +339,8 @@ function firstString(
 }
 
 function numberValue(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  if (typeof value === "string" && value.trim() === "") return undefined;
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : undefined;
 }
