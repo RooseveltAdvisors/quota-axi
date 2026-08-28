@@ -161,6 +161,29 @@ describe("quota semantics", () => {
     ).toBe(true);
   });
 
+  it("does not copy unproven account bounds into Alibaba model scopes", () => {
+    const result = withQuotaSemantics(
+      provider("alibaba", [
+        window("weekly", "weekly", 22),
+        window("model:qwen3-max", "model", 91),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "all_models",
+        effectivePercentRemaining: 22,
+        boundedBy: ["weekly"],
+      }),
+      expect.objectContaining({
+        scope: "model:qwen3-max",
+        effectivePercentRemaining: 91,
+        boundedBy: ["model:qwen3-max"],
+      }),
+    ]);
+  });
+
   it("does not block Claude effective runway when five_hour has not been triggered yet (no resetsAt)", () => {
     const result = withQuotaSemantics(
       provider("claude", [

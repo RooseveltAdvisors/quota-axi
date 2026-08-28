@@ -242,16 +242,14 @@ export function normalizeOpenCodeGoPayload(
   const usage = objectValue(root?.usage);
   if (!usage) return { windows: [] };
   const definitions = [
-    ["rolling", "five_hour", "session", 18_000],
-    ["weekly", "weekly", "weekly", 7 * 24 * 60 * 60],
-    ["monthly", "monthly", "monthly", undefined],
+    ["rolling", "five_hour", "session"],
+    ["weekly", "weekly", "weekly"],
+    ["monthly", "monthly", "monthly"],
   ] as const;
   const windows = definitions
-    .map(([name, id, kind, windowSeconds]) => {
+    .map(([name, id, kind]) => {
       const record = objectValue(usage[name]);
-      return record
-        ? normalizeWindow(record, id, kind, windowSeconds)
-        : undefined;
+      return record ? normalizeWindow(record, id, kind) : undefined;
     })
     .filter((window): window is QuotaWindow => window !== undefined);
   const plan =
@@ -263,7 +261,6 @@ function normalizeWindow(
   record: Record<string, unknown>,
   id: string,
   kind: QuotaWindow["kind"],
-  windowSeconds: number | undefined,
 ): QuotaWindow | undefined {
   const used = firstNumber(record, ["percent", "percentUsed", "usedPercent"]);
   const remaining = firstNumber(record, [
@@ -283,13 +280,25 @@ function normalizeWindow(
     "reset_at",
     "nextResetTime",
   ]);
+  const windowSeconds = firstNumber(record, [
+    "windowSeconds",
+    "window_seconds",
+    "cycleSeconds",
+    "cycle_seconds",
+    "durationSeconds",
+    "duration_seconds",
+    "periodSeconds",
+    "period_seconds",
+  ]);
   return {
     id,
     label: id === "five_hour" ? "session" : id,
     kind,
     percentUsed: clampPercent(100 - percentRemaining),
     percentRemaining,
-    ...(windowSeconds !== undefined ? { windowSeconds } : {}),
+    ...(windowSeconds !== undefined && windowSeconds > 0
+      ? { windowSeconds }
+      : {}),
     ...(parseEpochOrIso(reset) ? { resetsAt: parseEpochOrIso(reset) } : {}),
   };
 }

@@ -94,6 +94,23 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
+  it("does not turn ignored model-limit data into account-wide windows", () => {
+    const normalized = normalizeAlibabaUsage({
+      per1WeekPercentage: 0.25,
+      per1WeekResetTime: "2026-09-03T15:00:00Z",
+      limits: [
+        {
+          model: "qwen3-max",
+          model_limit: { usage_limit_period: 604800, percentage: 1 },
+        },
+      ],
+    });
+
+    expect(normalized.windows).toHaveLength(1);
+    expect(normalized.windows[0]?.id).toBe("weekly");
+    expect(normalized.windows[0]?.kind).toBe("weekly");
+  });
+
   it("reports unavailable when bl is not on PATH", async () => {
     process.env.PATH = tempDir;
 

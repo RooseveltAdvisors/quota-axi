@@ -84,4 +84,53 @@ describe("OpenCode Go provider", () => {
       normalizeOpenCodeGoPayload({ usage: { weekly: {} } }).windows,
     ).toEqual([]);
   });
+
+  it("uses provider cycle durations and omits unsupported defaults", () => {
+    expect(
+      normalizeOpenCodeGoPayload({
+        usage: {
+          rolling: { percent: 9, windowSeconds: 1_234 },
+          weekly: { percent: 21, cycle_seconds: "604800" },
+          monthly: { percent: 4 },
+        },
+      }).windows,
+    ).toEqual([
+      expect.objectContaining({ id: "five_hour", windowSeconds: 1_234 }),
+      expect.objectContaining({ id: "weekly", windowSeconds: 604_800 }),
+      expect.objectContaining({ id: "monthly" }),
+    ]);
+    expect(
+      normalizeOpenCodeGoPayload({ usage: { rolling: { percent: 9 } } })
+        .windows[0],
+    ).not.toHaveProperty("windowSeconds");
+  });
+
+  it("clears request deadline timers after a fast response", async () => {
+    vi.useFakeTimers();
+    try {
+      const report = await createOpenCodeGoAdapter({
+        credential: () => ({
+          status: "available",
+          key: KEY,
+          path: "/auth.json",
+        }),
+        fetch: vi.fn(
+          async () =>
+            ({
+              status: 200,
+              ok: true,
+              arrayBuffer: async () =>
+                new TextEncoder().encode(
+                  JSON.stringify({ usage: { weekly: { percent: 1 } } }),
+                ).buffer,
+            }) as Response,
+        ),
+      }).fetchQuota(OPTIONS);
+
+      expect(report.state.status).toBe("fresh");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -144,13 +144,14 @@ function rollingWindowSemantics(
     models.set(scope, scoped);
   }
   for (const [scope, scoped] of models) {
-    effectiveAvailability.push(
-      availability(scope, [...recognized, ...scoped], generatedAt),
-    );
+    // Account windows are not known to bind every model for these providers.
+    // Keep them at all_models instead of copying an unrelated bound into each
+    // model scope.
+    effectiveAvailability.push(availability(scope, scoped, generatedAt));
   }
   return knownSemantics(
     effectiveAvailability,
-    "The provider's reported account windows jointly bound model usage; model-scoped windows only bind their named model.",
+    "The provider's reported account windows are available at account scope; model-scoped windows only bind their named model because no cross-model relationship is established.",
   );
 }
 
