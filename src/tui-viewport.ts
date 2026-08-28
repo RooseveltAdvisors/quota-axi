@@ -99,7 +99,6 @@ export function scrollFrame(
   );
   let lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
   if (
-    statusRows === 1 &&
     columns !== undefined &&
     Number.isFinite(columns) &&
     columns > 0 &&
@@ -112,6 +111,12 @@ export function scrollFrame(
     status.offset = offset;
     status.maxOffset = maxOffset;
     lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
+  }
+  if (
+    columns !== undefined &&
+    Number.isFinite(columns) &&
+    columns > 0
+  ) {
     while (pageLines > 1 && physicalRows(lines, columns) > rows) {
       pageLines -= 1;
       maxOffset = Math.max(0, scrolling.length - pageLines);
