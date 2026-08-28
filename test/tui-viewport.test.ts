@@ -192,6 +192,10 @@ describe("live report viewport", () => {
     expect(windowed.text).not.toContain("q quit");
   });
 
+  it("preserves meaningful trailing blank rows", () => {
+    expect(scrollFrame("a\n\n").text).toBe("a\n");
+  });
+
   it("keeps the resting hint verbatim and swaps it for scroll help", () => {
     expect(
       scrollHint({ scrollable: false, offset: 0, maxOffset: 0 }, HINT),
