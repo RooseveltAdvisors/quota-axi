@@ -87,6 +87,7 @@ export function scrollFrame(
   let maxOffset = Math.max(0, scrolling.length - pageLines);
   let offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
   const status: ScrollStatus = { scrollable: true, offset, maxOffset };
+  const statusLine = statusRows === 1 ? options.status?.(status) : undefined;
 
   const candidate = visibleLines(
     bodyLines,
@@ -94,7 +95,7 @@ export function scrollFrame(
     headerRows,
     offset,
     pageLines,
-    statusRows === 1 ? options.status?.(status) : undefined,
+    statusLine,
   );
   let lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
   if (
@@ -120,7 +121,7 @@ export function scrollFrame(
       lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
     }
   }
-  if (statusRows === 1 && options.status) lines.push(options.status(status));
+  if (statusRows === 1 && statusLine !== undefined) lines.push(statusLine);
   return {
     text: lines.join("\n"),
     offset,
