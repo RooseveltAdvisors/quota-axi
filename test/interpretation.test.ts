@@ -219,6 +219,49 @@ describe("quota semantics", () => {
     });
   });
 
+  it("does not promote a model's lower Alibaba limit into the account bound", () => {
+    const result = withQuotaSemantics(
+      provider("alibaba", [
+        window("weekly", "weekly", 80),
+        window("model:qwen3-max", "model", 3),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "all_models",
+        effectivePercentRemaining: 80,
+        boundedBy: ["weekly"],
+      }),
+      expect.objectContaining({
+        scope: "model:qwen3-max",
+        effectivePercentRemaining: 3,
+        boundedBy: ["model:qwen3-max"],
+      }),
+    ]);
+  });
+
+  it("does not claim independent OpenCode Go windows jointly bind all models", () => {
+    const result = withQuotaSemantics(
+      provider("opencode-go", [
+        window("five_hour", "session", 90),
+        window("weekly", "weekly", 80),
+        window("monthly", "monthly", 70),
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics).toMatchObject({
+      status: "unknown",
+      effectiveAvailability: [],
+      unresolvedWindowIds: ["five_hour", "weekly", "monthly"],
+    });
+    expect(result.quotaSemantics?.description).toContain(
+      "does not claim an effective combined percentage",
+    );
+  });
+
   it("surfaces pace on a non-currently-limiting bounding window that is ahead", () => {
     const result = withQuotaSemantics(
       provider("claude", [

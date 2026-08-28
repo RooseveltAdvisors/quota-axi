@@ -108,32 +108,31 @@ function semanticsFor(
         `quota-axi does not know whether ${provider.label ?? provider.provider}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
       );
     case "alibaba":
+      return alibabaSemantics(provider.windows, generatedAt);
     case "opencode-go":
-      return rollingWindowSemantics(provider.windows, generatedAt);
+      return unknownSemantics(
+        provider.windows,
+        "OpenCode Go reports rolling, weekly, and monthly windows, but quota-axi has no provider evidence that they jointly bound all models, so it does not claim an effective combined percentage.",
+      );
   }
 }
 
-function rollingWindowSemantics(
+function alibabaSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
 ): QuotaSemantics {
-  const recognized = windows.filter(({ id }) =>
-    ["five_hour", "weekly", "monthly"].includes(id),
-  );
+  const account = windows.filter(({ id }) => id === "weekly");
   const modelWindows = windows.filter(({ id }) => id.startsWith("model:"));
   const unresolved = windows.filter(
-    (window) => !recognized.includes(window) && !modelWindows.includes(window),
+    (window) => !account.includes(window) && !modelWindows.includes(window),
   );
-  if (unresolved.length > 0) {
-    return partialSemantics(
-      unresolved,
-      "The provider reports rolling quota windows, but unfamiliar windows prevent a definitive combined percentage.",
-    );
-  }
+  const unresolvedIds = unresolved.map(({ id }) => id);
   const effectiveAvailability: EffectiveAvailability[] = [];
-  if (recognized.length > 0) {
+  if (account.length > 0) {
     effectiveAvailability.push(
-      availability("all_models", recognized, generatedAt),
+      unresolved.length > 0
+        ? unresolvedAvailability("all_models", account, unresolvedIds)
+        : availability("all_models", account, generatedAt),
     );
   }
   const models = new Map<string, QuotaWindow[]>();
@@ -144,14 +143,24 @@ function rollingWindowSemantics(
     models.set(scope, scoped);
   }
   for (const [scope, scoped] of models) {
-    // Account windows are not known to bind every model for these providers.
-    // Keep them at all_models instead of copying an unrelated bound into each
-    // model scope.
-    effectiveAvailability.push(availability(scope, scoped, generatedAt));
+    effectiveAvailability.push(
+      unresolved.length > 0
+        ? unresolvedAvailability(scope, scoped, unresolvedIds)
+        : availability(scope, scoped, generatedAt),
+    );
+  }
+  if (unresolved.length > 0) {
+    return {
+      status: "partial",
+      description:
+        "Alibaba's account weekly window binds the account scope, while model-scoped limits bind only their named model. Unfamiliar windows are not assigned to either scope, so effective percentages remain unknown.",
+      effectiveAvailability,
+      unresolvedWindowIds: unresolvedIds,
+    };
   }
   return knownSemantics(
     effectiveAvailability,
-    "The provider's reported account windows are available at account scope; model-scoped windows only bind their named model because no cross-model relationship is established.",
+    "Alibaba's account weekly window is available at account scope; model-scoped limits bind only their named model and never become an account-wide bound.",
   );
 }
 
