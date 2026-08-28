@@ -142,6 +142,7 @@ describe("OpenCode Go provider", () => {
             ({
               status: 200,
               ok: true,
+              headers: new Headers({ "content-length": "47" }),
               arrayBuffer: async () =>
                 new TextEncoder().encode(
                   JSON.stringify({ usage: { weekly: { percent: 1 } } }),
@@ -199,5 +200,54 @@ describe("OpenCode Go provider", () => {
       error: "response_too_large",
     });
     expect(arrayBuffer).not.toHaveBeenCalled();
+
+    const unverifiableArrayBuffer = vi.fn(
+      async () => new ArrayBuffer(1),
+    );
+    const unverifiableReport = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            body: null,
+            headers: new Headers({ "content-length": "not-a-length" }),
+            arrayBuffer: unverifiableArrayBuffer,
+          }) as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(unverifiableReport.state).toMatchObject({
+      status: "error",
+      error: "response_size_unverifiable",
+    });
+    expect(unverifiableArrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("does not wait indefinitely for a stalled response body", async () => {
+    const report = await createOpenCodeGoAdapter({
+      deadlineMs: 10,
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            headers: new Headers(),
+            body: {
+              getReader: () => ({
+                read: () => new Promise<never>(() => undefined),
+                releaseLock: vi.fn(),
+              }),
+            },
+          }) as unknown as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "provider_timeout",
+    });
   });
 });

@@ -217,7 +217,7 @@ async function requestUsage(
       throw new Error("provider_auth_rejected");
     if (response.status === 429) throw new Error("provider_rate_limited");
     if (!response.ok) throw new Error("provider_request_rejected");
-    const body = await readResponseBody(response);
+    const body = await readResponseBody(response, controller.signal);
     try {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
     } catch {
@@ -230,6 +230,7 @@ async function requestUsage(
       error instanceof Error &&
       (error.message.startsWith("provider_") ||
         error.message === "response_too_large" ||
+        error.message === "response_size_unverifiable" ||
         error.message === "malformed_json")
     )
       throw error;
@@ -240,15 +241,27 @@ async function requestUsage(
   }
 }
 
-async function readResponseBody(response: Response): Promise<Uint8Array> {
+async function readResponseBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   const declaredLength = response.headers?.get("content-length")?.trim();
-  if (declaredLength) {
-    const length = Number(declaredLength);
-    if (Number.isFinite(length) && length > RESPONSE_LIMIT_BYTES)
-      throw new Error("response_too_large");
-  }
+  const parsedLength = declaredLength ? Number(declaredLength) : undefined;
+  const usableLength =
+    parsedLength !== undefined &&
+    Number.isInteger(parsedLength) &&
+    parsedLength >= 0;
+  if (
+    usableLength &&
+    parsedLength !== undefined &&
+    parsedLength > RESPONSE_LIMIT_BYTES
+  )
+    throw new Error("response_too_large");
   if (!response.body) {
-    const body = new Uint8Array(await response.arrayBuffer());
+    if (!usableLength) throw new Error("response_size_unverifiable");
+    const body = new Uint8Array(
+      await raceWithAbort(response.arrayBuffer(), signal),
+    );
     if (body.length > RESPONSE_LIMIT_BYTES)
       throw new Error("response_too_large");
     return body;
@@ -259,7 +272,7 @@ async function readResponseBody(response: Response): Promise<Uint8Array> {
   let length = 0;
   try {
     while (true) {
-      const result = await reader.read();
+      const result = await raceWithAbort(reader.read(), signal);
       if (result.done) break;
       const chunk = result.value;
       if (length + chunk.byteLength > RESPONSE_LIMIT_BYTES) {
@@ -270,6 +283,7 @@ async function readResponseBody(response: Response): Promise<Uint8Array> {
       length += chunk.byteLength;
     }
   } finally {
+    if (!signal.aborted) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 
@@ -280,6 +294,23 @@ async function readResponseBody(response: Response): Promise<Uint8Array> {
     offset += chunk.byteLength;
   }
   return body;
+}
+
+async function raceWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) throw new Error("provider_timeout");
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error("provider_timeout"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 export function normalizeOpenCodeGoPayload(
