@@ -176,6 +176,8 @@ async function inspectAuth(
         ? "available"
         : resolution.status === "missing"
           ? "missing"
+        : resolution.status === "error"
+          ? "error"
           : "invalid",
     ...(resolution.status === "error"
       ? { error: "credential_resolution_failed" }
@@ -215,9 +217,7 @@ async function requestUsage(
       throw new Error("provider_auth_rejected");
     if (response.status === 429) throw new Error("provider_rate_limited");
     if (!response.ok) throw new Error("provider_request_rejected");
-    const body = new Uint8Array(await response.arrayBuffer());
-    if (body.length > RESPONSE_LIMIT_BYTES)
-      throw new Error("response_too_large");
+    const body = await readResponseBody(response);
     try {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
     } catch {
@@ -226,13 +226,54 @@ async function requestUsage(
   } catch (error) {
     if (controller.signal.aborted)
       throw new Error("provider_timeout", { cause: error });
-    if (error instanceof Error && error.message.startsWith("provider_"))
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("provider_") ||
+        error.message === "response_too_large" ||
+        error.message === "malformed_json")
+    )
       throw error;
     throw new Error("network_unavailable", { cause: error });
   } finally {
     clearTimeout(timer);
     if (timeout) clearTimeout(timeout);
   }
+}
+
+async function readResponseBody(response: Response): Promise<Uint8Array> {
+  if (!response.body) {
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (body.length > RESPONSE_LIMIT_BYTES)
+      throw new Error("response_too_large");
+    return body;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      const chunk = result.value;
+      if (length + chunk.byteLength > RESPONSE_LIMIT_BYTES) {
+        await reader.cancel();
+        throw new Error("response_too_large");
+      }
+      chunks.push(chunk);
+      length += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 export function normalizeOpenCodeGoPayload(

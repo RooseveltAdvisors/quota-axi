@@ -85,6 +85,21 @@ describe("OpenCode Go provider", () => {
     ).toEqual([]);
   });
 
+  it("preserves credential resolution errors in auth inspection", async () => {
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "error", path: "/auth.json" }),
+    }).inspectAuth(OPTIONS);
+
+    expect(report.sources).toEqual([
+      {
+        source: "opencode:auth.json",
+        path: "/auth.json",
+        status: "error",
+        error: "credential_resolution_failed",
+      },
+    ]);
+  });
+
   it("rejects non-numeric usage values instead of coercing them to zero", () => {
     for (const percent of [null, "", "  ", true, false]) {
       expect(
@@ -140,5 +155,26 @@ describe("OpenCode Go provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stops consuming a response once it exceeds the body limit", async () => {
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(262_145));
+      },
+      cancel() {},
+    });
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(async () => new Response(body)),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "response_too_large",
+    });
+    expect(pulls).toBeLessThanOrEqual(2);
   });
 });

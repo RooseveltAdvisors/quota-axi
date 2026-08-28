@@ -179,6 +179,41 @@ describe("Alibaba bl usage provider", () => {
     expect(report.state.status).toBe("error");
     expect(report.attempts?.[0]?.status).toBe("failed");
   });
+
+  it("returns the cached snapshot when the CLI becomes unavailable", async () => {
+    process.env.PATH = tempDir;
+    const cached = {
+      provider: "alibaba" as const,
+      label: "Alibaba Coding Plan",
+      source: "cli" as const,
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly" as const,
+          percentUsed: 18,
+          percentRemaining: 82,
+        },
+      ],
+      state: {
+        status: "fresh" as const,
+        stale: false,
+        refreshedAt: "2026-08-28T15:00:00.000Z",
+      },
+    };
+    const report = await createAlibabaAdapter({
+      readCachedProvider: () => cached,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "cache",
+      windows: [{ id: "weekly", percentRemaining: 82 }],
+      state: { status: "stale", stale: true, error: "bl_cli_unavailable" },
+    });
+    expect(report.attempts).toEqual([
+      { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
+    ]);
+  });
 });
 
 function readFixture(): string {

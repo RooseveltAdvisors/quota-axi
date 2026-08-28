@@ -2,6 +2,7 @@ import { execFileText } from "../lib/process.js";
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import * as path from "node:path";
+import { readCachedProvider } from "../cache.js";
 import { parseEpochOrIso } from "../lib/time.js";
 import type {
   AuthProviderReport,
@@ -17,6 +18,7 @@ import {
   sourceNames,
   statusFromError,
   successProvider,
+  staleFromCache,
 } from "./common.js";
 
 const BL_COMMAND = "bl";
@@ -29,6 +31,7 @@ type AlibabaDependencies = {
   commandExists: (command: string) => Promise<boolean>;
   execFileText: typeof execFileText;
   now: () => number;
+  readCachedProvider: typeof readCachedProvider;
 };
 
 export type NormalizedAlibabaUsage = {
@@ -43,6 +46,7 @@ export function createAlibabaAdapter(
     commandExists: commandOnPath,
     execFileText,
     now: Date.now,
+    readCachedProvider,
     ...overrides,
   };
 
@@ -65,6 +69,7 @@ export async function fetchQuota(
     commandExists: commandOnPath,
     execFileText,
     now: Date.now,
+    readCachedProvider,
   });
 }
 
@@ -80,14 +85,7 @@ async function fetchQuotaWithDependencies(
         status: "skipped",
         error: "bl_cli_unavailable",
       };
-      return failedProvider({
-        provider: "alibaba",
-        label: LABEL,
-        status: "unavailable",
-        error: "bl_cli_unavailable",
-        sourcesTried: sourceNames(attempts),
-        attempts,
-      });
+      throw new Error("bl_cli_unavailable");
     }
 
     const output = await dependencies.execFileText(
@@ -113,11 +111,23 @@ async function fetchQuotaWithDependencies(
     });
   } catch (error) {
     const message = errorMessage(error);
-    attempts[0] = { source: BL_SOURCE, status: "failed", error: message };
+    if (attempts[0]?.status !== "skipped")
+      attempts[0] = { source: BL_SOURCE, status: "failed", error: message };
+    const cached = dependencies.readCachedProvider("alibaba");
+    if (cached)
+      return staleFromCache(
+        cached,
+        message,
+        sourceNames(attempts),
+        attempts,
+      );
     return failedProvider({
       provider: "alibaba",
       label: LABEL,
-      status: statusFromError(message),
+      status:
+        message === "bl_cli_unavailable"
+          ? "unavailable"
+          : statusFromError(message),
       error: message,
       sourcesTried: sourceNames(attempts),
       attempts,
@@ -321,6 +331,7 @@ function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) return "bl_usage_malformed_json";
   if (error instanceof Error) {
     const message = error.message.trim();
+    if (message === "bl_cli_unavailable") return message;
     return message
       ? `bl_usage_failed: ${message.slice(0, 240)}`
       : "bl_usage_failed";
