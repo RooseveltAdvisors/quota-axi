@@ -236,9 +236,7 @@ describe("OpenCode Go provider", () => {
     });
     expect(arrayBuffer).not.toHaveBeenCalled();
 
-    const unverifiableArrayBuffer = vi.fn(
-      async () => new ArrayBuffer(1),
-    );
+    const unverifiableArrayBuffer = vi.fn(async () => new ArrayBuffer(1));
     const unverifiableReport = await createOpenCodeGoAdapter({
       credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
       fetch: vi.fn(
