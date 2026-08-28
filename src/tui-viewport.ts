@@ -112,11 +112,7 @@ export function scrollFrame(
     status.maxOffset = maxOffset;
     lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
   }
-  if (
-    columns !== undefined &&
-    Number.isFinite(columns) &&
-    columns > 0
-  ) {
+  if (columns !== undefined && Number.isFinite(columns) && columns > 0) {
     while (pageLines > 1 && physicalRows(lines, columns) > rows) {
       pageLines -= 1;
       maxOffset = Math.max(0, scrolling.length - pageLines);
