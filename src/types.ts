@@ -26,6 +26,7 @@ export const PROVIDER_IDS = [
 export type ProviderSource =
   | "oauth"
   | "cli-rpc"
+  | "cli"
   | "api"
   | "web"
   | "cache"

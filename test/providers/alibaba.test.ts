@@ -1,140 +1,156 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createAlibabaAdapter,
-  extractAlibabaCredential,
-  normalizeAlibabaPayload,
-  resolveAlibabaCredential,
+  normalizeAlibabaUsage,
 } from "../../src/providers/alibaba.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
-const KEY = "synthetic-alibaba-key-42";
-let tempDir: string | undefined;
+const originalPath = process.env.PATH;
+let tempDir: string;
+
+beforeEach(() => {
+  tempDir = mkdtempSync(join(tmpdir(), "quota-axi-alibaba-"));
+});
 
 afterEach(() => {
-  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
-  tempDir = undefined;
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
-describe("Alibaba provider", () => {
-  it("discovers the Pi alibaba-plan credential without exposing it", () => {
-    const path = "/synthetic/.pi/agent/auth.json";
-    expect(
-      extractAlibabaCredential(
-        { "alibaba-plan": { type: "oauth", access: KEY } },
-        path,
-      ),
-    ).toEqual({ status: "available", key: KEY, path });
-    expect(
-      extractAlibabaCredential(
-        { "alibaba-plan": { access: "${ALIBABA_KEY}" } },
-        path,
-      ).status,
-    ).toBe("invalid");
-  });
+describe("Alibaba bl usage provider", () => {
+  it("runs the official bl command and normalizes fixture windows", async () => {
+    const argsFile = join(tempDir, "args");
+    installMockBl(argsFile, readFixture());
+    process.env.PATH = tempDir;
 
-  it("reads credential discovery from the standard Pi auth path", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "quota-axi-alibaba-"));
-    const path = join(tempDir, "auth.json");
-    writeFileSync(path, JSON.stringify({ "alibaba-plan": { access: KEY } }));
-    expect(resolveAlibabaCredential(path)).toEqual({
-      status: "available",
-      key: KEY,
-      path,
-    });
-  });
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
 
-  it("queries DashScope and normalizes the seven-day window", async () => {
-    const request = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            planName: "Coding Plan Pro",
-            usage: {
-              weekly: { percentUsed: 37, resetsAt: "2026-09-03T00:00:00Z" },
-            },
-          }),
-          { status: 200 },
-        ),
-    );
-    const report = await createAlibabaAdapter({
-      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
-      fetch: request,
-      now: () => Date.parse("2026-08-28T00:00:00Z"),
-    }).fetchQuota(OPTIONS);
-
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(String(request.mock.calls[0][0])).toBe(
-      "https://dashscope-intl.aliyuncs.com/api/v1/models/limits",
-    );
-    expect(
-      new Headers(request.mock.calls[0][1]?.headers).get("authorization"),
-    ).toBe(`Bearer ${KEY}`);
+    expect(readFileSync(argsFile, "utf8").trim().split("\n")).toEqual([
+      "usage",
+      "summary",
+      "--days",
+      "1",
+      "--output",
+      "json",
+    ]);
     expect(report).toMatchObject({
       provider: "alibaba",
-      plan: "Coding Plan Pro",
-      source: "api",
-      windows: [
-        {
-          id: "weekly",
-          label: "week",
-          kind: "weekly",
-          percentUsed: 37,
-          percentRemaining: 63,
-          resetsAt: "2026-09-03T00:00:00.000Z",
-        },
-      ],
-      state: { status: "fresh", stale: false },
+      label: "Alibaba Coding Plan",
+      source: "cli",
+      plan: "Alibaba Coding Plan Pro",
+      state: {
+        status: "fresh",
+        stale: false,
+        sourcesTried: ["bl-cli"],
+      },
+      attempts: [{ source: "bl-cli", status: "success" }],
     });
-    expect(JSON.stringify(report)).not.toContain(KEY);
+    expect(report.windows).toEqual([
+      {
+        id: "model:qwen3.8-max",
+        label: "qwen3.8-max",
+        kind: "model",
+        percentUsed: 25,
+        percentRemaining: 75,
+        resetsAt: "2026-10-31T00:00:00.000Z",
+      },
+      {
+        id: "model:kimi-k3",
+        label: "kimi-k3",
+        kind: "model",
+        percentUsed: 75,
+        percentRemaining: 25,
+        resetsAt: "2026-11-16T00:00:00.000Z",
+      },
+    ]);
   });
 
-  it("accepts DashScope model quota records when they include usage", () => {
+  it("accepts remaining and total when remainingPercent is absent", () => {
     expect(
-      normalizeAlibabaPayload({
-        plan: "DashScope",
-        output: {
-          quotas: [
-            {
-              model: "qwen3-max",
-              model_limit: {
-                usage_limit: 1000,
-                usage_limit_period: 604800,
-                usage: 250,
-                nextResetTime: 1_790_000_000,
-              },
-            },
-          ],
-        },
+      normalizeAlibabaUsage({
+        plan: "Coding Plan",
+        freeTier: [
+          {
+            model: "fixture-model",
+            remaining: 2,
+            total: 8,
+            resetAt: 1_800_000_000,
+          },
+        ],
       }),
-    ).toMatchObject({
-      plan: "DashScope",
+    ).toEqual({
+      plan: "Coding Plan",
       windows: [
         {
-          id: "model:qwen3-max:weekly",
+          id: "model:fixture-model",
+          label: "fixture-model",
           kind: "model",
-          percentRemaining: 75,
+          percentUsed: 75,
+          percentRemaining: 25,
+          resetsAt: "2027-01-15T08:00:00.000Z",
         },
       ],
     });
   });
 
-  it("maps rejected credentials and malformed responses to safe errors", async () => {
-    const report = await createAlibabaAdapter({
-      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
-      fetch: vi.fn(
-        async () => new Response("provider secret", { status: 401 }),
-      ),
-    }).fetchQuota(OPTIONS);
-    expect(report.state).toMatchObject({
-      status: "auth_required",
-      error: "provider_auth_rejected",
+  it("reports unavailable when bl is not on PATH", async () => {
+    process.env.PATH = tempDir;
+
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      provider: "alibaba",
+      source: "unavailable",
+      windows: [],
+      state: { status: "unavailable", error: "bl_cli_unavailable" },
+      attempts: [
+        { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
+      ],
     });
-    expect(JSON.stringify(report)).not.toContain("provider secret");
-    expect(
-      normalizeAlibabaPayload({ plan: "active", usage: {} }).windows,
-    ).toEqual([]);
+  });
+
+  it("reports a failed CLI without throwing", async () => {
+    const argsFile = join(tempDir, "args");
+    installMockBl(argsFile, "not used", true);
+    process.env.PATH = tempDir;
+
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
+
+    expect(report.windows).toEqual([]);
+    expect(report.state.status).toBe("error");
+    expect(report.attempts?.[0]?.status).toBe("failed");
   });
 });
+
+function readFixture(): string {
+  return readFileSync(
+    join(process.cwd(), "test/fixtures/alibaba/usage-summary.json"),
+    "utf8",
+  );
+}
+
+function installMockBl(argsFile: string, output: string, fail = false): void {
+  const script = join(tempDir, "bl");
+  const shellQuote = (value: string): string =>
+    `'${value.replaceAll("'", "'\\''")}'`;
+  writeFileSync(
+    script,
+    [
+      "#!/bin/sh",
+      `printf '%s\\n' "$@" > ${shellQuote(argsFile)}`,
+      fail ? "exit 7" : `printf '%s' ${shellQuote(output)}`,
+      "",
+    ].join("\n"),
+  );
+  chmodSync(script, 0o755);
+}
