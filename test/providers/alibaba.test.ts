@@ -94,7 +94,7 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
-  it("does not turn ignored model-limit data into account-wide windows", () => {
+  it("preserves nested model-limit data as a model-scoped window", () => {
     const normalized = normalizeAlibabaUsage({
       per1WeekPercentage: 0.25,
       per1WeekResetTime: "2026-09-03T15:00:00Z",
@@ -106,9 +106,50 @@ describe("Alibaba bl usage provider", () => {
       ],
     });
 
-    expect(normalized.windows).toHaveLength(1);
+    expect(normalized.windows).toHaveLength(2);
     expect(normalized.windows[0]?.id).toBe("weekly");
     expect(normalized.windows[0]?.kind).toBe("weekly");
+    expect(normalized.windows[1]).toMatchObject({
+      id: "model:qwen3-max",
+      kind: "model",
+      percentRemaining: 99,
+    });
+  });
+
+  it("preserves named model limits as model-scoped windows when present", () => {
+    const normalized = normalizeAlibabaUsage(
+      JSON.parse(
+        readFileSync(
+          join(
+            process.cwd(),
+            "test/fixtures/alibaba/usage-with-model-limits.json",
+          ),
+          "utf8",
+        ),
+      ),
+    );
+
+    expect(normalized.windows).toEqual([
+      expect.objectContaining({
+        id: "weekly",
+        kind: "weekly",
+        percentRemaining: 99.76594735176,
+      }),
+      expect.objectContaining({
+        id: "model:qwen3-max",
+        label: "qwen3-max",
+        kind: "model",
+        percentUsed: 25,
+        percentRemaining: 75,
+      }),
+      expect.objectContaining({
+        id: "model:qwen-plus",
+        label: "qwen-plus",
+        kind: "model",
+        percentUsed: 40,
+        percentRemaining: 60,
+      }),
+    ]);
   });
 
   it("reports unavailable when bl is not on PATH", async () => {

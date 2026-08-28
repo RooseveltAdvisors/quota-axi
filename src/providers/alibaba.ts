@@ -148,24 +148,91 @@ export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
   const root = objectValue(raw);
   if (!root) return { windows: [] };
   const usage = numberValue(root.per1WeekPercentage);
-  if (usage === undefined) return { plan: LABEL, windows: [] };
-  const percentUsed = clampPercentage(usage <= 1 ? usage * 100 : usage);
-  const percentRemaining = 100 - percentUsed;
-  const reset = parseAlibabaReset(root.per1WeekResetTime);
+  const windows: QuotaWindow[] = [];
+  if (usage !== undefined) {
+    const percentUsed = clampPercentage(usage <= 1 ? usage * 100 : usage);
+    const percentRemaining = 100 - percentUsed;
+    const reset = parseAlibabaReset(root.per1WeekResetTime);
+    windows.push({
+      id: "weekly",
+      label: "week",
+      kind: "weekly",
+      percentUsed,
+      percentRemaining,
+      ...(reset ? { resetsAt: reset } : {}),
+    });
+  }
 
   return {
     plan: stringValue(root.planName) ?? stringValue(root.plan) ?? LABEL,
-    windows: [
-      {
-        id: "weekly",
-        label: "week",
-        kind: "weekly",
-        percentUsed,
-        percentRemaining,
-        ...(reset ? { resetsAt: reset } : {}),
-      },
-    ],
+    windows: [...windows, ...normalizeAlibabaModelLimits(root.limits)],
   };
+}
+
+function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  const windows: QuotaWindow[] = [];
+  for (const [index, rawLimit] of value.entries()) {
+    const entry = objectValue(rawLimit);
+    if (!entry) continue;
+    const details =
+      objectValue(entry.limit) ??
+      objectValue(entry.quota) ??
+      objectValue(entry.modelLimit) ??
+      objectValue(entry.model_limit);
+    const record = details ? { ...entry, ...details } : entry;
+    const model = firstString(record, ["model", "modelName", "model_name"]);
+    if (!model) continue;
+
+    const remaining = firstNumber(record, [
+      "percentRemaining",
+      "remainingPercent",
+    ]);
+    const fraction = firstNumber(record, ["per1WeekPercentage"]);
+    const used =
+      fraction !== undefined
+        ? fraction <= 1
+          ? fraction * 100
+          : fraction
+        : firstNumber(record, [
+            "percentUsed",
+            "usedPercent",
+            "usagePercent",
+            "percentage",
+            "percent",
+          ]);
+    const percentRemaining =
+      remaining !== undefined
+        ? clampPercentage(remaining)
+        : used !== undefined
+          ? clampPercentage(100 - used)
+          : undefined;
+    if (percentRemaining === undefined) continue;
+
+    const baseId = `model:${model}`;
+    let id = baseId;
+    if (ids.has(id)) id = `${baseId}:${index + 1}`;
+    ids.add(id);
+    const reset = parseAlibabaReset(
+      firstValue(record, [
+        "resetsAt",
+        "resetAt",
+        "reset_at",
+        "per1WeekResetTime",
+        "nextResetTime",
+      ]),
+    );
+    windows.push({
+      id,
+      label: model,
+      kind: "model",
+      percentUsed: clampPercentage(100 - percentRemaining),
+      percentRemaining,
+      ...(reset ? { resetsAt: reset } : {}),
+    });
+  }
+  return windows;
 }
 
 async function commandOnPath(command: string): Promise<boolean> {
@@ -201,6 +268,13 @@ function stringValue(value: unknown): string | undefined {
     : undefined;
 }
 
+function firstString(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  return keys.map((key) => stringValue(value[key])).find(Boolean);
+}
+
 function numberValue(value: unknown): number | undefined {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : undefined;
@@ -210,6 +284,24 @@ function numberValue(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function firstNumber(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  return keys
+    .map((key) => numberValue(value[key]))
+    .find((item) => item !== undefined);
+}
+
+function firstValue(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): unknown {
+  return keys
+    .map((key) => value[key])
+    .find((item) => item !== undefined && item !== null);
 }
 
 function clampPercentage(value: number): number {
