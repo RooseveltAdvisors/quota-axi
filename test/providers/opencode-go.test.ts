@@ -179,6 +179,35 @@ describe("OpenCode Go provider", () => {
     expect(pulls).toBeLessThanOrEqual(2);
   });
 
+  it("does not wait for stalled reader cleanup after an oversized chunk", async () => {
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            headers: new Headers(),
+            body: {
+              getReader: () => ({
+                read: async () => ({
+                  done: false,
+                  value: new Uint8Array(262_145),
+                }),
+                cancel: () => new Promise<never>(() => undefined),
+                releaseLock: vi.fn(),
+              }),
+            },
+          }) as unknown as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "response_too_large",
+    });
+  });
+
   it("rejects oversized no-body responses before reading the array buffer", async () => {
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(262_145));
     const report = await createOpenCodeGoAdapter({

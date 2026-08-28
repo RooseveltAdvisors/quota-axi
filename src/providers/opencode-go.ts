@@ -276,14 +276,14 @@ async function readResponseBody(
       if (result.done) break;
       const chunk = result.value;
       if (length + chunk.byteLength > RESPONSE_LIMIT_BYTES) {
-        await reader.cancel();
+        void reader.cancel().catch(() => undefined);
         throw new Error("response_too_large");
       }
       chunks.push(chunk);
       length += chunk.byteLength;
     }
   } finally {
-    if (!signal.aborted) await reader.cancel().catch(() => undefined);
+    if (!signal.aborted) void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 
