@@ -296,9 +296,8 @@ function clampPercentage(value: number): number {
 
 function parseAlibabaReset(value: unknown): string | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(
-      value > 100_000_000_000 ? value : value * 1000,
-    ).toISOString();
+    const date = new Date(value > 100_000_000_000 ? value : value * 1000);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
   }
   return parseEpochOrIso(value);
 }

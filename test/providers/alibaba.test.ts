@@ -113,6 +113,32 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
+  it("skips an out-of-range model reset without discarding valid windows", () => {
+    const normalized = normalizeAlibabaUsage({
+      per1WeekPercentage: 0.25,
+      limits: [
+        { model: "bad-model", percentage: 50, resetAt: 1e20 },
+        { model: "good-model", percentage: 25 },
+      ],
+    });
+
+    expect(normalized.windows).toEqual([
+      expect.objectContaining({
+        id: "weekly",
+        percentRemaining: 75,
+      }),
+      expect.objectContaining({
+        id: "model:bad-model",
+        percentRemaining: 50,
+      }),
+      expect.objectContaining({
+        id: "model:good-model",
+        percentRemaining: 75,
+      }),
+    ]);
+    expect(normalized.windows[0]).not.toHaveProperty("resetsAt");
+  });
+
   it("preserves nested model-limit data as a model-scoped window", () => {
     const normalized = normalizeAlibabaUsage({
       per1WeekPercentage: 0.25,

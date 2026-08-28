@@ -8,10 +8,11 @@ export function execFileText(
   args: string[],
   timeoutMs: number,
 ): Promise<string> {
+  const invocation = shimInvocation(command, args);
   return new Promise((resolve, reject) => {
     execFile(
-      command,
-      args,
+      invocation.command,
+      invocation.args,
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
       (error, stdout) => {
         if (error) {
@@ -22,6 +23,28 @@ export function execFileText(
       },
     );
   });
+}
+
+function shimInvocation(
+  command: string,
+  args: string[],
+): { command: string; args: string[] } {
+  if (
+    process.platform !== "win32" ||
+    ![".cmd", ".bat"].includes(path.win32.extname(command).toLowerCase())
+  ) {
+    return { command, args };
+  }
+  const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+  const commandLine = [command, ...args].map(quoteCmdArgument).join(" ");
+  return {
+    command: comspec,
+    args: ["/d", "/s", "/c", commandLine],
+  };
+}
+
+function quoteCmdArgument(value: string): string {
+  return `"${value.replaceAll('"', '\\"')}"`;
 }
 
 export async function commandExists(command: string): Promise<boolean> {
