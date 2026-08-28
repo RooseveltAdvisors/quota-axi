@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatInterval, runLiveTui, type LiveTuiIo } from "../src/tui-live.js";
+import { renderTuiHintLine } from "../src/tui.js";
 import { scrollHint } from "../src/tui-viewport.js";
 
 const ENTER_SCREEN = "\x1b[?1049h";
@@ -292,6 +293,53 @@ describe("live terminal report at short heights", () => {
     live.io.press("q");
     await live.run;
   }
+
+  it("does not scroll a frame away when it exactly fills the terminal", async () => {
+    const io = harness();
+    io.setRows(3);
+    const body = "line 0\nline 1\nline 2";
+    const run = runLiveTui<number>({
+      load: async () => 1,
+      render: () => body,
+      intervalMillis: 300_000,
+      io: io.io,
+    });
+    await flush();
+
+    expect(io.frame()).toBe(body);
+    expect(io.writes.at(-1)).toBe(`${CLEAR_SCREEN}${body}`);
+    expect(io.writes.at(-1)).not.toMatch(/\n$/);
+    await stop({ io, run });
+  });
+
+  it("keeps a full-width first visible line and hint within the height budget", async () => {
+    const io = harness();
+    io.setRows(3);
+    const fullWidthLine = "x".repeat(80);
+    const body = `header\n${fullWidthLine}\nline 2\nline 3`;
+    const run = runLiveTui<number>({
+      load: async () => 1,
+      render: () => body,
+      status: (scroll) =>
+        renderTuiHintLine(scrollHint(scroll, HINT), {
+          columns: 80,
+          colorDepth: "none",
+        }),
+      intervalMillis: 300_000,
+      io: io.io,
+    });
+    await flush();
+
+    io.press("j");
+    await flush();
+
+    const lines = io.frame().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe(fullWidthLine);
+    expect(lines.at(-1)).toContain("scroll");
+    expect(lines.every((line) => line.length <= 80)).toBe(true);
+    await stop({ io, run });
+  });
 
   it("paints the top of the report and an affordance at startup", async () => {
     const live = await start(10);
