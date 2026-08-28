@@ -800,6 +800,16 @@ describe("default TOON decision blocks", () => {
       "kimi",
       "zai",
     ]);
+    expect(toonRows(output, "quota").find((row) => row[0] === "zai")).toEqual([
+      "zai",
+      "all_models",
+      "80",
+      "unknown",
+      "unknown",
+      "unknown",
+      "weekly",
+      "unknown",
+    ]);
   });
 
   it("emits Cursor IDE and Grok Bot as separate quota[] rows", async () => {

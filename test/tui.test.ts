@@ -218,6 +218,40 @@ function grokProvider(): ProviderQuota {
   };
 }
 
+function zaiProvider(stale = false): ProviderQuota {
+  return withQuotaSemantics(
+    {
+      provider: "zai",
+      label: "Z.AI",
+      source: "api",
+      plan: "pro",
+      windows: [
+        {
+          id: "limit:1",
+          label: "limit 1",
+          kind: "unknown",
+          percentRemaining: 1,
+          resetsAt: "2026-08-07T04:00:00.000Z",
+        },
+        {
+          id: "limit:2",
+          label: "limit 2",
+          kind: "unknown",
+          percentRemaining: 0,
+          resetsAt: "2026-08-11T21:00:00.000Z",
+        },
+      ],
+      state: {
+        status: stale ? "stale" : "fresh",
+        stale,
+        refreshedAt: GENERATED_AT,
+        sourcesTried: ["opencode:auth.json"],
+      },
+    },
+    GENERATED_AT,
+  );
+}
+
 function signedOutProvider(
   provider: "cursor" | "copilot" | "kimi",
   error: string,
@@ -846,6 +880,32 @@ describe("renderQuotaTui structure", () => {
 });
 
 describe("cards for providers with no combinable bound", () => {
+  it.each([false, true])(
+    "renders Z.AI's limit windows as a %s per-window card",
+    (stale) => {
+      const lines = renderQuotaTui(
+        {
+          generatedAt: GENERATED_AT,
+          schemaVersion: 5,
+          providers: [zaiProvider(stale)],
+        },
+        { timeZone: "America/Los_Angeles" },
+      ).split("\n");
+
+      expect(findLine(lines, "● zai")).toContain("pro · api");
+      expect(
+        findLine(
+          lines,
+          stale ? "stale · per-window usage" : "per-window usage",
+        ),
+      ).toContain("no combined bound");
+      expect(findLine(lines, "limit 1")).toContain("1%");
+      expect(findLine(lines, "limit 2")).toContain("0%");
+      expect(lines.join("\n")).not.toContain("effective unknown");
+      expect(lines.join("\n")).not.toContain("runway unknown");
+    },
+  );
+
   /**
    * Copilot reports real per-window usage but quota-axi cannot say whether those
    * windows are independent or jointly bounding, so the real interpretation

@@ -314,8 +314,17 @@ function hasWhollyUnknownWindowRelationships(provider: ProviderQuota): boolean {
   const semantics = provider.quotaSemantics;
   if (
     provider.windows.length === 0 ||
-    semantics?.status !== "unknown" ||
+    semantics === undefined ||
     semantics.unresolvedWindowIds === undefined
+  ) {
+    return false;
+  }
+  if (
+    semantics.status !== "unknown" &&
+    !(
+      semantics.status === "partial" &&
+      semantics.effectiveAvailability.length === 0
+    )
   ) {
     return false;
   }
