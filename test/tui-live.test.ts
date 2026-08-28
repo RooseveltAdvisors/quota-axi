@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatInterval, runLiveTui, type LiveTuiIo } from "../src/tui-live.js";
+import {
+  decodeLiveTuiInput,
+  formatInterval,
+  renderLiveTuiViewport,
+  runLiveTui,
+  type LiveTuiIo,
+} from "../src/tui-live.js";
 
 const ENTER_SCREEN = "\x1b[?1049h";
 const LEAVE_SCREEN = "\x1b[?1049l";
@@ -17,6 +23,7 @@ type Harness = {
   resize(): void;
   signal(): void;
   tick(): void;
+  setRows(rows: number): void;
 };
 
 function harness(): Harness {
@@ -29,12 +36,16 @@ function harness(): Harness {
   let nextTimer = 1;
   let resumes = 0;
   let pauses = 0;
+  let rows = 24;
 
   const io: LiveTuiIo = {
     stdout: {
       write: (chunk) => {
         writes.push(chunk);
         return true;
+      },
+      get rows() {
+        return rows;
       },
     },
     stdin: {
@@ -90,6 +101,9 @@ function harness(): Harness {
       if (handle === undefined || !callback) throw new Error("no timer armed");
       timers.delete(handle);
       callback();
+    },
+    setRows: (value) => {
+      rows = value;
     },
   };
 }
@@ -223,6 +237,41 @@ describe("live terminal report loop", () => {
     expect(io.rawModes).toEqual([true, false]);
   });
 
+  it("scrolls oversized frames with vim, arrow, and half-page keys", async () => {
+    const io = harness();
+    io.setRows(4);
+    const run = runLiveTui<number>({
+      load: async () => 1,
+      render: () => "row 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7",
+      intervalMillis: 300_000,
+      io: io.io,
+    });
+    await flush();
+
+    expect(io.writes.at(-1)).toContain("row 1\nrow 2\nrow 3\nrow 4");
+    io.press("j");
+    await flush();
+    expect(io.writes.at(-1)).toContain("↕ j/k scroll  row 2\nrow 3");
+
+    io.press("\x1b[B");
+    await flush();
+    expect(io.writes.at(-1)).toContain("↕ j/k scroll  row 3\nrow 4");
+
+    io.press("\x04");
+    await flush();
+    expect(io.writes.at(-1)).toContain("row 5\nrow 6\nrow 7");
+
+    io.press("k");
+    await flush();
+    expect(io.writes.at(-1)).toContain("↕ j/k scroll  row 3\nrow 4");
+
+    io.resize();
+    await flush();
+    expect(io.writes.at(-1)).toContain("row 1\nrow 2\nrow 3\nrow 4");
+    io.press("q");
+    await run;
+  });
+
   it("restores the terminal when a refresh throws", async () => {
     const io = harness();
 
@@ -251,5 +300,35 @@ describe("refresh interval formatting", () => {
     expect(formatInterval(300)).toBe("5m");
     expect(formatInterval(3600)).toBe("1h");
     expect(formatInterval(7200)).toBe("2h");
+  });
+});
+
+describe("live TUI viewport helpers", () => {
+  it("clamps viewport offsets and preserves the visible row count", () => {
+    expect(renderLiveTuiViewport("a\nb\nc\nd\ne", 2, 2)).toEqual({
+      text: "↕ j/k scroll  c\nd",
+      offset: 2,
+      maxOffset: 3,
+      height: 2,
+    });
+    expect(renderLiveTuiViewport("a\nb\nc", 99, 2)).toMatchObject({
+      text: "↕ j/k scroll  b\nc",
+      offset: 1,
+      maxOffset: 1,
+      height: 2,
+    });
+  });
+
+  it("decodes split escape sequences and reserves Ctrl+D for scrolling", () => {
+    expect(decodeLiveTuiInput("\x1b")).toEqual({
+      actions: [],
+      quit: false,
+      remainder: "\x1b",
+    });
+    expect(decodeLiveTuiInput("\x1b[Bj\x04\x15q")).toEqual({
+      actions: ["down", "down", "pageDown", "pageUp"],
+      quit: true,
+      remainder: "",
+    });
   });
 });

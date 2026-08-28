@@ -14,8 +14,8 @@ export const DESCRIPTION =
 export const TOP_HELP = `usage: quota-axi [quota|auth|models] [flags]
 commands[3]:
   (none)=quota, auth, models
-output:
-  Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits).
+  output:
+  Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (j/k or arrows scroll, q quits).
 flags[12]:
   --provider <${PROVIDER_IDS.join(",")}>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --no-credential-refresh, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
 examples:
