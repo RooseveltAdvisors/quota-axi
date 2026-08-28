@@ -1,0 +1,87 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  createOpenCodeGoAdapter,
+  extractOpenCodeGoCredential,
+  normalizeOpenCodeGoPayload,
+} from "../../src/providers/opencode-go.js";
+
+const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
+const KEY = "synthetic-opencode-go-key-42";
+
+describe("OpenCode Go provider", () => {
+  it("discovers the active opencode-go credential and supports the legacy id", () => {
+    expect(
+      extractOpenCodeGoCredential(
+        { "opencode-go": { type: "api", key: KEY } },
+        "/auth.json",
+      ),
+    ).toEqual({ status: "available", key: KEY, path: "/auth.json" });
+    expect(
+      extractOpenCodeGoCredential(
+        { opencode: { type: "api", key: "fallback-key" } },
+        "/auth.json",
+      ).status,
+    ).toBe("available");
+  });
+
+  it("queries usage and normalizes consumed percentages as remaining quota", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            usage: {
+              rolling: { percent: 9, resetsAt: "2026-08-28T05:00:00Z" },
+              weekly: { percent: 21, resetsAt: "2026-09-01T00:00:00Z" },
+              monthly: { percent: 4, resetsAt: "2026-09-15T00:00:00Z" },
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: request,
+      now: () => Date.parse("2026-08-28T00:00:00Z"),
+    }).fetchQuota(OPTIONS);
+
+    expect(String(request.mock.calls[0][0])).toBe(
+      "https://opencode.ai/zen/go/v1/usage",
+    );
+    expect(
+      new Headers(request.mock.calls[0][1]?.headers).get("authorization"),
+    ).toBe(`Bearer ${KEY}`);
+    expect(report).toMatchObject({
+      provider: "opencode-go",
+      plan: "OpenCode Go",
+      windows: [
+        { id: "five_hour", percentUsed: 9, percentRemaining: 91 },
+        { id: "weekly", percentUsed: 21, percentRemaining: 79 },
+        { id: "monthly", percentUsed: 4, percentRemaining: 96 },
+      ],
+      state: { status: "fresh", stale: false },
+    });
+    expect(JSON.stringify(report)).not.toContain(KEY);
+  });
+
+  it("accepts remaining percentages and fails safely on rejected or malformed data", async () => {
+    expect(
+      normalizeOpenCodeGoPayload({
+        usage: { weekly: { percentRemaining: 77, resetsAt: 1_790_000_000 } },
+      }).windows,
+    ).toMatchObject([{ id: "weekly", percentRemaining: 77, percentUsed: 23 }]);
+
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () => new Response("provider secret", { status: 403 }),
+      ),
+    }).fetchQuota(OPTIONS);
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      error: "provider_auth_rejected",
+    });
+    expect(
+      normalizeOpenCodeGoPayload({ usage: { weekly: {} } }).windows,
+    ).toEqual([]);
+  });
+});
