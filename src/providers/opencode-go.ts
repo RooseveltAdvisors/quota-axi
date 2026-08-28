@@ -176,9 +176,9 @@ async function inspectAuth(
         ? "available"
         : resolution.status === "missing"
           ? "missing"
-        : resolution.status === "error"
-          ? "error"
-          : "invalid",
+          : resolution.status === "error"
+            ? "error"
+            : "invalid",
     ...(resolution.status === "error"
       ? { error: "credential_resolution_failed" }
       : {}),

@@ -115,12 +115,7 @@ async function fetchQuotaWithDependencies(
       attempts[0] = { source: BL_SOURCE, status: "failed", error: message };
     const cached = dependencies.readCachedProvider("alibaba");
     if (cached)
-      return staleFromCache(
-        cached,
-        message,
-        sourceNames(attempts),
-        attempts,
-      );
+      return staleFromCache(cached, message, sourceNames(attempts), attempts);
     return failedProvider({
       provider: "alibaba",
       label: LABEL,
