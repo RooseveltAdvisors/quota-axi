@@ -102,13 +102,14 @@ function harness(): Harness {
         .find((chunk) => chunk.startsWith(CLEAR_SCREEN));
       return (painted ?? "").slice(CLEAR_SCREEN.length);
     },
-    physicalRows: (columns) => terminalRows(
-      [...writes]
-        .reverse()
-        .find((chunk) => chunk.startsWith(CLEAR_SCREEN))
-        ?.slice(CLEAR_SCREEN.length) ?? "",
-      columns,
-    ),
+    physicalRows: (columns) =>
+      terminalRows(
+        [...writes]
+          .reverse()
+          .find((chunk) => chunk.startsWith(CLEAR_SCREEN))
+          ?.slice(CLEAR_SCREEN.length) ?? "",
+        columns,
+      ),
     signal: () => {
       for (const listener of [...signalListeners]) listener();
     },

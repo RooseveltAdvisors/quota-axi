@@ -96,13 +96,7 @@ export function scrollFrame(
     pageLines,
     statusRows === 1 ? options.status?.(status) : undefined,
   );
-  let lines = visibleLines(
-    bodyLines,
-    scrolling,
-    headerRows,
-    offset,
-    pageLines,
-  );
+  let lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
   if (
     statusRows === 1 &&
     columns !== undefined &&
@@ -123,13 +117,7 @@ export function scrollFrame(
       offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
       status.offset = offset;
       status.maxOffset = maxOffset;
-      lines = visibleLines(
-        bodyLines,
-        scrolling,
-        headerRows,
-        offset,
-        pageLines,
-      );
+      lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
     }
   }
   if (statusRows === 1 && options.status) lines.push(options.status(status));
@@ -160,18 +148,22 @@ function visibleLines(
 }
 
 function physicalRows(lines: string[], columns: number): number {
+  const ansiEscape = new RegExp(
+    `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+    "g",
+  );
   let rows = 1;
   let column = 0;
   let wrapPending = false;
   for (const line of lines) {
-    const plainLine = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    const plainLine = line.replace(ansiEscape, "");
     for (const character of plainLine) {
       if (wrapPending) {
         rows += 1;
         column = 0;
         wrapPending = false;
       }
-      column += 1;
+      column += character.length;
       if (column === columns) wrapPending = true;
     }
     if (line !== lines.at(-1)) {
