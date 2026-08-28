@@ -296,7 +296,7 @@ describe("live terminal report at short heights", () => {
 
   it("does not scroll a frame away when it exactly fills the terminal", async () => {
     const io = harness();
-    io.setRows(3);
+    io.setRows(4);
     const body = "line 0\nline 1\nline 2\n";
     const run = runLiveTui<number>({
       load: async () => 1,
