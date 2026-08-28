@@ -1,0 +1,30 @@
+{
+  "period": {
+    "start": "2026-08-27",
+    "end": "2026-08-28",
+    "days": 1
+  },
+  "planName": "Alibaba Coding Plan Pro",
+  "freeTier": [
+    {
+      "model": "qwen3.8-max",
+      "type": "Text",
+      "remaining": 750000,
+      "total": 1000000,
+      "remainingPercent": 75,
+      "expires": "2026-10-31"
+    },
+    {
+      "model": "kimi-k3",
+      "type": "Text",
+      "remaining": 250000,
+      "total": 1000000,
+      "remainingPercent": 25,
+      "expires": "2026-11-16"
+    }
+  ],
+  "usage": {
+    "modelsCalled": 1,
+    "successfulCalls": 1
+  }
+}

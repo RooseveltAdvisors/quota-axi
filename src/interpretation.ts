@@ -107,7 +107,29 @@ function semanticsFor(
         provider.windows,
         `quota-axi does not know whether ${provider.label ?? provider.provider}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
       );
+    case "alibaba":
+      return alibabaSemantics(provider.windows, generatedAt);
   }
+}
+
+function alibabaSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const modelWindows = windows.filter(({ kind }) => kind === "model");
+  const unresolved = windows.filter(({ kind }) => kind !== "model");
+  if (unresolved.length > 0) {
+    return partialSemantics(
+      unresolved,
+      "Alibaba free-tier model windows are independently scoped; unrecognized windows may add bounds, so effective remaining is only reported for named models.",
+    );
+  }
+  return knownSemantics(
+    modelWindows.map((window) =>
+      availability(window.id, [window], generatedAt),
+    ),
+    "Alibaba usage is reported as one independent free-tier window per model.",
+  );
 }
 
 function claudeSemantics(
