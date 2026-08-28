@@ -57,6 +57,7 @@ function harness(): Harness {
       off: (_event, listener) => dataListeners.delete(listener),
     },
     rows: () => rows,
+    columns: () => 80,
     setTimer: (callback) => {
       const handle = nextTimer++;
       timers.set(handle, callback);
@@ -126,7 +127,7 @@ function terminalRows(text: string, columns: number): number {
   let wrapPending = false;
   for (const character of text) {
     if (character === "\n") {
-      rows += 1;
+      rows += wrapPending ? 2 : 1;
       column = 0;
       wrapPending = false;
       continue;
@@ -364,9 +365,9 @@ describe("live terminal report at short heights", () => {
     await flush();
 
     const lines = io.frame().split("\n");
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(2);
     expect(lines[0]).toBe(fullWidthLine);
-    expect(lines.at(-1)).toContain("scroll");
+    expect(lines[1]).toBe("line 2");
     expect(lines.every((line) => line.length <= 80)).toBe(true);
     expect(io.physicalRows(80)).toBe(3);
     await stop({ io, run });

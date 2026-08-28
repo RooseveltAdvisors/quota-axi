@@ -35,6 +35,8 @@ export type ScrolledFrame = {
 export type ScrollFrameOptions = {
   /** Terminal height. Unknown or non-positive means no windowing at all. */
   rows?: number;
+  /** Terminal width. Unknown means logical rows are used as-is. */
+  columns?: number;
   offset?: number;
   /**
    * Closing line, rendered by the caller so it can carry the report's styling.
@@ -59,9 +61,18 @@ export function scrollFrame(
   const normalizedBody = body.replace(/\n+$/, "");
   const bodyLines = normalizedBody === "" ? [] : normalizedBody.split("\n");
   const rows = options.rows;
+  const columns = options.columns;
   const resting = restingFrame(bodyLines, options.status);
   if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return resting;
-  if (bodyLines.length + (options.status ? 2 : 0) <= rows) return resting;
+  if (
+    bodyLines.length + (options.status ? 2 : 0) <= rows &&
+    (columns === undefined ||
+      !Number.isFinite(columns) ||
+      columns <= 0 ||
+      physicalRows(resting.text.split("\n"), columns) <= rows)
+  ) {
+    return resting;
+  }
 
   let headerRows =
     rows >= STICKY_HEADER_MIN_ROWS && bodyLines.length > 0 ? 1 : 0;
@@ -70,17 +81,57 @@ export function scrollFrame(
   // rather than ever painting a frame taller than the terminal.
   if (rows - headerRows - statusRows < 1) statusRows = 0;
   if (rows - headerRows - statusRows < 1) headerRows = 0;
-  const pageLines = rows - headerRows - statusRows;
+  let pageLines = rows - headerRows - statusRows;
 
   const scrolling = bodyLines.slice(headerRows);
-  const maxOffset = Math.max(0, scrolling.length - pageLines);
-  const offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
+  let maxOffset = Math.max(0, scrolling.length - pageLines);
+  let offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
   const status: ScrollStatus = { scrollable: true, offset, maxOffset };
 
-  const lines = [
-    ...bodyLines.slice(0, headerRows),
-    ...scrolling.slice(offset, offset + pageLines),
-  ];
+  const candidate = visibleLines(
+    bodyLines,
+    scrolling,
+    headerRows,
+    offset,
+    pageLines,
+    statusRows === 1 ? options.status?.(status) : undefined,
+  );
+  let lines = visibleLines(
+    bodyLines,
+    scrolling,
+    headerRows,
+    offset,
+    pageLines,
+  );
+  if (
+    statusRows === 1 &&
+    columns !== undefined &&
+    Number.isFinite(columns) &&
+    columns > 0 &&
+    physicalRows(candidate, columns) > rows
+  ) {
+    statusRows = 0;
+    pageLines = rows - headerRows;
+    maxOffset = Math.max(0, scrolling.length - pageLines);
+    offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
+    status.offset = offset;
+    status.maxOffset = maxOffset;
+    lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
+    while (pageLines > 1 && physicalRows(lines, columns) > rows) {
+      pageLines -= 1;
+      maxOffset = Math.max(0, scrolling.length - pageLines);
+      offset = clamp(Math.trunc(options.offset ?? 0), 0, maxOffset);
+      status.offset = offset;
+      status.maxOffset = maxOffset;
+      lines = visibleLines(
+        bodyLines,
+        scrolling,
+        headerRows,
+        offset,
+        pageLines,
+      );
+    }
+  }
   if (statusRows === 1 && options.status) lines.push(options.status(status));
   return {
     text: lines.join("\n"),
@@ -90,6 +141,46 @@ export function scrollFrame(
     pageLines,
     status,
   };
+}
+
+function visibleLines(
+  bodyLines: string[],
+  scrolling: string[],
+  headerRows: number,
+  offset: number,
+  pageLines: number,
+  statusLine?: string,
+): string[] {
+  const lines = [
+    ...bodyLines.slice(0, headerRows),
+    ...scrolling.slice(offset, offset + pageLines),
+  ];
+  if (statusLine !== undefined) lines.push(statusLine);
+  return lines;
+}
+
+function physicalRows(lines: string[], columns: number): number {
+  let rows = 1;
+  let column = 0;
+  let wrapPending = false;
+  for (const line of lines) {
+    const plainLine = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    for (const character of plainLine) {
+      if (wrapPending) {
+        rows += 1;
+        column = 0;
+        wrapPending = false;
+      }
+      column += 1;
+      if (column === columns) wrapPending = true;
+    }
+    if (line !== lines.at(-1)) {
+      rows += wrapPending ? 2 : 1;
+      column = 0;
+      wrapPending = false;
+    }
+  }
+  return rows;
 }
 
 function restingFrame(
