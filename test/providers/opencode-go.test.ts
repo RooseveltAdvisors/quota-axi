@@ -22,6 +22,15 @@ describe("OpenCode Go provider", () => {
         "/auth.json",
       ).status,
     ).toBe("available");
+    expect(
+      extractOpenCodeGoCredential(
+        {
+          "opencode-go": {},
+          opencode: { type: "api", key: "fallback-key" },
+        },
+        "/auth.json",
+      ),
+    ).toEqual({ status: "available", key: "fallback-key", path: "/auth.json" });
   });
 
   it("queries usage and normalizes consumed percentages as remaining quota", async () => {

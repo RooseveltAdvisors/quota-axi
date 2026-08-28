@@ -50,19 +50,24 @@ export function extractOpenCodeGoCredential(
   path: string,
 ): CredentialResolution {
   const root = objectValue(value);
-  const entry =
-    objectValue(root?.["opencode-go"]) ?? objectValue(root?.opencode);
-  if (!entry) return { status: "missing", path };
-  const key = [
-    entry.key,
-    entry.apiKey,
-    entry.api_key,
-    entry.access,
-    entry.token,
-  ]
-    .map(usableLiteralSecret)
-    .find((candidate): candidate is string => candidate !== undefined);
-  return key ? { status: "available", key, path } : { status: "invalid", path };
+  if (!root) return { status: "missing", path };
+  let hasEntry = false;
+  for (const name of ["opencode-go", "opencode"]) {
+    const entry = objectValue(root[name]);
+    if (!entry) continue;
+    hasEntry = true;
+    const key = [
+      entry.key,
+      entry.apiKey,
+      entry.api_key,
+      entry.access,
+      entry.token,
+    ]
+      .map(usableLiteralSecret)
+      .find((candidate): candidate is string => candidate !== undefined);
+    if (key) return { status: "available", key, path };
+  }
+  return { status: hasEntry ? "invalid" : "missing", path };
 }
 
 export function resolveOpenCodeGoCredential(

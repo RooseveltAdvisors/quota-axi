@@ -65,6 +65,25 @@ describe("Alibaba bl usage provider", () => {
     ]);
   });
 
+  it("executes the resolved command path", async () => {
+    const commandPath = join(tempDir, "bl.cmd");
+    const execFileText = async (
+      command: string,
+      args: string[],
+      _timeoutMs: number,
+    ): Promise<string> => {
+      expect(command).toBe(commandPath);
+      expect(args).toEqual(["usage", "token-plan", "--output", "json"]);
+      return readFixture();
+    };
+    const report = await createAlibabaAdapter({
+      findCommandPath: async () => commandPath,
+      execFileText,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state.status).toBe("fresh");
+  });
+
   it("accepts used percentages already expressed from zero to one hundred", () => {
     expect(
       normalizeAlibabaUsage({

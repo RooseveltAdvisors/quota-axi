@@ -1,6 +1,6 @@
 import {
-  commandExists as commandOnPath,
   execFileText,
+  findCommandPath,
 } from "../lib/process.js";
 import { readCachedProvider } from "../cache.js";
 import { parseEpochOrIso } from "../lib/time.js";
@@ -28,7 +28,7 @@ const BL_TIMEOUT_MS = 15_000;
 const LABEL = "Alibaba Coding Plan";
 
 type AlibabaDependencies = {
-  commandExists: (command: string) => Promise<boolean>;
+  findCommandPath: typeof findCommandPath;
   execFileText: typeof execFileText;
   now: () => number;
   readCachedProvider: typeof readCachedProvider;
@@ -43,7 +43,7 @@ export function createAlibabaAdapter(
   overrides: Partial<AlibabaDependencies> = {},
 ): ProviderAdapter {
   const dependencies: AlibabaDependencies = {
-    commandExists: commandOnPath,
+    findCommandPath,
     execFileText,
     now: Date.now,
     readCachedProvider,
@@ -66,7 +66,7 @@ export async function fetchQuota(
   _options: ProviderOptions,
 ): Promise<ProviderQuota> {
   return fetchQuotaWithDependencies({
-    commandExists: commandOnPath,
+    findCommandPath,
     execFileText,
     now: Date.now,
     readCachedProvider,
@@ -79,7 +79,8 @@ async function fetchQuotaWithDependencies(
   const attempts: SourceAttempt[] = [{ source: BL_SOURCE, status: "failed" }];
 
   try {
-    if (!(await dependencies.commandExists(BL_COMMAND))) {
+    const commandPath = await dependencies.findCommandPath(BL_COMMAND);
+    if (!commandPath) {
       attempts[0] = {
         source: BL_SOURCE,
         status: "skipped",
@@ -89,7 +90,7 @@ async function fetchQuotaWithDependencies(
     }
 
     const output = await dependencies.execFileText(
-      BL_COMMAND,
+      commandPath,
       BL_ARGS,
       BL_TIMEOUT_MS,
     );
@@ -135,7 +136,7 @@ async function inspectAuthWithDependencies(
 ): Promise<AuthProviderReport> {
   let source: AuthSourceReport;
   try {
-    source = (await dependencies.commandExists(BL_COMMAND))
+    source = (await dependencies.findCommandPath(BL_COMMAND))
       ? { source: BL_SOURCE, status: "available" }
       : { source: BL_SOURCE, status: "missing" };
   } catch (error) {
