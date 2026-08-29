@@ -11,7 +11,7 @@ describe("execFileText", () => {
     else process.env.ComSpec = originalComSpec;
   });
 
-  it("quotes the complete Windows command for ComSpec", async () => {
+  it("passes Windows shim arguments through an encoded launcher", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -22,8 +22,6 @@ describe("execFileText", () => {
     );
     vi.doMock("node:child_process", () => ({ execFile }));
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
-
     const { execFileText } = await import("../../src/lib/process.js");
     await expect(
       execFileText(
@@ -34,22 +32,36 @@ describe("execFileText", () => {
     ).resolves.toBe("ok");
 
     expect(execFile).toHaveBeenCalledWith(
-      "C:\\Windows\\System32\\cmd.exe",
+      "powershell.exe",
       [
-        "/d",
-        "/s",
-        "/c",
-        '""C:\\Tools\\bl.cmd" "usage" "token-plan" "--output" "json""',
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        expect.any(String),
       ],
       {
         timeout: 1000,
         maxBuffer: 1024 * 1024,
+        env: expect.objectContaining({
+          QUOTA_AXI_COMMAND: "C:\\Tools\\bl.cmd",
+          QUOTA_AXI_ARG_0: "usage",
+          QUOTA_AXI_ARG_1: "token-plan",
+          QUOTA_AXI_ARG_2: "--output",
+          QUOTA_AXI_ARG_3: "json",
+        }),
       },
       expect.any(Function),
     );
+    const encodedCommand = execFile.mock.calls[0][1][6];
+    expect(
+      Buffer.from(encodedCommand, "base64").toString("utf16le"),
+    ).toContain("[Environment]::GetEnvironmentVariable('QUOTA_AXI_ARG_0')");
   });
 
-  it("escapes special characters inside the ComSpec command", async () => {
+  it("preserves shell metacharacters and percent sequences", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -60,8 +72,6 @@ describe("execFileText", () => {
     );
     vi.doMock("node:child_process", () => ({ execFile }));
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
-
     const { execFileText } = await import("../../src/lib/process.js");
     await expect(
       execFileText(
@@ -72,16 +82,26 @@ describe("execFileText", () => {
     ).resolves.toBe("ok");
 
     expect(execFile).toHaveBeenCalledWith(
-      "C:\\Windows\\System32\\cmd.exe",
+      "powershell.exe",
       [
-        "/d",
-        "/s",
-        "/c",
-        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "^%PATH^%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        expect.any(String),
       ],
       {
         timeout: 1000,
         maxBuffer: 1024 * 1024,
+        env: expect.objectContaining({
+          QUOTA_AXI_ARG_0: 'a"b',
+          QUOTA_AXI_ARG_1: "C:\\path\\",
+          QUOTA_AXI_ARG_2: "%PATH%",
+          QUOTA_AXI_ARG_3: "a&b|c<d>e(f)",
+          QUOTA_AXI_ARG_4: "caret^value",
+        }),
       },
       expect.any(Function),
     );

@@ -22,6 +22,7 @@ export function execFileText(
       {
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
+        ...(invocation.environment ? { env: invocation.environment } : {}),
       },
       (error, stdout) => {
         if (error) {
@@ -40,6 +41,7 @@ function shimInvocation(
 ): {
   command: string;
   args: string[];
+  environment?: NodeJS.ProcessEnv;
 } {
   if (
     process.platform !== "win32" ||
@@ -47,23 +49,60 @@ function shimInvocation(
   ) {
     return { command, args };
   }
-  const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-  const commandLine = [command, ...args]
-    .map(quoteCmdArgument)
-    .join(" ");
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    QUOTA_AXI_COMMAND: validateWindowsArgument(command),
+    ...Object.fromEntries(
+      args.map((argument, index) => [
+        `QUOTA_AXI_ARG_${index}`,
+        validateWindowsArgument(argument),
+      ]),
+    ),
+  };
+  const script = [
+    "$command = [Environment]::GetEnvironmentVariable('QUOTA_AXI_COMMAND')",
+    "$arguments = @(",
+    ...args.map(
+      (_, index) =>
+        `[Environment]::GetEnvironmentVariable('QUOTA_AXI_ARG_${index}')`,
+    ),
+    ")",
+    "& $command @arguments",
+    "exit $LASTEXITCODE",
+  ].join(";");
   return {
-    command: comspec,
-    args: ["/d", "/s", "/c", `"${commandLine}"`],
+    command: powershellPath(),
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    environment,
   };
 }
 
-function quoteCmdArgument(value: string): string {
+function powershellPath(): string {
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR;
+  return systemRoot
+    ? path.win32.join(
+        systemRoot,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      )
+    : "powershell.exe";
+}
+
+function validateWindowsArgument(value: string): string {
   if (/[\u0000-\u001f\u007f\r\n]/.test(value)) {
     throw new TypeError("Windows command arguments cannot contain controls");
   }
-  const escaped = value
-    .replace(/(["&|<>()^%])/g, "^$1");
-  return `"${escaped}"`;
+  return value;
 }
 
 export async function commandExists(command: string): Promise<boolean> {
