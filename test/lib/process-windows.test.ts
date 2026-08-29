@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 
 const originalComSpec = process.env.ComSpec;
 
@@ -12,53 +15,45 @@ describe("execFileText", () => {
   });
 
   it("passes Windows shim arguments through an encoded launcher", async () => {
-    const execFile = vi.fn(
-      (
-        _command: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string) => void,
-      ) => callback(null, "ok"),
+    const launcherDirectory = await mkdtemp(
+      path.join(tmpdir(), "quota-axi-powershell-"),
     );
-    vi.doMock("node:child_process", () => ({ execFile }));
+    const launcherPath = path.join(launcherDirectory, "powershell.exe");
+    const originalPath = process.env.PATH;
+    await writeFile(
+      launcherPath,
+      `#!/usr/bin/env node
+const encodedIndex = process.argv.indexOf("-EncodedCommand") + 1;
+const script = Buffer.from(process.argv[encodedIndex], "base64").toString("utf16le");
+const names = [...script.matchAll(/GetEnvironmentVariable\\('([^']+)'\\)/g)].map((match) => match[1]);
+process.stdout.write(JSON.stringify(names.map((name) => process.env[name])));
+`,
+    );
+    await chmod(launcherPath, 0o755);
+    process.env.PATH = `${launcherDirectory}${path.delimiter}${originalPath ?? ""}`;
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    const { execFileText } = await import("../../src/lib/process.js");
-    await expect(
-      execFileText(
-        "C:\\Tools\\bl.cmd",
-        ["usage", "token-plan", "--output", "json"],
-        1000,
-      ),
-    ).resolves.toBe("ok");
-
-    expect(execFile).toHaveBeenCalledWith(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        expect.any(String),
-      ],
-      {
-        timeout: 1000,
-        maxBuffer: 1024 * 1024,
-        env: expect.objectContaining({
-          QUOTA_AXI_COMMAND: "C:\\Tools\\bl.cmd",
-          QUOTA_AXI_ARG_0: "usage",
-          QUOTA_AXI_ARG_1: "token-plan",
-          QUOTA_AXI_ARG_2: "--output",
-          QUOTA_AXI_ARG_3: "json",
-        }),
-      },
-      expect.any(Function),
-    );
-    const encodedCommand = execFile.mock.calls[0][1][6];
-    expect(
-      Buffer.from(encodedCommand, "base64").toString("utf16le"),
-    ).toContain("[Environment]::GetEnvironmentVariable('QUOTA_AXI_ARG_0')");
+    try {
+      const { execFileText } = await import("../../src/lib/process.js");
+      await expect(
+        execFileText(
+          "C:\\Tools\\bl.cmd",
+          ["usage", "token-plan", "--output", "json"],
+          1000,
+        ),
+      ).resolves.toBe(
+        JSON.stringify([
+          "C:\\Tools\\bl.cmd",
+          "usage",
+          "token-plan",
+          "--output",
+          "json",
+        ]),
+      );
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await rm(launcherDirectory, { recursive: true, force: true });
+    }
   });
 
   it("preserves shell metacharacters and percent sequences", async () => {
