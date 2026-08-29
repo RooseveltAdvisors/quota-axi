@@ -329,7 +329,7 @@ describe("live terminal report at short heights", () => {
   it("does not scroll a frame away when it exactly fills the terminal", async () => {
     const io = harness();
     io.setRows(4);
-    const body = "line 0\nline 1\nline 2\n";
+    const body = "line 0\r\nline 1\r\nline 2\r\n";
     const run = runLiveTui<number>({
       load: async () => 1,
       render: () => body,
@@ -338,8 +338,9 @@ describe("live terminal report at short heights", () => {
     });
     await flush();
 
-    expect(io.frame()).toBe(body.slice(0, -1));
-    expect(io.writes.at(-1)).toBe(`${CLEAR_SCREEN}${body.slice(0, -1)}`);
+    const expected = body.replace(/\r\n$/, "").replaceAll("\r\n", "\n");
+    expect(io.frame()).toBe(expected);
+    expect(io.writes.at(-1)).toBe(`${CLEAR_SCREEN}${expected}`);
     expect(io.writes.at(-1)).not.toMatch(/\n$/);
     await stop({ io, run });
   });

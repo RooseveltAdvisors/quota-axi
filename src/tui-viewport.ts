@@ -64,7 +64,7 @@ export function scrollFrame(
 ): ScrolledFrame {
   // A frame is painted without a trailing newline. Treat line breaks at the
   // end of renderer output as separators, not as an extra visible row.
-  const normalizedBody = body.replace(/\n$/, "");
+  const normalizedBody = body.replace(/\r\n/g, "\n").replace(/\n$/, "");
   const bodyLines = normalizedBody === "" ? [] : normalizedBody.split("\n");
   const rows = options.rows;
   const columns = options.columns;
