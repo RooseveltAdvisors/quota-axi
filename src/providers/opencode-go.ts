@@ -198,7 +198,6 @@ async function requestUsage(
   deadlineMs: number,
 ): Promise<unknown> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deadlineMs);
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = await Promise.race([
@@ -213,10 +212,10 @@ async function requestUsage(
         signal: controller.signal,
       }),
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("provider_timeout")),
-          deadlineMs,
-        );
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error("provider_timeout"));
+        }, deadlineMs);
       }),
     ]);
     if (response.status === 401 || response.status === 403)
@@ -242,7 +241,6 @@ async function requestUsage(
       throw error;
     throw new Error("network_unavailable", { cause: error });
   } finally {
-    clearTimeout(timer);
     if (timeout) clearTimeout(timeout);
   }
 }

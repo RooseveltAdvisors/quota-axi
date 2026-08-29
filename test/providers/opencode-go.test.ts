@@ -364,6 +364,27 @@ describe("OpenCode Go provider", () => {
     expect(releaseLock).toHaveBeenCalledOnce();
   });
 
+  it("aborts a request that stalls before receiving headers", async () => {
+    let signal: AbortSignal | undefined;
+    const report = await createOpenCodeGoAdapter({
+      deadlineMs: 10,
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async (_input, init) =>
+          new Promise<Response>((resolve) => {
+            signal = init?.signal;
+            void resolve;
+          }),
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "provider_timeout",
+    });
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("bounds cleanup when cancellation and the pending read both stall", async () => {
     const cancel = vi.fn(() => new Promise<void>(() => undefined));
     const releaseLock = vi.fn();
