@@ -329,13 +329,16 @@ async function settlePendingRead(
   );
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const readSettledWithinBudget = await Promise.race([
-      readSettled.then(() => true),
+    await Promise.race([
+      readSettled,
       new Promise<void>((resolve) => {
         cleanupTimer = setTimeout(resolve, BODY_CLEANUP_TIMEOUT_MS);
-      }).then(() => false),
+      }),
     ]);
-    if (readSettledWithinBudget) releaseAfterReadSettles();
+    // Make a bounded release attempt even when cancellation is stalled.
+    // Native streams reject this while the read is pending; the settlement
+    // handler above then retries after the stream can legally release.
+    releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
   }

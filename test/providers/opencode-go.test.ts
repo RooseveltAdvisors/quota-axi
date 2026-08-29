@@ -442,14 +442,17 @@ describe("OpenCode Go provider", () => {
       error: "provider_timeout",
     });
     expect(cancel).toHaveBeenCalledOnce();
-    expect(releaseLock).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 
   it("releases a retained reader lock when a stalled read settles later", async () => {
     let resolveRead:
       | ((result: ReadableStreamReadResult<Uint8Array>) => void)
       | undefined;
-    const releaseLock = vi.fn();
+    let readSettled = false;
+    const releaseLock = vi.fn(() => {
+      if (!readSettled) throw new Error("read_pending");
+    });
     const report = await createOpenCodeGoAdapter({
       deadlineMs: 10,
       credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
@@ -479,10 +482,11 @@ describe("OpenCode Go provider", () => {
       status: "error",
       error: "provider_timeout",
     });
-    expect(releaseLock).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledOnce();
 
+    readSettled = true;
     resolveRead?.({ done: true, value: undefined });
     await Promise.resolve();
-    expect(releaseLock).toHaveBeenCalledOnce();
+    expect(releaseLock).toHaveBeenCalledTimes(2);
   });
 });
