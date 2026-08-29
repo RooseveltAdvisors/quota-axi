@@ -13,7 +13,13 @@ export function execFileText(
     execFile(
       invocation.command,
       invocation.args,
-      { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+        ...(invocation.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
+      },
       (error, stdout) => {
         if (error) {
           reject(error);
@@ -28,7 +34,11 @@ export function execFileText(
 function shimInvocation(
   command: string,
   args: string[],
-): { command: string; args: string[] } {
+): {
+  command: string;
+  args: string[];
+  windowsVerbatimArguments?: boolean;
+} {
   if (
     process.platform !== "win32" ||
     ![".cmd", ".bat"].includes(path.win32.extname(command).toLowerCase())
@@ -40,6 +50,9 @@ function shimInvocation(
   return {
     command: comspec,
     args: ["/d", "/s", "/c", commandLine],
+    // The complete /c command is deliberately quoted above. Do not let
+    // Node rewrite it into another command line before cmd.exe parses it.
+    windowsVerbatimArguments: true,
   };
 }
 

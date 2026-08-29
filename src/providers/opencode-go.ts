@@ -219,16 +219,14 @@ async function requestUsage(
       },
       () => undefined,
     );
-    const response = await Promise.race([
-      fetchPromise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          timedOut = true;
-          controller.abort();
-          reject(new Error("provider_timeout"));
-        }, deadlineMs);
-      }),
-    ]);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error("provider_timeout"));
+      }, deadlineMs);
+    });
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
     if (!response.ok) {
       await cancelResponseBody(response);
     }
