@@ -92,6 +92,19 @@ describe("OpenCode Go provider", () => {
     expect(
       normalizeOpenCodeGoPayload({ usage: { weekly: {} } }).windows,
     ).toEqual([]);
+    expect(
+      normalizeOpenCodeGoPayload({
+        usage: {
+          weekly: { percent: 21, resetsAt: "not-a-date" },
+        },
+      }).windows,
+    ).toEqual([
+      expect.objectContaining({
+        id: "weekly",
+        percentUsed: 21,
+        percentRemaining: 79,
+      }),
+    ]);
   });
 
   it("preserves credential resolution errors in auth inspection", async () => {
@@ -291,10 +304,18 @@ describe("OpenCode Go provider", () => {
   });
 
   it("does not wait indefinitely for a stalled response body", async () => {
-    const cancel = vi.fn(async () => undefined);
-    const releaseLock = vi.fn(() => {
-      throw new Error("releaseLock called with pending read");
+    let resolveRead:
+      | ((result: ReadableStreamReadResult<Uint8Array>) => void)
+      | undefined;
+    const pendingRead = new Promise<ReadableStreamReadResult<Uint8Array>>(
+      (resolve) => {
+        resolveRead = resolve;
+      },
+    );
+    const cancel = vi.fn(async () => {
+      resolveRead?.({ done: true, value: undefined });
     });
+    const releaseLock = vi.fn();
     const report = await createOpenCodeGoAdapter({
       deadlineMs: 10,
       credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
@@ -306,7 +327,7 @@ describe("OpenCode Go provider", () => {
             headers: new Headers(),
             body: {
               getReader: () => ({
-                read: () => new Promise<never>(() => undefined),
+                read: () => pendingRead,
                 cancel,
                 releaseLock,
               }),
@@ -320,6 +341,6 @@ describe("OpenCode Go provider", () => {
       error: "provider_timeout",
     });
     expect(cancel).toHaveBeenCalledOnce();
-    expect(releaseLock).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 });

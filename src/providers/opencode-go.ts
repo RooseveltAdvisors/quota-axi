@@ -284,8 +284,11 @@ async function readResponseBody(
     }
   } finally {
     if (pendingRead) {
-      if (typeof reader.cancel === "function")
-        void reader.cancel().catch(() => undefined);
+      if (typeof reader.cancel === "function") {
+        await reader.cancel().catch(() => undefined);
+        await pendingRead.catch(() => undefined);
+        reader.releaseLock();
+      }
     } else {
       if (typeof reader.cancel === "function")
         void reader.cancel().catch(() => undefined);
@@ -374,6 +377,7 @@ function normalizeWindow(
     "periodSeconds",
     "period_seconds",
   ]);
+  const parsedReset = safeParseReset(reset);
   return {
     id,
     label: id === "five_hour" ? "session" : id,
@@ -383,8 +387,17 @@ function normalizeWindow(
     ...(windowSeconds !== undefined && windowSeconds > 0
       ? { windowSeconds }
       : {}),
-    ...(parseEpochOrIso(reset) ? { resetsAt: parseEpochOrIso(reset) } : {}),
+    ...(parsedReset ? { resetsAt: parsedReset } : {}),
   };
+}
+
+function safeParseReset(value: unknown): string | undefined {
+  try {
+    const parsed = parseEpochOrIso(value);
+    return parsed && !Number.isNaN(Date.parse(parsed)) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function credentialError(
