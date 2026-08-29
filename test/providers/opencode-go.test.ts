@@ -291,6 +291,10 @@ describe("OpenCode Go provider", () => {
   });
 
   it("does not wait indefinitely for a stalled response body", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const releaseLock = vi.fn(() => {
+      throw new Error("releaseLock called with pending read");
+    });
     const report = await createOpenCodeGoAdapter({
       deadlineMs: 10,
       credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
@@ -303,7 +307,8 @@ describe("OpenCode Go provider", () => {
             body: {
               getReader: () => ({
                 read: () => new Promise<never>(() => undefined),
-                releaseLock: vi.fn(),
+                cancel,
+                releaseLock,
               }),
             },
           }) as unknown as Response,
@@ -314,5 +319,7 @@ describe("OpenCode Go provider", () => {
       status: "error",
       error: "provider_timeout",
     });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(releaseLock).not.toHaveBeenCalled();
   });
 });

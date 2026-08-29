@@ -267,9 +267,12 @@ async function readResponseBody(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
   try {
     while (true) {
-      const result = await raceWithAbort(reader.read(), signal);
+      pendingRead = reader.read();
+      const result = await raceWithAbort(pendingRead, signal);
+      pendingRead = undefined;
       if (result.done) break;
       const chunk = result.value;
       if (length + chunk.byteLength > RESPONSE_LIMIT_BYTES) {
@@ -280,8 +283,14 @@ async function readResponseBody(
       length += chunk.byteLength;
     }
   } finally {
-    if (!signal.aborted) void reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    if (pendingRead) {
+      if (typeof reader.cancel === "function")
+        void reader.cancel().catch(() => undefined);
+    } else {
+      if (typeof reader.cancel === "function")
+        void reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
   }
 
   const body = new Uint8Array(length);

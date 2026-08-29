@@ -91,7 +91,9 @@ async function fetchQuotaWithDependencies(
       BL_ARGS,
       BL_TIMEOUT_MS,
     );
-    const normalized = normalizeAlibabaUsage(JSON.parse(output));
+    const raw = JSON.parse(output);
+    if (!isAlibabaUsagePayload(raw)) throw new Error("bl_usage_malformed_json");
+    const normalized = normalizeAlibabaUsage(raw);
 
     attempts[0] = { source: BL_SOURCE, status: "success" };
     return successProvider({
@@ -167,6 +169,18 @@ export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
     plan: stringValue(root.planName) ?? stringValue(root.plan) ?? LABEL,
     windows: [...windows, ...normalizeAlibabaModelLimits(root.limits)],
   };
+}
+
+function isAlibabaUsagePayload(raw: unknown): boolean {
+  const root = objectValue(raw);
+  if (!root) return false;
+  return [
+    "planName",
+    "plan",
+    "per1WeekPercentage",
+    "per1WeekResetTime",
+    "limits",
+  ].some((key) => key in root);
 }
 
 function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
@@ -307,6 +321,7 @@ function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) return "bl_usage_malformed_json";
   if (error instanceof Error) {
     const message = error.message.trim();
+    if (message === "bl_usage_malformed_json") return message;
     if (message === "bl_cli_unavailable") return message;
     return message
       ? `bl_usage_failed: ${message.slice(0, 240)}`
