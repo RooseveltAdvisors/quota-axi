@@ -65,13 +65,11 @@ describe("execFileText", () => {
 
     const { execFileText } = await import("../../src/lib/process.js");
     await expect(
-      execFileText("C:\\Tools\\bl.cmd", [
-        'a"b',
-        "C:\\path\\",
-        "%PATH%",
-        "a&b|c<d>e(f)",
-        "caret^value",
-      ], 1000),
+      execFileText(
+        "C:\\Tools\\bl.cmd",
+        ['a"b', "C:\\path\\", "%PATH%", "a&b|c<d>e(f)", "caret^value"],
+        1000,
+      ),
     ).resolves.toBe("ok");
 
     expect(execFile).toHaveBeenCalledWith(
