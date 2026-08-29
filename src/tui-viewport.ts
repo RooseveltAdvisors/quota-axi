@@ -241,9 +241,11 @@ function truncateTerminalWidth(line: string, width: number): string {
     }
     result += match[0];
     const sgr = match[0].match(/^\x1b\[([0-9;]*)m$/);
-    if (sgr)
-      activeSgr =
-        sgr[1] === "" || sgr[1].split(";").includes("0") ? false : true;
+    if (sgr) {
+      for (const parameter of sgr[1].split(";")) {
+        activeSgr = parameter === "0" || parameter === "" ? false : true;
+      }
+    }
     cursor = (match.index ?? 0) + match[0].length;
   }
   const tail = truncateUnits(line.slice(cursor), width - used);

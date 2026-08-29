@@ -377,12 +377,12 @@ describe("live terminal report at short heights", () => {
   });
 
   it("resets ANSI styling when truncating an oversized line", () => {
-    const frame = scrollFrame(`\x1b[31m${"x".repeat(160)}\x1b[0m`, {
+    const frame = scrollFrame(`\x1b[0;31m${"x".repeat(160)}\x1b[0m`, {
       rows: 1,
       columns: 80,
     });
 
-    expect(frame.text).toBe(`\x1b[31m${"x".repeat(80)}\x1b[0m`);
+    expect(frame.text).toBe(`\x1b[0;31m${"x".repeat(80)}\x1b[0m`);
   });
 
   it("paints the top of the report and an affordance at startup", async () => {
