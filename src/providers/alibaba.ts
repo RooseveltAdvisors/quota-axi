@@ -92,9 +92,6 @@ async function fetchQuotaWithDependencies(
       BL_TIMEOUT_MS,
     );
     const normalized = normalizeAlibabaUsage(JSON.parse(output));
-    if (normalized.windows.length === 0) {
-      throw new Error("bl_usage_data_unavailable");
-    }
 
     attempts[0] = { source: BL_SOURCE, status: "success" };
     return successProvider({
@@ -174,9 +171,10 @@ export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
 
 function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
   if (!Array.isArray(value)) return [];
+  const occurrences = new Map<string, number>();
   const ids = new Set<string>();
   const windows: QuotaWindow[] = [];
-  for (const [index, rawLimit] of value.entries()) {
+  for (const rawLimit of value) {
     const entry = objectValue(rawLimit);
     if (!entry) continue;
     const details =
@@ -214,8 +212,14 @@ function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
     if (percentRemaining === undefined) continue;
 
     const baseId = `model:${model}`;
-    let id = baseId;
-    if (ids.has(id)) id = `${baseId}:${index + 1}`;
+    const occurrence = (occurrences.get(baseId) ?? 0) + 1;
+    occurrences.set(baseId, occurrence);
+    let suffix = occurrence;
+    let id = occurrence === 1 ? baseId : `${baseId}:${suffix}`;
+    while (ids.has(id)) {
+      id = `${baseId}:${suffix}`;
+      suffix += 1;
+    }
     ids.add(id);
     const reset = parseAlibabaReset(
       firstValue(record, [

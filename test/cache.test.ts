@@ -277,6 +277,24 @@ describe("quota cache", () => {
     ]);
     expect(readCachedProvider("copilot")).toBeUndefined();
   });
+
+  it("clears Alibaba after a fresh empty CLI report", () => {
+    useTempCache();
+    const alibaba = {
+      ...quota("alibaba", 10),
+      source: "cli" as const,
+    };
+    writeCachedProviders([alibaba]);
+    writeCachedProviders([
+      {
+        ...alibaba,
+        windows: [],
+        state: { ...alibaba.state, sourcesTried: ["bl-cli"] },
+      },
+    ]);
+
+    expect(readCachedProvider("alibaba")).toBeUndefined();
+  });
 });
 
 function useTempCache(): void {

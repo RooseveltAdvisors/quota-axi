@@ -113,6 +113,47 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
+  it("keeps a valid empty usage response fresh", async () => {
+    const argsFile = join(tempDir, "args");
+    installMockBl(argsFile, JSON.stringify({ planName: "Coding Plan" }));
+    process.env.PATH = tempDir;
+
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      provider: "alibaba",
+      source: "cli",
+      windows: [],
+      state: { status: "fresh", stale: false },
+      attempts: [{ source: "bl-cli", status: "success" }],
+    });
+  });
+
+  it("keeps duplicate model limits as separate windows", () => {
+    const normalized = normalizeAlibabaUsage({
+      limits: [
+        { model: "qwen-plus", percentage: 25 },
+        { model: "qwen-plus", percentage: 50 },
+        { model: "qwen-plus:2", percentage: 75 },
+      ],
+    });
+
+    expect(normalized.windows).toEqual([
+      expect.objectContaining({
+        id: "model:qwen-plus",
+        percentRemaining: 75,
+      }),
+      expect.objectContaining({
+        id: "model:qwen-plus:2",
+        percentRemaining: 50,
+      }),
+      expect.objectContaining({
+        id: "model:qwen-plus:2:1",
+        percentRemaining: 25,
+      }),
+    ]);
+  });
+
   it("skips an out-of-range model reset without discarding valid windows", () => {
     const normalized = normalizeAlibabaUsage({
       per1WeekPercentage: 0.25,
