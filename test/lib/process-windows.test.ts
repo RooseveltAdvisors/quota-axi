@@ -56,50 +56,66 @@ process.stdout.write(JSON.stringify(names.map((name) => process.env[name])));
     }
   });
 
-  it("preserves shell metacharacters and percent sequences", async () => {
-    const execFile = vi.fn(
-      (
-        _command: string,
-        _args: string[],
-        _options: unknown,
-        callback: (error: Error | null, stdout: string) => void,
-      ) => callback(null, "ok"),
+  it("preserves shell metacharacters and percent sequences through a shim", async () => {
+    const launcherDirectory = await mkdtemp(
+      path.join(tmpdir(), "quota-axi-cmd-shim-"),
     );
-    vi.doMock("node:child_process", () => ({ execFile }));
+    const powershellPath = path.join(launcherDirectory, "powershell.exe");
+    const launcherPath = path.join(launcherDirectory, "shim with spaces.cmd");
+    const originalPath = process.env.PATH;
+    const originalSystemRoot = process.env.SystemRoot;
+    const originalWindir = process.env.WINDIR;
+    await writeFile(
+      powershellPath,
+      `#!/usr/bin/env node
+const { execFileSync } = require("node:child_process");
+const command = process.env.QUOTA_AXI_COMMAND;
+const argumentsForCommand = Object.keys(process.env)
+  .filter((name) => /^QUOTA_AXI_ARG_\\d+$/.test(name))
+  .sort((left, right) => Number(left.slice(15)) - Number(right.slice(15)))
+  .map((name) => process.env[name]);
+process.stdout.write(execFileSync(command, argumentsForCommand));
+`,
+    );
+    await writeFile(
+      launcherPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify(process.argv.slice(2)));
+`,
+    );
+    await chmod(powershellPath, 0o755);
+    await chmod(launcherPath, 0o755);
+    process.env.PATH = `${launcherDirectory}${path.delimiter}${originalPath ?? ""}`;
+    delete process.env.SystemRoot;
+    delete process.env.WINDIR;
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    const { execFileText } = await import("../../src/lib/process.js");
-    await expect(
-      execFileText(
-        "C:\\Tools\\bl.cmd",
-        ['a"b', "C:\\path\\", "%PATH%", "a&b|c<d>e(f)", "caret^value"],
-        1000,
-      ),
-    ).resolves.toBe("ok");
-
-    expect(execFile).toHaveBeenCalledWith(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        expect.any(String),
-      ],
-      {
-        timeout: 1000,
-        maxBuffer: 1024 * 1024,
-        env: expect.objectContaining({
-          QUOTA_AXI_ARG_0: 'a"b',
-          QUOTA_AXI_ARG_1: "C:\\path\\",
-          QUOTA_AXI_ARG_2: "%PATH%",
-          QUOTA_AXI_ARG_3: "a&b|c<d>e(f)",
-          QUOTA_AXI_ARG_4: "caret^value",
-        }),
-      },
-      expect.any(Function),
-    );
+    try {
+      const { execFileText } = await import("../../src/lib/process.js");
+      await expect(
+        execFileText(
+          launcherPath,
+          ['a"b', "C:\\path\\", "%PATH%", "a&b|c<d>e(f)", "caret^value", ""],
+          1000,
+        ),
+      ).resolves.toBe(
+        JSON.stringify([
+          'a"b',
+          "C:\\path\\",
+          "%PATH%",
+          "a&b|c<d>e(f)",
+          "caret^value",
+          "",
+        ]),
+      );
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalSystemRoot === undefined) delete process.env.SystemRoot;
+      else process.env.SystemRoot = originalSystemRoot;
+      if (originalWindir === undefined) delete process.env.WINDIR;
+      else process.env.WINDIR = originalWindir;
+      await rm(launcherDirectory, { recursive: true, force: true });
+    }
   });
 
   it("rejects control characters instead of passing command syntax to ComSpec", async () => {
