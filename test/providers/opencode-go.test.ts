@@ -343,4 +343,38 @@ describe("OpenCode Go provider", () => {
     expect(cancel).toHaveBeenCalledOnce();
     expect(releaseLock).toHaveBeenCalledOnce();
   });
+
+  it("bounds cleanup when cancellation and the pending read both stall", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const releaseLock = vi.fn();
+    const report = await createOpenCodeGoAdapter({
+      deadlineMs: 10,
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            headers: new Headers(),
+            body: {
+              getReader: () => ({
+                read: () =>
+                  new Promise<ReadableStreamReadResult<Uint8Array>>(
+                    () => undefined,
+                  ),
+                cancel,
+                releaseLock,
+              }),
+            },
+          }) as unknown as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "provider_timeout",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(releaseLock).not.toHaveBeenCalled();
+  });
 });

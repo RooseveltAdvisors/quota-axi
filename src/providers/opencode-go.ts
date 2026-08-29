@@ -18,6 +18,7 @@ export const OPENCODE_GO_CREDENTIAL_SOURCE = "opencode:auth.json";
 
 const LABEL = "OpenCode Go";
 const RESPONSE_LIMIT_BYTES = 262_144;
+const BODY_CLEANUP_TIMEOUT_MS = 100;
 const DEADLINE_MS = 15_000;
 
 type CredentialResolution =
@@ -284,11 +285,9 @@ async function readResponseBody(
     }
   } finally {
     if (pendingRead) {
-      if (typeof reader.cancel === "function") {
-        await reader.cancel().catch(() => undefined);
-        await pendingRead.catch(() => undefined);
-        reader.releaseLock();
-      }
+      if (typeof reader.cancel === "function")
+        await settlePendingRead(reader, pendingRead);
+      else pendingRead.catch(() => undefined);
     } else {
       if (typeof reader.cancel === "function")
         void reader.cancel().catch(() => undefined);
@@ -303,6 +302,31 @@ async function readResponseBody(
     offset += chunk.byteLength;
   }
   return body;
+}
+
+async function settlePendingRead(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  pendingRead: Promise<ReadableStreamReadResult<Uint8Array>>,
+): Promise<void> {
+  const cancel = Promise.resolve()
+    .then(() => reader.cancel())
+    .catch(() => undefined);
+  const settled = Promise.allSettled([cancel, pendingRead]);
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const completed = await Promise.race([
+      settled.then(() => true),
+      new Promise<false>((resolve) => {
+        cleanupTimer = setTimeout(
+          () => resolve(false),
+          BODY_CLEANUP_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (completed) reader.releaseLock();
+  } finally {
+    if (cleanupTimer) clearTimeout(cleanupTimer);
+  }
 }
 
 async function raceWithAbort<T>(
