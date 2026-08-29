@@ -164,6 +164,44 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
+  it.each([
+    ["an invalid limits field", { limits: "bad" }],
+    ["an invalid weekly percentage", { per1WeekPercentage: "bad" }],
+  ])("preserves stale cache for %s", async (_description, payload) => {
+    const argsFile = join(tempDir, "args");
+    installMockBl(argsFile, JSON.stringify(payload));
+    process.env.PATH = tempDir;
+    const cached = {
+      provider: "alibaba" as const,
+      label: "Alibaba Coding Plan",
+      source: "cli" as const,
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly" as const,
+          percentUsed: 18,
+          percentRemaining: 82,
+        },
+      ],
+      state: {
+        status: "fresh" as const,
+        stale: false,
+        refreshedAt: "2026-08-28T15:00:00.000Z",
+      },
+    };
+
+    const report = await createAlibabaAdapter({
+      readCachedProvider: () => cached,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "cache",
+      windows: [{ id: "weekly", percentRemaining: 82 }],
+      state: { status: "stale", stale: true, error: "bl_usage_malformed_json" },
+    });
+  });
+
   it("keeps duplicate model limits as separate windows", () => {
     const normalized = normalizeAlibabaUsage({
       limits: [

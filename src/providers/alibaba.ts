@@ -174,13 +174,24 @@ export function normalizeAlibabaUsage(raw: unknown): NormalizedAlibabaUsage {
 function isAlibabaUsagePayload(raw: unknown): boolean {
   const root = objectValue(raw);
   if (!root) return false;
-  return [
+  const hasRecognizedField = [
     "planName",
     "plan",
     "per1WeekPercentage",
     "per1WeekResetTime",
     "limits",
   ].some((key) => key in root);
+  if (!hasRecognizedField) return false;
+  if (
+    ("planName" in root && typeof root.planName !== "string") ||
+    ("plan" in root && typeof root.plan !== "string") ||
+    ("per1WeekPercentage" in root &&
+      numberValue(root.per1WeekPercentage) === undefined) ||
+    ("limits" in root && !Array.isArray(root.limits))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
