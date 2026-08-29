@@ -223,6 +223,9 @@ async function requestUsage(
         }, deadlineMs);
       }),
     ]);
+    if (!response.ok) {
+      await cancelResponseBody(response);
+    }
     if (response.status === 401 || response.status === 403)
       throw new Error("provider_auth_rejected");
     if (response.status === 429) throw new Error("provider_rate_limited");
@@ -247,6 +250,25 @@ async function requestUsage(
     throw new Error("network_unavailable", { cause: error });
   } finally {
     if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  const body = response.body;
+  if (!body) return;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = Promise.resolve()
+    .then(() => body.cancel())
+    .catch(() => undefined);
+  try {
+    await Promise.race([
+      cancellation,
+      new Promise<void>((resolve) => {
+        cleanupTimer = setTimeout(resolve, BODY_CLEANUP_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (cleanupTimer) clearTimeout(cleanupTimer);
   }
 }
 

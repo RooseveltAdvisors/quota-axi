@@ -173,6 +173,13 @@ function isAlibabaUsagePayload(raw: unknown): boolean {
     "limits",
   ].some((key) => key in root);
   if (!hasRecognizedField) return false;
+  const hasUsageEvidence = [
+    "planName",
+    "plan",
+    "per1WeekPercentage",
+    "limits",
+  ].some((key) => key in root);
+  if (!hasUsageEvidence) return false;
   if (
     ("planName" in root && typeof root.planName !== "string") ||
     ("plan" in root && typeof root.plan !== "string") ||

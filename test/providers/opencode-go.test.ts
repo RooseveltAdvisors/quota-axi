@@ -133,6 +133,28 @@ describe("OpenCode Go provider", () => {
     ]);
   });
 
+  it("cancels rejected response bodies before reporting the status", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      cancel,
+    });
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          new Response(body, {
+            status: 500,
+          }),
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "provider_request_rejected",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("preserves credential resolution errors in auth inspection", async () => {
     const report = await createOpenCodeGoAdapter({
       credential: () => ({ status: "error", path: "/auth.json" }),

@@ -147,6 +147,7 @@ describe("Alibaba bl usage provider", () => {
     ["an incomplete model limit", { limits: [{ model: "qwen-plus" }] }],
     ["an invalid weekly percentage", { per1WeekPercentage: "bad" }],
     ["an invalid weekly reset", { per1WeekResetTime: {} }],
+    ["a reset without usage evidence", { per1WeekResetTime: 1 }],
   ])("reports invalid CLI data for %s", async (_description, payload) => {
     const argsFile = join(tempDir, "args");
     installMockBl(argsFile, JSON.stringify(payload));
