@@ -275,7 +275,6 @@ async function readResponseBody(
       if (result.done) break;
       const chunk = result.value;
       if (length + chunk.byteLength > RESPONSE_LIMIT_BYTES) {
-        void reader.cancel().catch(() => undefined);
         throw new Error("response_too_large");
       }
       chunks.push(chunk);

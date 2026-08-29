@@ -230,12 +230,15 @@ describe("OpenCode Go provider", () => {
 
   it("stops consuming a response once it exceeds the body limit", async () => {
     let pulls = 0;
+    let cancellations = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
         pulls += 1;
         controller.enqueue(new Uint8Array(262_145));
       },
-      cancel() {},
+      cancel() {
+        cancellations += 1;
+      },
     });
     const report = await createOpenCodeGoAdapter({
       credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
@@ -247,6 +250,7 @@ describe("OpenCode Go provider", () => {
       error: "response_too_large",
     });
     expect(pulls).toBeLessThanOrEqual(2);
+    expect(cancellations).toBe(1);
   });
 
   it("does not wait for stalled reader cleanup after an oversized chunk", async () => {
