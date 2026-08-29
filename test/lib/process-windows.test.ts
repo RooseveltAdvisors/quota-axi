@@ -52,12 +52,7 @@ process.stdout.write(JSON.stringify(process.argv.slice(2)));
           1000,
         ),
       ).resolves.toBe(
-        JSON.stringify([
-          "usage",
-          "token-plan",
-          "--output",
-          "json",
-        ]),
+        JSON.stringify(["usage", "token-plan", "--output", "json"]),
       );
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
