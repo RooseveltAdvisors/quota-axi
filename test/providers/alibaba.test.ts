@@ -322,7 +322,9 @@ describe("Alibaba bl usage provider", () => {
   it("reports unavailable when bl is not on PATH", async () => {
     process.env.PATH = tempDir;
 
-    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
+    const report = await createAlibabaAdapter({
+      readCachedProvider: () => undefined,
+    }).fetchQuota(OPTIONS);
 
     expect(report).toMatchObject({
       provider: "alibaba",
@@ -340,7 +342,9 @@ describe("Alibaba bl usage provider", () => {
     installMockBl(argsFile, "not used", true);
     process.env.PATH = tempDir;
 
-    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
+    const report = await createAlibabaAdapter({
+      readCachedProvider: () => undefined,
+    }).fetchQuota(OPTIONS);
 
     expect(report.windows).toEqual([]);
     expect(report.state.status).toBe("error");
