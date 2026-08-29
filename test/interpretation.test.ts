@@ -242,6 +242,33 @@ describe("quota semantics", () => {
     ]);
   });
 
+  it("combines repeated Alibaba limits for the same model scope", () => {
+    const result = withQuotaSemantics(
+      provider("alibaba", [
+        window("weekly", "weekly", 80),
+        window("model:qwen3-max", "model", 80),
+        {
+          ...window("model:qwen3-max:2", "model", 20),
+          label: "model:qwen3-max",
+        },
+      ]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "all_models",
+        effectivePercentRemaining: 80,
+        boundedBy: ["weekly"],
+      }),
+      expect.objectContaining({
+        scope: "model:qwen3-max",
+        effectivePercentRemaining: 20,
+        boundedBy: ["model:qwen3-max", "model:qwen3-max:2"],
+      }),
+    ]);
+  });
+
   it("keeps model names containing colons in separate Alibaba scopes", () => {
     const result = withQuotaSemantics(
       provider("alibaba", [

@@ -312,16 +312,13 @@ async function settlePendingRead(
   const settled = Promise.allSettled([cancel, pendingRead]);
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const completed = await Promise.race([
-      settled.then(() => true),
-      new Promise<false>((resolve) => {
-        cleanupTimer = setTimeout(
-          () => resolve(false),
-          BODY_CLEANUP_TIMEOUT_MS,
-        );
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => {
+        cleanupTimer = setTimeout(resolve, BODY_CLEANUP_TIMEOUT_MS);
       }),
     ]);
-    if (completed) reader.releaseLock();
+    reader.releaseLock();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
   }

@@ -137,16 +137,17 @@ function alibabaSemantics(
   }
   const models = new Map<string, QuotaWindow[]>();
   for (const window of modelWindows) {
-    const scope = window.id;
+    const scope = window.label;
     const scoped = models.get(scope) ?? [];
     scoped.push(window);
     models.set(scope, scoped);
   }
   for (const [scope, scoped] of models) {
+    const modelScope = scoped[0]?.id ?? scope;
     effectiveAvailability.push(
       unresolved.length > 0
-        ? unresolvedAvailability(scope, scoped, unresolvedIds)
-        : availability(scope, scoped, generatedAt),
+        ? unresolvedAvailability(modelScope, scoped, unresolvedIds)
+        : availability(modelScope, scoped, generatedAt),
     );
   }
   if (unresolved.length > 0) {
