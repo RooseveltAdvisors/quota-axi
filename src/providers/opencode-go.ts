@@ -400,8 +400,7 @@ function normalizeWindow(
     "period_seconds",
   ]);
   const parsedReset = safeParseReset(reset);
-  const hasAuthoritativeDuration =
-    windowSeconds === 18_000;
+  const hasAuthoritativeDuration = windowSeconds === 18_000;
   const normalizedIdentity =
     id === "five_hour" && !hasAuthoritativeDuration
       ? { id: "rolling", label: "rolling", kind: "unknown" as const }
