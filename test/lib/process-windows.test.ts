@@ -19,30 +19,40 @@ describe("execFileText", () => {
       path.join(tmpdir(), "quota-axi-powershell-"),
     );
     const launcherPath = path.join(launcherDirectory, "powershell.exe");
+    const shimPath = path.join(launcherDirectory, "bl shim.cmd");
     const originalPath = process.env.PATH;
     await writeFile(
       launcherPath,
       `#!/usr/bin/env node
-const encodedIndex = process.argv.indexOf("-EncodedCommand") + 1;
-const script = Buffer.from(process.argv[encodedIndex], "base64").toString("utf16le");
-const names = [...script.matchAll(/GetEnvironmentVariable\\('([^']+)'\\)/g)].map((match) => match[1]);
-process.stdout.write(JSON.stringify(names.map((name) => process.env[name])));
+const { execFileSync } = require("node:child_process");
+const command = process.env.QUOTA_AXI_COMMAND;
+const argumentsForCommand = Object.keys(process.env)
+  .filter((name) => /^QUOTA_AXI_ARG_\\d+$/.test(name))
+  .sort((left, right) => Number(left.slice(15)) - Number(right.slice(15)))
+  .map((name) => process.env[name]);
+process.stdout.write(execFileSync(command, argumentsForCommand));
+`,
+    );
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify(process.argv.slice(2)));
 `,
     );
     await chmod(launcherPath, 0o755);
+    await chmod(shimPath, 0o755);
     process.env.PATH = `${launcherDirectory}${path.delimiter}${originalPath ?? ""}`;
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     try {
       const { execFileText } = await import("../../src/lib/process.js");
       await expect(
         execFileText(
-          "C:\\Tools\\bl.cmd",
+          shimPath,
           ["usage", "token-plan", "--output", "json"],
           1000,
         ),
       ).resolves.toBe(
         JSON.stringify([
-          "C:\\Tools\\bl.cmd",
           "usage",
           "token-plan",
           "--output",
