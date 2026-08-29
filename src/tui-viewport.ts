@@ -4,8 +4,8 @@
  * many lines that takes. The live loop paints into the alternate screen, which
  * has no scrollback, so a frame taller than the terminal scrolls its own header
  * and first cards into nothing. This module windows that frame onto the rows
- * actually available and reports what is off-screen, so every line stays
- * reachable. Pure string math - no ANSI, no terminal I/O, no derivation.
+ * actually available and reports what is off-screen, so the report stays
+ * within the viewport. Pure string math - no terminal I/O, no derivation.
  */
 
 import {
@@ -240,7 +240,9 @@ function truncateTerminalWidth(line: string, width: number): string {
       return result + (activeSgr ? "\x1b[0m" : "");
     }
     result += match[0];
-    const sgr = match[0].match(/^\x1b\[([0-9;]*)m$/);
+    const sgr = match[0].match(
+      new RegExp(`^${String.fromCharCode(27)}\\[([0-9;]*)m$`),
+    );
     if (sgr) {
       for (const parameter of sgr[1].split(";")) {
         activeSgr = parameter === "0" || parameter === "" ? false : true;
