@@ -11,7 +11,7 @@ describe("execFileText", () => {
     else process.env.ComSpec = originalComSpec;
   });
 
-  it("passes Windows command-shim arguments separately through ComSpec", async () => {
+  it("quotes the complete Windows command for ComSpec", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -39,11 +39,7 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        "C:\\Tools\\bl.cmd",
-        "usage",
-        "token-plan",
-        "--output",
-        "json",
+        '""C:\\Tools\\bl.cmd" "usage" "token-plan" "--output" "json""',
       ],
       {
         timeout: 1000,
@@ -53,7 +49,7 @@ describe("execFileText", () => {
     );
   });
 
-  it("preserves special-character arguments as separate process arguments", async () => {
+  it("escapes special characters inside the ComSpec command", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -81,12 +77,7 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        "C:\\Tools\\bl.cmd",
-        'a"b',
-        "C:\\path\\",
-        "%PATH%",
-        "a&b|c<d>e(f)",
-        "caret^value",
+        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
       ],
       {
         timeout: 1000,

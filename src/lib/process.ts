@@ -42,12 +42,21 @@ function shimInvocation(
     return { command, args };
   }
   const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+  const commandLine = [command, ...args]
+    .map(quoteCmdArgument)
+    .join(" ");
   return {
     command: comspec,
-    // Keep the executable and each provider argument as separate CreateProcess
-    // arguments. cmd.exe consumes the remainder after /c as the batch command.
-    args: ["/d", "/s", "/c", command, ...args],
+    args: ["/d", "/s", "/c", `"${commandLine}"`],
   };
+}
+
+function quoteCmdArgument(value: string): string {
+  const escaped = value
+    .replace(/%/g, "%%")
+    .replace(/(["&|<>()^])/g, "^$1")
+    .replace(/(\\+)$/g, "$1$1");
+  return `"${escaped}"`;
 }
 
 export async function commandExists(command: string): Promise<boolean> {
