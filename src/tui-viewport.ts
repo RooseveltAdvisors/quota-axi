@@ -173,14 +173,19 @@ function physicalRows(lines: string[], columns: number): number {
       if (wrapPending) {
         rows += 1;
         column = 0;
-        wrapPending = false;
       }
-      if (column + unitWidth > columns) {
-        rows += 1;
-        column = 0;
+      const totalWidth = column + unitWidth;
+      if (totalWidth > columns) {
+        // A grapheme wider than the terminal still occupies all the cells it
+        // needs; account for every physical row rather than leaving an
+        // impossible column value that never triggers wrapping.
+        rows += Math.floor((totalWidth - 1) / columns);
+        column = totalWidth % columns;
+        wrapPending = column === 0;
+      } else {
+        column = totalWidth;
+        wrapPending = column === columns;
       }
-      column += unitWidth;
-      if (column === columns) wrapPending = true;
     }
     if (index < lines.length - 1) {
       rows += wrapPending ? 2 : 1;

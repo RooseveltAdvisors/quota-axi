@@ -230,6 +230,14 @@ describe("live report viewport", () => {
     expect(frame.scrollable).toBe(false);
   });
 
+  it("counts a wide grapheme that exceeds a narrow terminal", () => {
+    const frame = scrollFrame("界", {
+      rows: 1,
+      columns: 1,
+    });
+    expect(frame.scrollable).toBe(true);
+  });
+
   it("keeps the resting hint verbatim and swaps it for scroll help", () => {
     expect(
       scrollHint({ scrollable: false, offset: 0, maxOffset: 0 }, HINT),
