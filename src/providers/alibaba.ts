@@ -187,11 +187,25 @@ function isAlibabaUsagePayload(raw: unknown): boolean {
     ("plan" in root && typeof root.plan !== "string") ||
     ("per1WeekPercentage" in root &&
       numberValue(root.per1WeekPercentage) === undefined) ||
+    ("per1WeekResetTime" in root &&
+      !isValidAlibabaResetValue(root.per1WeekResetTime)) ||
     ("limits" in root && !Array.isArray(root.limits))
   ) {
     return false;
   }
   return true;
+}
+
+function isValidAlibabaResetValue(value: unknown): boolean {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(value > 100_000_000_000 ? value : value * 1000);
+    return !Number.isNaN(date.getTime());
+  }
+  return (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !Number.isNaN(new Date(value).getTime())
+  );
 }
 
 function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {

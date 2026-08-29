@@ -167,6 +167,7 @@ describe("Alibaba bl usage provider", () => {
   it.each([
     ["an invalid limits field", { limits: "bad" }],
     ["an invalid weekly percentage", { per1WeekPercentage: "bad" }],
+    ["an invalid weekly reset", { per1WeekResetTime: {} }],
   ])("preserves stale cache for %s", async (_description, payload) => {
     const argsFile = join(tempDir, "args");
     installMockBl(argsFile, JSON.stringify(payload));
