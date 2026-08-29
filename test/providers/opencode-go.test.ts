@@ -48,8 +48,7 @@ describe("OpenCode Go provider", () => {
     } finally {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdg;
-      if (originalLocalAppData === undefined)
-        delete process.env.LOCALAPPDATA;
+      if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
       else process.env.LOCALAPPDATA = originalLocalAppData;
       vi.restoreAllMocks();
     }
@@ -475,6 +474,34 @@ describe("OpenCode Go provider", () => {
       error: "provider_timeout",
     });
     expect(signal?.aborted).toBe(true);
+  });
+
+  it("cleans up a response that arrives after the deadline", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchPromise = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const cancel = vi.fn(async () => undefined);
+    const report = await createOpenCodeGoAdapter({
+      deadlineMs: 10,
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(() => fetchPromise),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "provider_timeout",
+    });
+
+    resolveFetch?.({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: { cancel },
+    } as unknown as Response);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("bounds cleanup when cancellation and the pending read both stall", async () => {

@@ -44,11 +44,7 @@ export function opencodeGoAuthFilePath(): string {
     const localAppData = process.env.LOCALAPPDATA?.trim();
     if (localAppData) return join(localAppData, "opencode", "auth.json");
   }
-  return join(
-    join(homedir(), ".local", "share"),
-    "opencode",
-    "auth.json",
-  );
+  return join(join(homedir(), ".local", "share"), "opencode", "auth.json");
 }
 
 export function extractOpenCodeGoCredential(
@@ -204,20 +200,30 @@ async function requestUsage(
 ): Promise<unknown> {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let fetchPromise: Promise<Response> | undefined;
   try {
+    fetchPromise = fetchImplementation(OPENCODE_GO_USAGE_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        Accept: "application/json",
+      },
+      credentials: "omit",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    void fetchPromise.then(
+      (response) => {
+        if (timedOut) void cancelResponseBody(response);
+      },
+      () => undefined,
+    );
     const response = await Promise.race([
-      fetchImplementation(OPENCODE_GO_USAGE_URL, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          Accept: "application/json",
-        },
-        credentials: "omit",
-        redirect: "manual",
-        signal: controller.signal,
-      }),
+      fetchPromise,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
+          timedOut = true;
           controller.abort();
           reject(new Error("provider_timeout"));
         }, deadlineMs);
