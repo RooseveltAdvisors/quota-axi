@@ -26,12 +26,21 @@ describe("execFileText", () => {
 
     const { execFileText } = await import("../../src/lib/process.js");
     await expect(
-      execFileText("C:\\Tools\\bl.cmd", ["usage", "token-plan"], 1000),
+      execFileText(
+        "C:\\Tools\\bl.cmd",
+        ["usage", "token-plan", "--output", "json"],
+        1000,
+      ),
     ).resolves.toBe("ok");
 
     expect(execFile).toHaveBeenCalledWith(
       "C:\\Windows\\System32\\cmd.exe",
-      ["/d", "/s", "/c", '"C:\\Tools\\bl.cmd" "usage" "token-plan"'],
+      [
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Tools\\bl.cmd" "usage" "token-plan" "--output" "json""',
+      ],
       {
         timeout: 1000,
         maxBuffer: 1024 * 1024,

@@ -49,9 +49,7 @@ function shimInvocation(
   const commandLine = [command, ...args].map(quoteCmdArgument).join(" ");
   return {
     command: comspec,
-    args: ["/d", "/s", "/c", commandLine],
-    // The complete /c command is deliberately quoted above. Do not let
-    // Node rewrite it into another command line before cmd.exe parses it.
+    args: ["/d", "/s", "/c", `"${commandLine}"`],
     windowsVerbatimArguments: true,
   };
 }
