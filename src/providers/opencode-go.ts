@@ -333,7 +333,6 @@ async function settlePendingRead(
     if (readSettledWithinBudget) releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
-    if (!released) releaseAfterReadSettles();
   }
 }
 
