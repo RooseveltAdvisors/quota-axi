@@ -77,7 +77,7 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
+        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
       ],
       {
         timeout: 1000,

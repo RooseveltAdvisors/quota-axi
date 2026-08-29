@@ -54,8 +54,7 @@ function shimInvocation(
 function quoteCmdArgument(value: string): string {
   const escaped = value
     .replace(/%/g, "%%")
-    .replace(/(["&|<>()^])/g, "^$1")
-    .replace(/(\\+)$/g, "$1$1");
+    .replace(/(["&|<>()^])/g, "^$1");
   return `"${escaped}"`;
 }
 
