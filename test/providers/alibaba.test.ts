@@ -129,38 +129,16 @@ describe("Alibaba bl usage provider", () => {
     });
   });
 
-  it("preserves stale cache when the CLI returns a malformed object", async () => {
+  it("reports malformed CLI data instead of returning stale quota", async () => {
     const argsFile = join(tempDir, "args");
     installMockBl(argsFile, JSON.stringify({ unexpected: true }));
     process.env.PATH = tempDir;
-    const cached = {
-      provider: "alibaba" as const,
-      label: "Alibaba Coding Plan",
-      source: "cli" as const,
-      windows: [
-        {
-          id: "weekly",
-          label: "week",
-          kind: "weekly" as const,
-          percentUsed: 18,
-          percentRemaining: 82,
-        },
-      ],
-      state: {
-        status: "fresh" as const,
-        stale: false,
-        refreshedAt: "2026-08-28T15:00:00.000Z",
-      },
-    };
-
-    const report = await createAlibabaAdapter({
-      readCachedProvider: () => cached,
-    }).fetchQuota(OPTIONS);
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
 
     expect(report).toMatchObject({
-      source: "cache",
-      windows: [{ id: "weekly", percentRemaining: 82 }],
-      state: { status: "stale", stale: true, error: "bl_usage_malformed_json" },
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", error: "bl_usage_malformed_json" },
     });
   });
 
@@ -169,38 +147,16 @@ describe("Alibaba bl usage provider", () => {
     ["an incomplete model limit", { limits: [{ model: "qwen-plus" }] }],
     ["an invalid weekly percentage", { per1WeekPercentage: "bad" }],
     ["an invalid weekly reset", { per1WeekResetTime: {} }],
-  ])("preserves stale cache for %s", async (_description, payload) => {
+  ])("reports invalid CLI data for %s", async (_description, payload) => {
     const argsFile = join(tempDir, "args");
     installMockBl(argsFile, JSON.stringify(payload));
     process.env.PATH = tempDir;
-    const cached = {
-      provider: "alibaba" as const,
-      label: "Alibaba Coding Plan",
-      source: "cli" as const,
-      windows: [
-        {
-          id: "weekly",
-          label: "week",
-          kind: "weekly" as const,
-          percentUsed: 18,
-          percentRemaining: 82,
-        },
-      ],
-      state: {
-        status: "fresh" as const,
-        stale: false,
-        refreshedAt: "2026-08-28T15:00:00.000Z",
-      },
-    };
-
-    const report = await createAlibabaAdapter({
-      readCachedProvider: () => cached,
-    }).fetchQuota(OPTIONS);
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
 
     expect(report).toMatchObject({
-      source: "cache",
-      windows: [{ id: "weekly", percentRemaining: 82 }],
-      state: { status: "stale", stale: true, error: "bl_usage_malformed_json" },
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", error: "bl_usage_malformed_json" },
     });
   });
 
@@ -351,39 +307,18 @@ describe("Alibaba bl usage provider", () => {
     expect(report.attempts?.[0]?.status).toBe("failed");
   });
 
-  it("returns the cached snapshot when the CLI becomes unavailable", async () => {
+  it("reports unavailable when the CLI becomes unavailable", async () => {
     process.env.PATH = tempDir;
-    const cached = {
-      provider: "alibaba" as const,
-      label: "Alibaba Coding Plan",
-      source: "cli" as const,
-      windows: [
-        {
-          id: "weekly",
-          label: "week",
-          kind: "weekly" as const,
-          percentUsed: 18,
-          percentRemaining: 82,
-        },
-      ],
-      state: {
-        status: "fresh" as const,
-        stale: false,
-        refreshedAt: "2026-08-28T15:00:00.000Z",
-      },
-    };
-    const report = await createAlibabaAdapter({
-      readCachedProvider: () => cached,
-    }).fetchQuota(OPTIONS);
+    const report = await createAlibabaAdapter().fetchQuota(OPTIONS);
 
     expect(report).toMatchObject({
-      source: "cache",
-      windows: [{ id: "weekly", percentRemaining: 82 }],
-      state: { status: "stale", stale: true, error: "bl_cli_unavailable" },
+      source: "unavailable",
+      windows: [],
+      state: { status: "unavailable", error: "bl_cli_unavailable" },
+      attempts: [
+        { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
+      ],
     });
-    expect(report.attempts).toEqual([
-      { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
-    ]);
   });
 });
 

@@ -442,6 +442,6 @@ describe("OpenCode Go provider", () => {
       error: "provider_timeout",
     });
     expect(cancel).toHaveBeenCalledOnce();
-    expect(releaseLock).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 });

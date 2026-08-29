@@ -311,9 +311,9 @@ async function settlePendingRead(
   let released = false;
   const releaseAfterReadSettles = (): void => {
     if (released) return;
-    released = true;
     try {
       reader.releaseLock();
+      released = true;
     } catch {
       return;
     }
@@ -333,6 +333,7 @@ async function settlePendingRead(
     if (readSettledWithinBudget) releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
+    if (!released) releaseAfterReadSettles();
   }
 }
 

@@ -1,5 +1,4 @@
 import * as processUtils from "../lib/process.js";
-import { readCachedProvider } from "../cache.js";
 import type {
   AuthProviderReport,
   AuthSourceReport,
@@ -14,7 +13,6 @@ import {
   sourceNames,
   statusFromError,
   successProvider,
-  staleFromCache,
 } from "./common.js";
 
 const BL_COMMAND = "bl";
@@ -27,7 +25,6 @@ type AlibabaDependencies = {
   findCommandPath: typeof processUtils.findCommandPath;
   execFileText: typeof processUtils.execFileText;
   now: () => number;
-  readCachedProvider: typeof readCachedProvider;
 };
 
 export type NormalizedAlibabaUsage = {
@@ -42,7 +39,6 @@ export function createAlibabaAdapter(
     findCommandPath: (...args) => processUtils.findCommandPath(...args),
     execFileText: (...args) => processUtils.execFileText(...args),
     now: Date.now,
-    readCachedProvider,
     ...overrides,
   };
 
@@ -65,7 +61,6 @@ export async function fetchQuota(
     findCommandPath: (...args) => processUtils.findCommandPath(...args),
     execFileText: (...args) => processUtils.execFileText(...args),
     now: Date.now,
-    readCachedProvider,
   });
 }
 
@@ -109,9 +104,6 @@ async function fetchQuotaWithDependencies(
     const message = errorMessage(error);
     if (attempts[0]?.status !== "skipped")
       attempts[0] = { source: BL_SOURCE, status: "failed", error: message };
-    const cached = dependencies.readCachedProvider("alibaba");
-    if (cached)
-      return staleFromCache(cached, message, sourceNames(attempts), attempts);
     return failedProvider({
       provider: "alibaba",
       label: LABEL,
