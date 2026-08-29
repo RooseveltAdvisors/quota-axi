@@ -333,10 +333,6 @@ async function settlePendingRead(
     if (readSettledWithinBudget) releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
-    // A reader lock can be released after the bounded cancellation attempt.
-    // The stream rejects any still-pending read, preventing stalled response
-    // bodies from retaining the lock across refreshes.
-    if (!released) releaseAfterReadSettles();
   }
 }
 
