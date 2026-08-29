@@ -130,11 +130,7 @@ export function scrollFrame(
       lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
     }
   }
-  if (
-    columns !== undefined &&
-    Number.isFinite(columns) &&
-    columns > 0
-  ) {
+  if (columns !== undefined && Number.isFinite(columns) && columns > 0) {
     const contentRows = rows - (statusRows === 1 ? 1 : 0);
     lines = limitPhysicalRows(lines, contentRows, columns);
   }
@@ -234,16 +230,26 @@ function truncateTerminalWidth(line: string, width: number): string {
   let result = "";
   let used = 0;
   let cursor = 0;
+  let activeSgr = false;
   for (const match of line.matchAll(ansiEscape)) {
     const plain = line.slice(cursor, match.index);
     const portion = truncateUnits(plain, width - used);
     result += portion;
     used += displayWidth(portion);
-    if (portion.length < plain.length) return result;
+    if (portion.length < plain.length) {
+      return result + (activeSgr ? "\x1b[0m" : "");
+    }
     result += match[0];
+    const sgr = match[0].match(/^\x1b\[([0-9;]*)m$/);
+    if (sgr)
+      activeSgr =
+        sgr[1] === "" || sgr[1].split(";").includes("0") ? false : true;
     cursor = (match.index ?? 0) + match[0].length;
   }
   const tail = truncateUnits(line.slice(cursor), width - used);
+  if (tail.length < line.length - cursor) {
+    return result + tail + (activeSgr ? "\x1b[0m" : "");
+  }
   return result + tail;
 }
 
@@ -258,6 +264,14 @@ function truncateUnits(text: string, width: number): string {
     used += unitWidth;
   }
   return result;
+}
+
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const unit of terminalTextUnits(sanitizeTerminalText(text))) {
+    width += terminalUnitWidth(unit);
+  }
+  return width;
 }
 
 function restingFrame(

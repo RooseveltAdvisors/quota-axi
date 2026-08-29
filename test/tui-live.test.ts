@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatInterval, runLiveTui, type LiveTuiIo } from "../src/tui-live.js";
 import { renderTuiHintLine } from "../src/tui.js";
-import { scrollHint } from "../src/tui-viewport.js";
+import { scrollFrame, scrollHint } from "../src/tui-viewport.js";
 
 const ENTER_SCREEN = "\x1b[?1049h";
 const LEAVE_SCREEN = "\x1b[?1049l";
@@ -128,7 +128,7 @@ function terminalRows(text: string, columns: number): number {
   let wrapPending = false;
   for (const character of text) {
     if (character === "\n") {
-      rows += wrapPending ? 2 : 1;
+      rows += 1;
       column = 0;
       wrapPending = false;
       continue;
@@ -367,12 +367,22 @@ describe("live terminal report at short heights", () => {
     await flush();
 
     const lines = io.frame().split("\n");
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(3);
     expect(lines[0]).toBe(fullWidthLine);
     expect(lines[1]).toBe("line 2");
+    expect(lines[2]).toContain("q quit");
     expect(lines.every((line) => line.length <= 80)).toBe(true);
     expect(io.physicalRows(80)).toBe(3);
     await stop({ io, run });
+  });
+
+  it("resets ANSI styling when truncating an oversized line", () => {
+    const frame = scrollFrame(`\x1b[31m${"x".repeat(160)}\x1b[0m`, {
+      rows: 1,
+      columns: 80,
+    });
+
+    expect(frame.text).toBe(`\x1b[31m${"x".repeat(80)}\x1b[0m`);
   });
 
   it("paints the top of the report and an affordance at startup", async () => {
