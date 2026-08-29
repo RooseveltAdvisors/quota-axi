@@ -202,7 +202,7 @@ describe("live report viewport", () => {
       columns: 1,
       status: () => "x",
     });
-    expect(frame.text).toBe("x\nx");
+    expect(frame.text).toBe("x\nx\nx");
   });
 
   it("protects the physical row budget without a closing line", () => {
@@ -210,8 +210,8 @@ describe("live report viewport", () => {
       rows: 3,
       columns: 80,
     });
-    expect(frame.text).toBe("x".repeat(160));
-    expect(frame.pageLines).toBe(1);
+    expect(frame.text).toBe(`${"x".repeat(160)}\ny`);
+    expect(frame.pageLines).toBe(2);
   });
 
   it("counts wide graphemes when checking physical rows", () => {
@@ -236,6 +236,23 @@ describe("live report viewport", () => {
       columns: 1,
     });
     expect(frame.scrollable).toBe(true);
+  });
+
+  it("clips a logical line that exceeds the physical viewport", () => {
+    const frame = scrollFrame("x".repeat(160), {
+      rows: 1,
+      columns: 80,
+    });
+    expect(frame.text).toBe("x".repeat(80));
+  });
+
+  it("counts a full-width line break as one physical row", () => {
+    const frame = scrollFrame(`${"x".repeat(80)}\ny`, {
+      rows: 2,
+      columns: 80,
+    });
+    expect(frame.scrollable).toBe(false);
+    expect(frame.text).toBe(`${"x".repeat(80)}\ny`);
   });
 
   it("keeps the resting hint verbatim and swaps it for scroll help", () => {

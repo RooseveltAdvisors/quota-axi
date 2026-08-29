@@ -130,6 +130,14 @@ export function scrollFrame(
       lines = visibleLines(bodyLines, scrolling, headerRows, offset, pageLines);
     }
   }
+  if (
+    columns !== undefined &&
+    Number.isFinite(columns) &&
+    columns > 0
+  ) {
+    const contentRows = rows - (statusRows === 1 ? 1 : 0);
+    lines = limitPhysicalRows(lines, contentRows, columns);
+  }
   if (statusRows === 1 && statusLine !== undefined) lines.push(statusLine);
   return {
     text: lines.join("\n"),
@@ -188,12 +196,68 @@ function physicalRows(lines: string[], columns: number): number {
       }
     }
     if (index < lines.length - 1) {
-      rows += wrapPending ? 2 : 1;
+      rows += 1;
       column = 0;
       wrapPending = false;
     }
   }
   return rows;
+}
+
+function limitPhysicalRows(
+  lines: string[],
+  rows: number,
+  columns: number,
+): string[] {
+  const limited: string[] = [];
+  let remainingRows = rows;
+  for (const line of lines) {
+    if (remainingRows <= 0) break;
+    const lineRows = physicalRows([line], columns);
+    const allowedRows = Math.min(remainingRows, lineRows);
+    limited.push(
+      lineRows > allowedRows
+        ? truncateTerminalWidth(line, allowedRows * columns)
+        : line,
+    );
+    remainingRows -= Math.min(lineRows, allowedRows);
+  }
+  return limited;
+}
+
+function truncateTerminalWidth(line: string, width: number): string {
+  if (width <= 0) return "";
+  const ansiEscape = new RegExp(
+    `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+    "g",
+  );
+  let result = "";
+  let used = 0;
+  let cursor = 0;
+  for (const match of line.matchAll(ansiEscape)) {
+    const plain = line.slice(cursor, match.index);
+    const portion = truncateUnits(plain, width - used);
+    result += portion;
+    used += displayWidth(portion);
+    if (portion.length < plain.length) return result;
+    result += match[0];
+    cursor = (match.index ?? 0) + match[0].length;
+  }
+  const tail = truncateUnits(line.slice(cursor), width - used);
+  return result + tail;
+}
+
+function truncateUnits(text: string, width: number): string {
+  if (width <= 0) return "";
+  let result = "";
+  let used = 0;
+  for (const unit of terminalTextUnits(sanitizeTerminalText(text))) {
+    const unitWidth = terminalUnitWidth(unit);
+    if (used + unitWidth > width) break;
+    result += unit;
+    used += unitWidth;
+  }
+  return result;
 }
 
 function restingFrame(
