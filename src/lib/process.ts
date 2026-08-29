@@ -16,9 +16,6 @@ export function execFileText(
       {
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
-        ...(invocation.windowsVerbatimArguments
-          ? { windowsVerbatimArguments: true }
-          : {}),
       },
       (error, stdout) => {
         if (error) {
@@ -37,7 +34,6 @@ function shimInvocation(
 ): {
   command: string;
   args: string[];
-  windowsVerbatimArguments?: boolean;
 } {
   if (
     process.platform !== "win32" ||
@@ -46,26 +42,12 @@ function shimInvocation(
     return { command, args };
   }
   const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-  const commandLine = [command, ...args].map(quoteCmdArgument).join(" ");
   return {
     command: comspec,
-    args: ["/d", "/s", "/c", `"${commandLine}"`],
-    windowsVerbatimArguments: true,
+    // Keep the executable and each provider argument as separate CreateProcess
+    // arguments. cmd.exe consumes the remainder after /c as the batch command.
+    args: ["/d", "/s", "/c", command, ...args],
   };
-}
-
-function quoteCmdArgument(value: string): string {
-  const escaped = value
-    .replaceAll("^", "^^")
-    .replaceAll("%", "%%")
-    .replaceAll('"', '^"')
-    .replaceAll("&", "^&")
-    .replaceAll("|", "^|")
-    .replaceAll("<", "^<")
-    .replaceAll(">", "^>")
-    .replaceAll("(", "^(")
-    .replaceAll(")", "^)");
-  return `"${escaped}"`;
 }
 
 export async function commandExists(command: string): Promise<boolean> {

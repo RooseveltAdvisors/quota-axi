@@ -11,7 +11,7 @@ describe("execFileText", () => {
     else process.env.ComSpec = originalComSpec;
   });
 
-  it("runs Windows command shims through ComSpec without enabling shell mode", async () => {
+  it("passes Windows command-shim arguments separately through ComSpec", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -39,18 +39,21 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        '""C:\\Tools\\bl.cmd" "usage" "token-plan" "--output" "json""',
+        "C:\\Tools\\bl.cmd",
+        "usage",
+        "token-plan",
+        "--output",
+        "json",
       ],
       {
         timeout: 1000,
         maxBuffer: 1024 * 1024,
-        windowsVerbatimArguments: true,
       },
       expect.any(Function),
     );
   });
 
-  it("escapes cmd metacharacters without changing argument boundaries", async () => {
+  it("preserves special-character arguments as separate process arguments", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -78,12 +81,16 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
+        "C:\\Tools\\bl.cmd",
+        'a"b',
+        "C:\\path\\",
+        "%PATH%",
+        "a&b|c<d>e(f)",
+        "caret^value",
       ],
       {
         timeout: 1000,
         maxBuffer: 1024 * 1024,
-        windowsVerbatimArguments: true,
       },
       expect.any(Function),
     );
