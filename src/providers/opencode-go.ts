@@ -305,6 +305,11 @@ async function settlePendingRead(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   pendingRead: Promise<ReadableStreamReadResult<Uint8Array>>,
 ): Promise<void> {
+  // A pending read owns the stream lock. Cancellation is best effort here:
+  // releasing it while the read is still pending throws in native streams and
+  // can leave the response body in an inconsistent state. The settlement
+  // handler below performs the release whenever the vendor body eventually
+  // responds, even if that happens after this bounded cleanup returns.
   void Promise.resolve()
     .then(() => reader.cancel())
     .catch(() => undefined);
