@@ -1,6 +1,5 @@
 import * as processUtils from "../lib/process.js";
 import { readCachedProvider } from "../cache.js";
-import { parseEpochOrIso } from "../lib/time.js";
 import type {
   AuthProviderReport,
   AuthSourceReport,
@@ -189,7 +188,9 @@ function isAlibabaUsagePayload(raw: unknown): boolean {
       numberValue(root.per1WeekPercentage) === undefined) ||
     ("per1WeekResetTime" in root &&
       !isValidAlibabaResetValue(root.per1WeekResetTime)) ||
-    ("limits" in root && !Array.isArray(root.limits))
+    ("limits" in root &&
+      (!Array.isArray(root.limits) ||
+        root.limits.some((limit) => !isValidAlibabaModelLimit(limit))))
   ) {
     return false;
   }
@@ -206,6 +207,37 @@ function isValidAlibabaResetValue(value: unknown): boolean {
     value.trim() !== "" &&
     !Number.isNaN(new Date(value).getTime())
   );
+}
+
+function isValidAlibabaModelLimit(value: unknown): boolean {
+  const entry = objectValue(value);
+  if (!entry) return false;
+  const details =
+    objectValue(entry.limit) ??
+    objectValue(entry.quota) ??
+    objectValue(entry.modelLimit) ??
+    objectValue(entry.model_limit);
+  const record = details ? { ...entry, ...details } : entry;
+  const model = firstString(record, ["model", "modelName", "model_name"]);
+  if (!model) return false;
+  const remaining = firstNumber(record, [
+    "percentRemaining",
+    "remainingPercent",
+  ]);
+  const fraction = firstNumber(record, ["per1WeekPercentage"]);
+  const used =
+    fraction !== undefined
+      ? fraction <= 1
+        ? fraction * 100
+        : fraction
+      : firstNumber(record, [
+          "percentUsed",
+          "usedPercent",
+          "usagePercent",
+          "percentage",
+          "percent",
+        ]);
+  return remaining !== undefined || used !== undefined;
 }
 
 function normalizeAlibabaModelLimits(value: unknown): QuotaWindow[] {
@@ -339,7 +371,11 @@ function parseAlibabaReset(value: unknown): string | undefined {
     const date = new Date(value > 100_000_000_000 ? value : value * 1000);
     return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
   }
-  return parseEpochOrIso(value);
+  if (typeof value === "string" && value.trim() !== "") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+  }
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {

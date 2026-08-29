@@ -166,6 +166,7 @@ describe("Alibaba bl usage provider", () => {
 
   it.each([
     ["an invalid limits field", { limits: "bad" }],
+    ["an incomplete model limit", { limits: [{ model: "qwen-plus" }] }],
     ["an invalid weekly percentage", { per1WeekPercentage: "bad" }],
     ["an invalid weekly reset", { per1WeekResetTime: {} }],
   ])("preserves stale cache for %s", async (_description, payload) => {
@@ -228,11 +229,12 @@ describe("Alibaba bl usage provider", () => {
     ]);
   });
 
-  it("skips an out-of-range model reset without discarding valid windows", () => {
+  it("omits malformed model resets without discarding valid windows", () => {
     const normalized = normalizeAlibabaUsage({
       per1WeekPercentage: 0.25,
       limits: [
         { model: "bad-model", percentage: 50, resetAt: 1e20 },
+        { model: "invalid-date", percentage: 25, resetAt: "not-a-date" },
         { model: "good-model", percentage: 25 },
       ],
     });
@@ -247,11 +249,16 @@ describe("Alibaba bl usage provider", () => {
         percentRemaining: 50,
       }),
       expect.objectContaining({
+        id: "model:invalid-date",
+        percentRemaining: 75,
+      }),
+      expect.objectContaining({
         id: "model:good-model",
         percentRemaining: 75,
       }),
     ]);
     expect(normalized.windows[0]).not.toHaveProperty("resetsAt");
+    expect(normalized.windows[2]).not.toHaveProperty("resetsAt");
   });
 
   it("preserves nested model-limit data as a model-scoped window", () => {
