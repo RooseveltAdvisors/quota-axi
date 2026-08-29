@@ -39,7 +39,11 @@ describe("OpenCode Go provider", () => {
         new Response(
           JSON.stringify({
             usage: {
-              rolling: { percent: 9, resetsAt: "2026-08-28T05:00:00Z" },
+              rolling: {
+                percent: 9,
+                resetsAt: "2026-08-28T05:00:00Z",
+                windowSeconds: 18_000,
+              },
               weekly: { percent: 21, resetsAt: "2026-09-01T00:00:00Z" },
               monthly: { percent: 4, resetsAt: "2026-09-15T00:00:00Z" },
             },
@@ -148,6 +152,22 @@ describe("OpenCode Go provider", () => {
       normalizeOpenCodeGoPayload({ usage: { rolling: { percent: 9 } } })
         .windows[0],
     ).not.toHaveProperty("windowSeconds");
+  });
+
+  it("keeps rolling windows unknown when the provider omits duration", () => {
+    expect(
+      normalizeOpenCodeGoPayload({
+        usage: { rolling: { percent: 9 } },
+      }).windows,
+    ).toEqual([
+      {
+        id: "rolling",
+        label: "rolling",
+        kind: "unknown",
+        percentUsed: 9,
+        percentRemaining: 91,
+      },
+    ]);
   });
 
   it("clears request deadline timers after a fast response", async () => {

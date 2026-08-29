@@ -402,10 +402,14 @@ function normalizeWindow(
     "period_seconds",
   ]);
   const parsedReset = safeParseReset(reset);
+  const hasAuthoritativeDuration =
+    windowSeconds !== undefined && windowSeconds > 0;
+  const normalizedIdentity =
+    id === "five_hour" && !hasAuthoritativeDuration
+      ? { id: "rolling", label: "rolling", kind: "unknown" as const }
+      : { id, label: id === "five_hour" ? "session" : id, kind };
   return {
-    id,
-    label: id === "five_hour" ? "session" : id,
-    kind,
+    ...normalizedIdentity,
     percentUsed: clampPercent(100 - percentRemaining),
     percentRemaining,
     ...(windowSeconds !== undefined && windowSeconds > 0
