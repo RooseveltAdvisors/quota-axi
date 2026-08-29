@@ -9,7 +9,7 @@ export function execFileText(
   timeoutMs: number,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    let invocation: { command: string; args: string[] };
+    let invocation: ReturnType<typeof shimInvocation>;
     try {
       invocation = shimInvocation(command, args);
     } catch (error) {
