@@ -49,4 +49,45 @@ describe("execFileText", () => {
       expect.any(Function),
     );
   });
+
+  it("escapes cmd metacharacters without changing argument boundaries", async () => {
+    const execFile = vi.fn(
+      (
+        _command: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string) => void,
+      ) => callback(null, "ok"),
+    );
+    vi.doMock("node:child_process", () => ({ execFile }));
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+
+    const { execFileText } = await import("../../src/lib/process.js");
+    await expect(
+      execFileText("C:\\Tools\\bl.cmd", [
+        'a"b',
+        "C:\\path\\",
+        "%PATH%",
+        "a&b|c<d>e(f)",
+        "caret^value",
+      ], 1000),
+    ).resolves.toBe("ok");
+
+    expect(execFile).toHaveBeenCalledWith(
+      "C:\\Windows\\System32\\cmd.exe",
+      [
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
+      ],
+      {
+        timeout: 1000,
+        maxBuffer: 1024 * 1024,
+        windowsVerbatimArguments: true,
+      },
+      expect.any(Function),
+    );
+  });
 });

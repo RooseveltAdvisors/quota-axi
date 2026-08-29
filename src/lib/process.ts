@@ -55,7 +55,17 @@ function shimInvocation(
 }
 
 function quoteCmdArgument(value: string): string {
-  return `"${value.replaceAll('"', '\\"')}"`;
+  const escaped = value
+    .replaceAll("^", "^^")
+    .replaceAll("%", "%%")
+    .replaceAll('"', '^"')
+    .replaceAll("&", "^&")
+    .replaceAll("|", "^|")
+    .replaceAll("<", "^<")
+    .replaceAll(">", "^>")
+    .replaceAll("(", "^(")
+    .replaceAll(")", "^)");
+  return `"${escaped}"`;
 }
 
 export async function commandExists(command: string): Promise<boolean> {
