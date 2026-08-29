@@ -333,6 +333,10 @@ async function settlePendingRead(
     if (readSettledWithinBudget) releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
+    // Attempt cleanup after the bounded wait. Native readers reject this
+    // while a read is pending; releaseAfterReadSettles deliberately catches
+    // that case and the pending-read callback retries after settlement.
+    if (!released) releaseAfterReadSettles();
   }
 }
 
