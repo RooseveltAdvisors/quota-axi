@@ -77,7 +77,7 @@ describe("execFileText", () => {
         "/d",
         "/s",
         "/c",
-        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "%%PATH%%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
+        '""C:\\Tools\\bl.cmd" "a^"b" "C:\\path\\" "^%PATH^%" "a^&b^|c^<d^>e^(f^)" "caret^^value""',
       ],
       {
         timeout: 1000,
@@ -85,5 +85,19 @@ describe("execFileText", () => {
       },
       expect.any(Function),
     );
+  });
+
+  it("rejects control characters instead of passing command syntax to ComSpec", async () => {
+    const execFile = vi.fn();
+    vi.doMock("node:child_process", () => ({ execFile }));
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+
+    const { execFileText } = await import("../../src/lib/process.js");
+
+    await expect(
+      execFileText("C:\\Tools\\bl.cmd", ["safe", "line\nbreak"], 1000),
+    ).rejects.toThrow("Windows command arguments cannot contain controls");
+    expect(execFile).not.toHaveBeenCalled();
   });
 });

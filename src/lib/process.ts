@@ -8,8 +8,14 @@ export function execFileText(
   args: string[],
   timeoutMs: number,
 ): Promise<string> {
-  const invocation = shimInvocation(command, args);
   return new Promise((resolve, reject) => {
+    let invocation: { command: string; args: string[] };
+    try {
+      invocation = shimInvocation(command, args);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     execFile(
       invocation.command,
       invocation.args,
@@ -52,9 +58,11 @@ function shimInvocation(
 }
 
 function quoteCmdArgument(value: string): string {
+  if (/[\u0000-\u001f\u007f\r\n]/.test(value)) {
+    throw new TypeError("Windows command arguments cannot contain controls");
+  }
   const escaped = value
-    .replace(/%/g, "%%")
-    .replace(/(["&|<>()^])/g, "^$1");
+    .replace(/(["&|<>()^%])/g, "^$1");
   return `"${escaped}"`;
 }
 
