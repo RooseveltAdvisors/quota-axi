@@ -1,4 +1,4 @@
-import { execFileText, findCommandPath } from "../lib/process.js";
+import * as processUtils from "../lib/process.js";
 import { readCachedProvider } from "../cache.js";
 import { parseEpochOrIso } from "../lib/time.js";
 import type {
@@ -25,8 +25,8 @@ const BL_TIMEOUT_MS = 15_000;
 const LABEL = "Alibaba Coding Plan";
 
 type AlibabaDependencies = {
-  findCommandPath: typeof findCommandPath;
-  execFileText: typeof execFileText;
+  findCommandPath: typeof processUtils.findCommandPath;
+  execFileText: typeof processUtils.execFileText;
   now: () => number;
   readCachedProvider: typeof readCachedProvider;
 };
@@ -40,8 +40,8 @@ export function createAlibabaAdapter(
   overrides: Partial<AlibabaDependencies> = {},
 ): ProviderAdapter {
   const dependencies: AlibabaDependencies = {
-    findCommandPath,
-    execFileText,
+    findCommandPath: (...args) => processUtils.findCommandPath(...args),
+    execFileText: (...args) => processUtils.execFileText(...args),
     now: Date.now,
     readCachedProvider,
     ...overrides,
@@ -63,8 +63,8 @@ export async function fetchQuota(
   _options: ProviderOptions,
 ): Promise<ProviderQuota> {
   return fetchQuotaWithDependencies({
-    findCommandPath,
-    execFileText,
+    findCommandPath: (...args) => processUtils.findCommandPath(...args),
+    execFileText: (...args) => processUtils.execFileText(...args),
     now: Date.now,
     readCachedProvider,
   });
