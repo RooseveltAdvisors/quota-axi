@@ -39,8 +39,13 @@ export type NormalizedOpenCodeGoPayload = {
 
 export function opencodeGoAuthFilePath(): string {
   const xdg = process.env.XDG_DATA_HOME?.trim();
+  if (xdg) return join(xdg, "opencode", "auth.json");
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) return join(localAppData, "opencode", "auth.json");
+  }
   return join(
-    xdg || join(homedir(), ".local", "share"),
+    join(homedir(), ".local", "share"),
     "opencode",
     "auth.json",
   );
@@ -335,10 +340,6 @@ async function settlePendingRead(
         cleanupTimer = setTimeout(resolve, BODY_CLEANUP_TIMEOUT_MS);
       }),
     ]);
-    // Make a bounded release attempt even when cancellation is stalled.
-    // Native streams reject this while the read is pending; the settlement
-    // handler above then retries after the stream can legally release.
-    releaseAfterReadSettles();
   } finally {
     if (cleanupTimer) clearTimeout(cleanupTimer);
   }

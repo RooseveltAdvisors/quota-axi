@@ -3,6 +3,7 @@ import {
   createOpenCodeGoAdapter,
   extractOpenCodeGoCredential,
   normalizeOpenCodeGoPayload,
+  opencodeGoAuthFilePath,
 } from "../../src/providers/opencode-go.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
@@ -31,6 +32,27 @@ describe("OpenCode Go provider", () => {
         "/auth.json",
       ),
     ).toEqual({ status: "available", key: "fallback-key", path: "/auth.json" });
+  });
+
+  it("discovers the standard Windows auth location", () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const originalLocalAppData = process.env.LOCALAPPDATA;
+    try {
+      delete process.env.XDG_DATA_HOME;
+      process.env.LOCALAPPDATA = "C:\\Users\\test\\AppData\\Local";
+      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+
+      expect(opencodeGoAuthFilePath()).toBe(
+        "C:\\Users\\test\\AppData\\Local/opencode/auth.json",
+      );
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      if (originalLocalAppData === undefined)
+        delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = originalLocalAppData;
+      vi.restoreAllMocks();
+    }
   });
 
   it("queries usage and normalizes consumed percentages as remaining quota", async () => {
@@ -442,7 +464,7 @@ describe("OpenCode Go provider", () => {
       error: "provider_timeout",
     });
     expect(cancel).toHaveBeenCalledOnce();
-    expect(releaseLock).toHaveBeenCalledOnce();
+    expect(releaseLock).not.toHaveBeenCalled();
   });
 
   it("releases a retained reader lock when a stalled read settles later", async () => {
@@ -482,11 +504,11 @@ describe("OpenCode Go provider", () => {
       status: "error",
       error: "provider_timeout",
     });
-    expect(releaseLock).toHaveBeenCalledOnce();
+    expect(releaseLock).not.toHaveBeenCalled();
 
     readSettled = true;
     resolveRead?.({ done: true, value: undefined });
     await Promise.resolve();
-    expect(releaseLock).toHaveBeenCalledTimes(2);
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 });
