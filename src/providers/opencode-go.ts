@@ -306,7 +306,7 @@ async function settlePendingRead(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   pendingRead: Promise<ReadableStreamReadResult<Uint8Array>>,
 ): Promise<void> {
-  const cancel = Promise.resolve()
+  void Promise.resolve()
     .then(() => reader.cancel())
     .catch(() => undefined);
   let released = false;
