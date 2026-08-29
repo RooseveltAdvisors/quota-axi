@@ -144,7 +144,12 @@ describe("OpenCode Go provider", () => {
         },
       }).windows,
     ).toEqual([
-      expect.objectContaining({ id: "five_hour", windowSeconds: 1_234 }),
+      expect.objectContaining({
+        id: "rolling",
+        label: "rolling",
+        kind: "unknown",
+        windowSeconds: 1_234,
+      }),
       expect.objectContaining({ id: "weekly", windowSeconds: 604_800 }),
       expect.objectContaining({ id: "monthly" }),
     ]);
@@ -152,6 +157,23 @@ describe("OpenCode Go provider", () => {
       normalizeOpenCodeGoPayload({ usage: { rolling: { percent: 9 } } })
         .windows[0],
     ).not.toHaveProperty("windowSeconds");
+  });
+
+  it("keeps non-five-hour rolling durations unknown", () => {
+    expect(
+      normalizeOpenCodeGoPayload({
+        usage: { rolling: { percent: 10, windowSeconds: 3_600 } },
+      }).windows,
+    ).toEqual([
+      {
+        id: "rolling",
+        label: "rolling",
+        kind: "unknown",
+        percentUsed: 10,
+        percentRemaining: 90,
+        windowSeconds: 3_600,
+      },
+    ]);
   });
 
   it("keeps rolling windows unknown when the provider omits duration", () => {
