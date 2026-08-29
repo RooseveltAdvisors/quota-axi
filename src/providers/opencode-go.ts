@@ -286,8 +286,10 @@ async function readResponseBody(
     usableLength &&
     parsedLength !== undefined &&
     parsedLength > RESPONSE_LIMIT_BYTES
-  )
+  ) {
+    await cancelResponseBody(response);
     throw new Error("response_too_large");
+  }
   if (!response.body) throw new Error("response_size_unverifiable");
 
   const reader = response.body.getReader();

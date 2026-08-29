@@ -393,6 +393,28 @@ describe("OpenCode Go provider", () => {
     expect(falselyDeclaredArrayBuffer).not.toHaveBeenCalled();
   });
 
+  it("cancels oversized declared response bodies before returning", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const report = await createOpenCodeGoAdapter({
+      credential: () => ({ status: "available", key: KEY, path: "/auth.json" }),
+      fetch: vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            headers: new Headers({ "content-length": "262145" }),
+            body: { cancel },
+          }) as unknown as Response,
+      ),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "response_too_large",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("does not wait indefinitely for a stalled response body", async () => {
     let resolveRead:
       | ((result: ReadableStreamReadResult<Uint8Array>) => void)
