@@ -3,16 +3,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { classifyPiAuthEntry } from "../lib/pi-auth-store.js";
 
-const PI_PROVIDER_ID = "xai";
+const PI_PROVIDER_ID = "openai-codex";
 const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
+const MINIMUM_MILLISECOND_EPOCH = 1_000_000_000_000;
 
-export type PiXaiCredentialResolution =
-  | {
-      status: "available";
-      kind: "oauth" | "api_key";
-      /** Present only for in-memory probe use; never log or render. */
-      credential: string;
-    }
+export type PiCodexCredentials = {
+  /** Present only for an in-memory quota probe; never log, render, or cache. */
+  accessToken: string;
+  accountId: string;
+  expiresAtMs: number;
+};
+
+export type PiCodexCredentialResolution =
+  | { status: "available"; credentials: PiCodexCredentials }
   | { status: "missing" }
   | { status: "invalid" }
   | { status: "unsupported" }
@@ -20,26 +23,24 @@ export type PiXaiCredentialResolution =
       status: "expired";
       refreshable: boolean;
       /**
-       * The stored access token, present so a bounded read-only liveness
-       * probe can test it despite the stored expiry field. Probe use only;
+       * The stored credentials, present so a bounded read-only liveness
+       * probe can test them despite the stored expiry field. Probe use only;
        * never log or render.
        */
-      credential?: string;
+      credentials?: PiCodexCredentials;
     }
   | { status: "error" };
 
-export type PiXaiCredentialInspection =
-  | Exclude<PiXaiCredentialResolution["status"], "available" | "expired">
-  | "available"
-  | "expired";
+export type PiCodexCredentialInspection = {
+  path: string;
+  status: PiCodexCredentialResolution["status"];
+  refreshable?: boolean;
+  error?: string;
+};
 
-export type PiXaiCredentialBroker = {
-  resolve(): Promise<PiXaiCredentialResolution>;
-  inspect(): Promise<{
-    status: PiXaiCredentialInspection;
-    refreshable?: boolean;
-    error?: string;
-  }>;
+export type PiCodexCredentialBroker = {
+  resolve(): Promise<PiCodexCredentialResolution>;
+  inspect(): Promise<PiCodexCredentialInspection>;
 };
 
 type BrokerDependencies = {
@@ -49,14 +50,14 @@ type BrokerDependencies = {
   now: () => number;
 };
 
-export function createPiXaiCredentialBroker(
+export function createPiCodexCredentialBroker(
   overrides: Partial<BrokerDependencies> = {},
-): PiXaiCredentialBroker {
+): PiCodexCredentialBroker {
   const dependencies: BrokerDependencies = {
     environment: process.env,
     homeDirectory: homedir,
     readFile: readBoundedFile,
-    now: () => Date.now(),
+    now: Date.now,
     ...overrides,
   };
 
@@ -64,44 +65,54 @@ export function createPiXaiCredentialBroker(
     resolve: () => resolveCredential(dependencies),
     inspect: async () => {
       const resolution = await resolveCredential(dependencies);
-      if (resolution.status === "available") {
-        return { status: "available" };
-      }
+      const path = authFilePath(dependencies);
       if (resolution.status === "expired") {
         return {
+          path,
           status: "expired",
           refreshable: resolution.refreshable,
+          error: resolution.refreshable
+            ? "credentials_expired_refreshable"
+            : "credentials_expired",
         };
       }
       if (resolution.status === "unsupported") {
         return {
+          path,
           status: "unsupported",
           error: "unsupported_credential_type",
         };
       }
-      if (resolution.status === "error") {
-        return { status: "error", error: "credential_resolution_failed" };
-      }
       if (resolution.status === "invalid") {
-        return { status: "invalid", error: "invalid_credential" };
+        return { path, status: "invalid", error: "invalid_credential" };
       }
-      return { status: "missing" };
+      if (resolution.status === "error") {
+        return {
+          path,
+          status: "error",
+          error: "credential_resolution_failed",
+        };
+      }
+      return { path, status: resolution.status };
     },
   };
 }
 
 async function resolveCredential(
   dependencies: BrokerDependencies,
-): Promise<PiXaiCredentialResolution> {
-  const path = authFilePath(dependencies);
+): Promise<PiCodexCredentialResolution> {
   let contents: Buffer;
   try {
-    contents = await dependencies.readFile(path, AUTH_FILE_LIMIT_BYTES);
+    contents = await dependencies.readFile(
+      authFilePath(dependencies),
+      AUTH_FILE_LIMIT_BYTES,
+    );
   } catch (error) {
     return errorCode(error) === "ENOENT"
       ? { status: "missing" }
       : { status: "error" };
   }
+  // Match the Pi xai broker's invalid status for over-cap files
   if (contents.byteLength > AUTH_FILE_LIMIT_BYTES) {
     return { status: "invalid" };
   }
@@ -118,31 +129,35 @@ async function resolveCredential(
   const { entry } = classified;
 
   const type = stringValue(entry.type)?.toLowerCase();
-  if (type === "api_key") {
-    const apiKey = usableLiteralSecret(entry.key);
-    return apiKey !== undefined
-      ? { status: "available", kind: "api_key", credential: apiKey }
-      : { status: "invalid" };
+  if (type === "api_key") return { status: "unsupported" };
+  if (type !== "oauth") {
+    return type === undefined
+      ? { status: "invalid" }
+      : { status: "unsupported" };
   }
 
-  if (type === "oauth") {
-    const access = usableLiteralSecret(entry.access);
-    if (access === undefined) return { status: "invalid" };
-    const hasExpiry = Object.hasOwn(entry, "expires");
-    const expiresMs = timestampMs(entry.expires);
-    if (hasExpiry && expiresMs === undefined) return { status: "invalid" };
-    if (expiresMs !== undefined && expiresMs <= dependencies.now()) {
-      return {
-        status: "expired",
-        refreshable: usableLiteralSecret(entry.refresh) !== undefined,
-        credential: access,
-      };
-    }
-    return { status: "available", kind: "oauth", credential: access };
+  const accessToken = usableLiteral(entry.access);
+  const accountId = usableLiteral(entry.accountId);
+  const expiresAtMs = millisecondTimestamp(entry.expires);
+  if (
+    accessToken === undefined ||
+    accountId === undefined ||
+    expiresAtMs === undefined
+  ) {
+    return { status: "invalid" };
+  }
+  if (expiresAtMs <= dependencies.now()) {
+    return {
+      status: "expired",
+      refreshable: Object.hasOwn(entry, "refresh"),
+      credentials: { accessToken, accountId, expiresAtMs },
+    };
   }
 
-  if (type === undefined) return { status: "invalid" };
-  return { status: "unsupported" };
+  return {
+    status: "available",
+    credentials: { accessToken, accountId, expiresAtMs },
+  };
 }
 
 function authFilePath(dependencies: BrokerDependencies): string {
@@ -153,9 +168,7 @@ function piAgentDirectory(dependencies: BrokerDependencies): string {
   const home = () =>
     nonempty(dependencies.environment.HOME) ?? dependencies.homeDirectory();
   const configured = nonempty(dependencies.environment.PI_CODING_AGENT_DIR);
-  if (configured === undefined) {
-    return join(home(), ".pi", "agent");
-  }
+  if (configured === undefined) return join(home(), ".pi", "agent");
   if (configured === "~") return home();
   if (
     configured.startsWith("~/") ||
@@ -166,14 +179,10 @@ function piAgentDirectory(dependencies: BrokerDependencies): string {
   return configured;
 }
 
-function usableLiteralSecret(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
+function usableLiteral(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
   // Reject environment, template, and command references without resolving them.
-  if (value.startsWith("!") || value.includes("$")) {
-    return undefined;
-  }
+  if (value.startsWith("!") || value.includes("$")) return undefined;
   if (
     [...value].some((character) => {
       const code = character.charCodeAt(0);
@@ -185,20 +194,12 @@ function usableLiteralSecret(value: unknown): string | undefined {
   return value;
 }
 
-function timestampMs(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    // Pi stores OAuth expiry as epoch milliseconds.
-    return value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const asNumber = Number(value);
-    if (Number.isFinite(asNumber)) {
-      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber;
-    }
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-  return undefined;
+function millisecondTimestamp(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MINIMUM_MILLISECOND_EPOCH
+    ? value
+    : undefined;
 }
 
 async function readBoundedFile(

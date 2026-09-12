@@ -25,6 +25,7 @@ export const PROVIDER_IDS = [
 
 export type ProviderSource =
   | "oauth"
+  | "pi:openai-codex"
   | "cli-rpc"
   | "cli"
   | "api"
@@ -156,6 +157,24 @@ export type EffectiveSelection = Partial<
   unmeasurableWindowIds?: string[];
 };
 
+/**
+ * A contradiction between what a scope's own meter reports and what a bound it
+ * only inherits from a broader scope reports: the inherited window reports
+ * nothing left while every window metered for this scope alone still reports
+ * allowance.
+ *
+ * Publishing the inherited zero as the scope's effective remaining would assert
+ * an exhaustion the readings themselves dispute, so the conflict is published
+ * as data instead and the scope's `status` stays `unknown`. It is a disclosure
+ * of uncertainty, not a claim that the scope is available.
+ */
+export type BoundConflict = {
+  /** Inherited bounds reporting zero remaining. */
+  exhaustedWindowIds: string[];
+  /** Windows metered for this scope alone, all still reporting allowance. */
+  liveWindowIds: string[];
+};
+
 export type QuotaWindow = {
   id: string;
   label: string;
@@ -178,6 +197,13 @@ export type EffectiveAvailability = {
   effectivePercentRemaining?: number;
   boundedBy: string[];
   limitingWindowIds?: string[];
+  /**
+   * Present only when this scope's own windows contradict an inherited bound
+   * that reads zero. `status` is then `unknown` and no effective percentage,
+   * runway, or selection scalar is asserted: the conflict itself is the
+   * reported fact.
+   */
+  boundConflict?: BoundConflict;
   /** Compact pace over every bounding window, not only the current limiter. */
   pace?: EffectivePaceSummary;
   /**
@@ -206,6 +232,19 @@ export type SourceAttempt = {
   status: "success" | "failed" | "skipped";
   error?: string;
   credentialPresent?: boolean;
+  /**
+   * Whether this credential source was not genuinely absent and failed to
+   * yield a reading. Left unset it is derived by `isDegradedSourceAttempt`; set it explicitly
+   * only to correct that derivation for an attempt that is not a credential
+   * problem.
+   */
+  degraded?: boolean;
+};
+
+/** A non-absent credential source that did not yield the reported reading. */
+export type DegradedSource = {
+  source: string;
+  error?: string;
 };
 
 export type ProviderQuota = {
@@ -243,6 +282,12 @@ export type ProviderQuota = {
     reason?: ProviderStateReason;
     remedyCommand?: string;
     untrustedWindowIds?: string[];
+    /**
+     * Sources that were superseded: a working source answered for this
+     * provider while these were broken or could not be read. Present only on a
+     * fresh reading, so the breakage behind a healthy row stays visible.
+     */
+    degradedSources?: DegradedSource[];
     /** Omitted from default `--json`; see `--full`. */
     sourcesTried?: string[];
   };

@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.1.41](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.40...quota-axi-v0.1.41) (2026-09-08)
+
+
+### Bug Fixes
+
+* **deps:** update undici to 6.28.0 for security fixes ([#156](https://github.com/kunchenguid/quota-axi/issues/156)) ([ba32e0a](https://github.com/kunchenguid/quota-axi/commit/ba32e0a33742b247dfa48e1e972f30e5d9d621f9))
+* **providers:** resolve the Kimi Code credential slot and endpoint together ([#151](https://github.com/kunchenguid/quota-axi/issues/151)) ([aa2fa97](https://github.com/kunchenguid/quota-axi/commit/aa2fa973b817f096dd2a0c448c04fc2b82b2f691))
+
+## [0.1.40](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.39...quota-axi-v0.1.40) (2026-09-07)
+
+
+### Bug Fixes
+
+* **interpretation:** publish a bound conflict instead of asserting model exhaustion ([#153](https://github.com/kunchenguid/quota-axi/issues/153)) ([213b041](https://github.com/kunchenguid/quota-axi/commit/213b041977bfe2f99323387d0d94b62b70422c28))
+
+## [0.1.39](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.38...quota-axi-v0.1.39) (2026-09-07)
+
+
+### Bug Fixes
+
+* **providers:** probe stored-expired credentials instead of skipping them ([#150](https://github.com/kunchenguid/quota-axi/issues/150)) ([bf9e0a7](https://github.com/kunchenguid/quota-axi/commit/bf9e0a74be8e2382d28583d8e894d14e860e1b4f))
+
+## [0.1.38](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.37...quota-axi-v0.1.38) (2026-09-05)
+
+
+### Bug Fixes
+
+* **providers:** fall back to working credential sources ([#147](https://github.com/kunchenguid/quota-axi/issues/147)) ([dc5accd](https://github.com/kunchenguid/quota-axi/commit/dc5accde5f8a8d6e2ec5ffa5ffdcd05a7d77e2c4))
+
+## [0.1.37](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.36...quota-axi-v0.1.37) (2026-09-04)
+
+
+### Bug Fixes
+
+* **grok:** treat consumer-billing rejection as unmeasurable, not sign-out, for SuperGrok OAuth ([#142](https://github.com/kunchenguid/quota-axi/issues/142)) ([069379f](https://github.com/kunchenguid/quota-axi/commit/069379fcd5a80d8a6f39bffbbbfb8774f5d4a43f))
+
+## [0.1.36](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.35...quota-axi-v0.1.36) (2026-09-03)
+
+
+### Bug Fixes
+
+* **agy:** discover Antigravity processes on Linux ([#141](https://github.com/kunchenguid/quota-axi/issues/141)) ([9797056](https://github.com/kunchenguid/quota-axi/commit/9797056378557a2c190beb204e875d05b4870b93))
+* **claude:** preserve quota cache when Keychain access is denied ([#139](https://github.com/kunchenguid/quota-axi/issues/139)) ([de1d184](https://github.com/kunchenguid/quota-axi/commit/de1d18420365ffc57f208ab62f3269ce7a26aefc))
+
+## [0.1.35](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.34...quota-axi-v0.1.35) (2026-09-01)
+
+
+### Bug Fixes
+
+* **providers:** honor configured HTTP proxies ([#136](https://github.com/kunchenguid/quota-axi/issues/136)) ([ef403f7](https://github.com/kunchenguid/quota-axi/commit/ef403f786665b8eabcbab207e976ae3cb9e120c8))
+* **providers:** read Pi Codex OAuth credentials ([#132](https://github.com/kunchenguid/quota-axi/issues/132)) ([2b1b45e](https://github.com/kunchenguid/quota-axi/commit/2b1b45ecdb687a1770830cf10cd0c9573a6dbcfe))
+
 ## [0.1.34](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.33...quota-axi-v0.1.34) (2026-08-29)
 
 

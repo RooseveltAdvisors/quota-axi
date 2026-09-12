@@ -5,6 +5,7 @@ import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
 import { SELECTION_SCALAR_KEY } from "./types.js";
 import type {
   AuthProviderReport,
+  BoundConflict,
   EffectiveAvailability,
   ModelsResponse,
   ProviderId,
@@ -113,8 +114,10 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
         scopeAttention.push({
           provider: provider.provider,
           scope: scope.scope,
-          kind: "headroom_unknown",
-          detail: unknownHeadroomDetail(scope),
+          kind: scope.boundConflict ? "bound_conflict" : "headroom_unknown",
+          detail: scope.boundConflict
+            ? boundConflictDetail(scope.boundConflict)
+            : unknownHeadroomDetail(scope),
           remedy: NONE,
         });
       } else {
@@ -191,6 +194,35 @@ function providerAttention(
   measured: boolean,
   scopeRows: number,
 ): AttentionRow[] {
+  // Degraded sources are appended, never counted: they name the provider but
+  // not why a scope is missing, so they must not suppress the `no_quota` row.
+  return [
+    ...providerStateRows(provider, measured, scopeRows),
+    ...degradedSourceRows(provider),
+  ];
+}
+
+/**
+ * A working sibling answered for this provider, so the rows above are healthy
+ * and this is the only place the superseded breakage is still stated.
+ */
+function degradedSourceRows(provider: ProviderQuota): AttentionRow[] {
+  return (provider.state.degradedSources ?? []).map((degraded) => ({
+    provider: provider.provider,
+    scope: "all",
+    kind: "degraded_source",
+    detail: degraded.error
+      ? `${degraded.source}${DETAIL_SEPARATOR}${degraded.error}`
+      : degraded.source,
+    remedy: NONE,
+  }));
+}
+
+function providerStateRows(
+  provider: ProviderQuota,
+  measured: boolean,
+  scopeRows: number,
+): AttentionRow[] {
   const rows: AttentionRow[] = [];
   const primary = primaryProviderRow(provider);
   if (primary) rows.push(primary);
@@ -260,6 +292,17 @@ function primaryProviderRow(provider: ProviderQuota): AttentionRow | undefined {
       : detail,
     remedy: state.remedyCommand ?? NONE,
   };
+}
+
+/**
+ * State both sides of a bound conflict, so the reason the scope has no number
+ * is the contradiction itself rather than a bare list of blocking windows.
+ */
+function boundConflictDetail(conflict: BoundConflict): string {
+  return [
+    `${joinIds(conflict.exhaustedWindowIds) ?? UNKNOWN} reads 0`,
+    `${joinIds(conflict.liveWindowIds) ?? UNKNOWN} still report allowance`,
+  ].join(DETAIL_SEPARATOR);
 }
 
 /** Which windows suppress the scope's headroom, so absence is explained. */

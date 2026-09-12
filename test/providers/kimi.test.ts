@@ -1,20 +1,24 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
+import { withQuotaSemantics } from "../../src/interpretation.js";
 import {
   createKimiAdapter,
   normalizeKimiPayload,
   normalizeRetryAfter,
 } from "../../src/providers/kimi.js";
+import { renderQuotaToon } from "../../src/render.js";
 import type {
   KimiCodeCliCredentialInspection,
   KimiCodeCliCredentialResolution,
   KimiCodeCliCredentialSource,
+  KimiCodeSelection,
 } from "../../src/providers/kimi-code-cli-credential.js";
-import type {
-  KimiCredentialBroker,
-  KimiCredentialInspection,
-  KimiCredentialResolution,
+import {
+  createPiKimiCredentialBroker,
+  type KimiCredentialBroker,
+  type KimiCredentialInspection,
+  type KimiCredentialResolution,
 } from "../../src/providers/pi-kimi-credential.js";
 import type {
   ProviderAdapter,
@@ -165,7 +169,7 @@ describe("Kimi request transport", () => {
     expect(report.state.untrustedWindowIds).toEqual(["limit:2"]);
   });
 
-  it.each(["missing", "unsupported"] as const)(
+  it.each(["missing", "unsupported", "error"] as const)(
     "uses a fresh CLI credential after Pi reports %s",
     async (piStatus) => {
       const cliToken = "synthetic-cli-token-529";
@@ -202,15 +206,34 @@ describe("Kimi request transport", () => {
       expect(report.attempts).toEqual([
         {
           source: "pi:kimi-coding",
-          status: "skipped",
+          status: piStatus === "error" ? "failed" : "skipped",
           error:
             piStatus === "missing"
               ? "kimi_credential_unavailable"
-              : "unsupported_credential_type",
+              : piStatus === "unsupported"
+                ? "unsupported_credential_type"
+                : "credential_resolution_failed",
+          ...(piStatus === "missing" ? {} : { credentialPresent: true }),
         },
         { source: "kimi-code-cli", status: "success" },
       ]);
       expect(JSON.stringify(report)).not.toContain(cliToken);
+      expect(
+        withQuotaSemantics(report, new Date(NOW).toISOString()).state
+          .degradedSources,
+      ).toEqual(
+        piStatus === "missing"
+          ? undefined
+          : [
+              {
+                source: "pi:kimi-coding",
+                error:
+                  piStatus === "unsupported"
+                    ? "unsupported_credential_type"
+                    : "credential_resolution_failed",
+              },
+            ],
+      );
     },
   );
 
@@ -225,7 +248,6 @@ describe("Kimi request transport", () => {
           headers: { "content-type": "application/json" },
         }),
       async () => new Response(null, { status: 503 }),
-      async () => new Response(null, { status: 401 }),
     ];
 
     for (const requestFailure of failures) {
@@ -242,6 +264,74 @@ describe("Kimi request transport", () => {
       expect(cliSource.resolve).not.toHaveBeenCalled();
       expect(report.state.sourcesTried).toEqual(["pi:kimi-coding"]);
     }
+  });
+
+  it("reports the CLI reading when the Pi credential is rejected", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Headers(init?.headers).get("authorization") ===
+        "Bearer cli-token-after-pi-rejection"
+          ? jsonResponse(SUCCESS_PAYLOAD)
+          : new Response(null, { status: 401 }),
+    );
+    const remove = vi.fn();
+    const report = await testAdapter({
+      cliCredentialSource: cliCredentialSource({
+        status: "available",
+        accessToken: "cli-token-after-pi-rejection",
+      }),
+      fetch: request,
+      deleteCachedProvider: remove,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state.status).toBe("fresh");
+    expect(report.windows.length).toBeGreaterThan(0);
+    expect(remove).not.toHaveBeenCalled();
+    expect(report.state.sourcesTried).toEqual([
+      "pi:kimi-coding",
+      "kimi-code-cli",
+    ]);
+    expect(report.attempts).toEqual([
+      {
+        source: "pi:kimi-coding",
+        status: "failed",
+        error: "provider_auth_rejected",
+      },
+      { source: "kimi-code-cli", status: "success" },
+    ]);
+  });
+
+  it("keeps a rejected Pi credential answerable when the CLI is unusable", async () => {
+    const remove = vi.fn();
+    const report = await testAdapter({
+      cliCredentialSource: cliCredentialSource({ status: "missing" }),
+      fetch: vi.fn(async () => new Response(null, { status: 401 })),
+      deleteCachedProvider: remove,
+      readCachedProvider: () => cachedQuota(),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      stale: false,
+      error: "provider_auth_rejected",
+    });
+    expect(remove).toHaveBeenCalledWith("kimi");
+  });
+
+  it("does not report a rejected credential as sign-out while a sibling is only unreachable", async () => {
+    const remove = vi.fn();
+    const report = await testAdapter({
+      cliCredentialSource: cliCredentialSource({ status: "error" }),
+      fetch: vi.fn(async () => new Response(null, { status: 401 })),
+      deleteCachedProvider: remove,
+      readCachedProvider: () => cachedQuota(),
+    }).fetchQuota(OPTIONS);
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(report).toMatchObject({
+      source: "cache",
+      state: { status: "stale", error: "credential_resolution_failed" },
+    });
   });
 
   it("coalesces concurrent acquisitions into one provider request", async () => {
@@ -815,6 +905,7 @@ describe("Kimi payload normalization", () => {
 describe("Kimi credential outcomes and cache policy", () => {
   it.each([
     ["missing", "kimi_credential_unavailable"],
+    ["invalid", "pi_kimi_credential_invalid"],
     ["unsupported", "unsupported_credential_type"],
   ] as const)(
     "makes no request for %s credentials and retires cache",
@@ -856,7 +947,7 @@ describe("Kimi credential outcomes and cache policy", () => {
         error: "credential_resolution_failed",
         refreshedAt: cached.state.refreshedAt,
         untrustedWindowIds: ["limit:2"],
-        sourcesTried: ["pi:kimi-coding", "cache"],
+        sourcesTried: ["pi:kimi-coding", "kimi-code-cli", "cache"],
       },
     });
   });
@@ -977,6 +1068,7 @@ describe("Kimi credential outcomes and cache policy", () => {
     for (const [inspection, expected] of [
       ["available", { status: "available" }],
       ["missing", { status: "missing" }],
+      ["invalid", { status: "invalid", error: "pi_kimi_credential_invalid" }],
       [
         "unsupported",
         { status: "invalid", error: "unsupported_credential_type" },
@@ -1051,6 +1143,61 @@ describe("Kimi credential outcomes and cache policy", () => {
     },
   );
 
+  it("keeps a malformed Pi store degraded when the CLI returns quota", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        jsonResponse(SUCCESS_PAYLOAD),
+    );
+    const report = await testAdapter({
+      broker: createPiKimiCredentialBroker({
+        readFile: async () => Buffer.from("{malformed"),
+      }),
+      cliCredentialSource: cliCredentialSource({
+        status: "available",
+        accessToken: "working-cli-token",
+      }),
+      fetch: request,
+    }).fetchQuota(OPTIONS);
+    const interpreted = withQuotaSemantics(report, new Date(NOW).toISOString());
+
+    expect(report.state.status).toBe("fresh");
+    expect(report.windows.length).toBeGreaterThan(0);
+    expect(interpreted.state.degradedSources).toEqual([
+      { source: "pi:kimi-coding", error: "pi_kimi_credential_invalid" },
+    ]);
+  });
+
+  it.each([{}, null, "invalid", []])(
+    "keeps structurally invalid Pi auth %# degraded when the CLI returns quota",
+    async (entry) => {
+      const request = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+          jsonResponse(SUCCESS_PAYLOAD),
+      );
+      const report = await testAdapter({
+        broker: createPiKimiCredentialBroker({
+          readFile: async () =>
+            Buffer.from(JSON.stringify({ "kimi-coding": entry })),
+        }),
+        cliCredentialSource: cliCredentialSource({
+          status: "available",
+          accessToken: "working-cli-token",
+        }),
+        fetch: request,
+      }).fetchQuota(OPTIONS);
+      const interpreted = withQuotaSemantics(
+        report,
+        new Date(NOW).toISOString(),
+      );
+
+      expect(report.state.status).toBe("fresh");
+      expect(report.windows.length).toBeGreaterThan(0);
+      expect(interpreted.state.degradedSources).toEqual([
+        { source: "pi:kimi-coding", error: "pi_kimi_credential_invalid" },
+      ]);
+    },
+  );
+
   it("falls through to the CLI when the Pi OAuth record is expired", async () => {
     const request = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -1078,9 +1225,23 @@ describe("Kimi credential outcomes and cache policy", () => {
         source: "pi:kimi-coding",
         status: "skipped",
         error: "pi_kimi_credential_expired",
+        credentialPresent: true,
       },
       { source: "kimi-code-cli", status: "success" },
     ]);
+
+    const rendered = renderQuotaToon(
+      {
+        generatedAt: new Date(NOW).toISOString(),
+        schemaVersion: 5,
+        providers: [withQuotaSemantics(report, new Date(NOW).toISOString())],
+      },
+      "quota-axi",
+      false,
+    );
+    expect(rendered).toContain(
+      'kimi,all,degraded_source,"pi:kimi-coding · pi_kimi_credential_expired",none',
+    );
   });
 
   it("reports Pi OAuth expiry when no other credential is usable", async () => {
@@ -1132,6 +1293,69 @@ describe("Kimi credential outcomes and cache policy", () => {
     });
   });
 
+  it("preserves stale cache for a CLI environment it cannot read", async () => {
+    const unreadableEnvironments = [
+      ["unsupported_storage", "kimi_code_cli_credential_storage_unsupported"],
+      ["unrecognized_region", "kimi_code_cli_region_unrecognized"],
+      ["invalid_config", "kimi_code_cli_config_invalid"],
+    ] as const;
+
+    for (const [status, error] of unreadableEnvironments) {
+      const remove = vi.fn();
+      const report = await testAdapter({
+        broker: broker({ status: "missing" }),
+        cliCredentialSource: cliCredentialSource({ status }),
+        readCachedProvider: () => cachedQuota(),
+        deleteCachedProvider: remove,
+      }).fetchQuota(OPTIONS);
+
+      expect(remove).not.toHaveBeenCalled();
+      expect(report).toMatchObject({
+        source: "cache",
+        windows: [{ id: "five_hour" }, { id: "weekly" }],
+        state: {
+          status: "stale",
+          stale: true,
+          error,
+          sourcesTried: ["pi:kimi-coding", "kimi-code-cli", "cache"],
+        },
+        attempts: [
+          { source: "pi:kimi-coding", status: "skipped" },
+          {
+            source: "kimi-code-cli",
+            status: "skipped",
+            error,
+            credentialPresent: true,
+          },
+        ],
+      });
+    }
+  });
+
+  /**
+   * The environment read is filesystem I/O like every other step of the run,
+   * and a `config.toml` that never answers - a FIFO, or a stalled mount - must
+   * expire with the operation rather than outlive it.
+   */
+  it("bounds a Kimi Code environment read that never answers", async () => {
+    const stalled: KimiCodeCliCredentialSource = {
+      select: vi.fn(() => new Promise<KimiCodeSelection>(() => {})),
+      resolve: vi.fn(async () => ({ status: "missing" }) as const),
+      inspect: vi.fn(async () => "missing" as const),
+    };
+
+    const report = await testAdapter({
+      cliCredentialSource: stalled,
+      deadlineMs: 20,
+    }).fetchQuota(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", stale: false, error: "request_timeout" },
+    });
+  });
+
   it("never exposes a sentinel credential through reports or attempts", async () => {
     const sentinel = "KIMI-SENTINEL-DO-NOT-LEAK-938475";
     const report = await testAdapter({
@@ -1177,6 +1401,8 @@ function testAdapter(
   });
 }
 
+const TEST_CREDENTIAL_CONTEXT_ID = "a".repeat(64);
+
 function broker(
   resolution: KimiCredentialResolution,
   inspection: KimiCredentialInspection = resolution.status === "available"
@@ -1189,15 +1415,40 @@ function broker(
   };
 }
 
+/**
+ * A resolved CLI credential always names the base URL its environment logged in
+ * against; these cases are about credential priority rather than about the
+ * environment, so they take the default deployment unless they say otherwise.
+ */
+type CliCredentialInput =
+  | { status: "available"; accessToken: string; baseUrl?: string }
+  | Exclude<KimiCodeCliCredentialResolution, { status: "available" }>;
+
 function cliCredentialSource(
-  resolution: KimiCodeCliCredentialResolution,
-  inspection: KimiCodeCliCredentialInspection = resolution.status,
+  input: CliCredentialInput,
+  inspection: KimiCodeCliCredentialInspection = input.status,
 ): KimiCodeCliCredentialSource {
+  const resolution: KimiCodeCliCredentialResolution =
+    input.status === "available"
+      ? { ...input, baseUrl: input.baseUrl ?? "https://api.kimi.com/coding/v1" }
+      : input;
   return {
+    select: vi.fn(async () => TEST_SELECTION),
     resolve: vi.fn(async () => resolution),
     inspect: vi.fn(async () => inspection),
   };
 }
+
+const TEST_SELECTION: KimiCodeSelection = {
+  codeHome: "/synthetic/kimi-code-home",
+  environment: {
+    status: "resolved",
+    credentialFileName: "kimi-code",
+    baseUrl: "https://api.kimi.com/coding/v1",
+    confirmed: true,
+  },
+  contextId: TEST_CREDENTIAL_CONTEXT_ID,
+};
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {

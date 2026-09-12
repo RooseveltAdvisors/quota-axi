@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { classifyPiAuthEntry } from "../lib/pi-auth-store.js";
 
 const PI_PROVIDER_ID = "kimi-coding";
 const AUTH_FILE_LIMIT_BYTES = 64 * 1024;
@@ -13,7 +14,17 @@ export type KimiCredentialResolution =
       credential: string;
     }
   | { status: "missing" }
-  | { status: "expired"; refreshable: boolean }
+  | { status: "invalid" }
+  | {
+      status: "expired";
+      refreshable: boolean;
+      /**
+       * The stored access token, present so a bounded read-only liveness
+       * probe can test it despite the stored expiry field. Probe use only;
+       * never log or render.
+       */
+      credential?: string;
+    }
   | { status: "unsupported" }
   | { status: "error" };
 
@@ -66,21 +77,19 @@ async function resolveCredential(
       : { status: "error" };
   }
   if (contents.byteLength > AUTH_FILE_LIMIT_BYTES) {
-    return { status: "missing" };
+    return { status: "invalid" };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents.toString("utf8")) as unknown;
   } catch {
-    return { status: "missing" };
+    return { status: "invalid" };
   }
 
-  const root = objectValue(parsed);
-  if (!root) return { status: "missing" };
-
-  const entry = objectValue(root[PI_PROVIDER_ID]);
-  if (!entry) return { status: "missing" };
+  const classified = classifyPiAuthEntry(parsed, PI_PROVIDER_ID);
+  if (classified.status !== "present") return classified;
+  const { entry } = classified;
 
   // Pi stores a `kimi-coding` login as either a literal API key or the OAuth
   // record it received from Kimi. Both are read in place: an expired OAuth
@@ -91,23 +100,24 @@ async function resolveCredential(
     const apiKey = usableLiteralSecret(entry.key);
     return apiKey !== undefined
       ? { status: "available", kind: "api_key", credential: apiKey }
-      : { status: "missing" };
+      : { status: "invalid" };
   }
   if (type === "oauth") {
     const access = usableLiteralSecret(entry.access);
-    if (access === undefined) return { status: "missing" };
+    if (access === undefined) return { status: "invalid" };
     const hasExpiry = Object.hasOwn(entry, "expires");
     const expiresMs = timestampMs(entry.expires);
-    if (hasExpiry && expiresMs === undefined) return { status: "missing" };
+    if (hasExpiry && expiresMs === undefined) return { status: "invalid" };
     if (expiresMs !== undefined && expiresMs <= dependencies.now()) {
       return {
         status: "expired",
-        refreshable: usableLiteralSecret(entry.refresh) !== undefined,
+        refreshable: Object.hasOwn(entry, "refresh"),
+        credential: access,
       };
     }
     return { status: "available", kind: "oauth", credential: access };
   }
-  if (type === undefined) return { status: "missing" };
+  if (type === undefined) return { status: "invalid" };
   return { status: "unsupported" };
 }
 
@@ -197,12 +207,6 @@ function nonempty(value: string | undefined): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {

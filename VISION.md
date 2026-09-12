@@ -30,7 +30,7 @@ It never performs the refresh exchange itself, because these refresh tokens rota
 A delegated command is declared in this tree, is fixed argv rather than anything assembled at runtime, gets no interactive surface, and is chosen only when its own behavior is established from that vendor's CLI rather than assumed. quota-axi bounds how long it waits, but never terminates a delegate that may be mid-exchange; an over-budget run is left to the vendor and reported as unconfirmed.
 A provider whose vendor CLI has no such command stays read-only and keeps honest advice instead; not renewing is always allowed, and forcing a renewal through an unsafe path never is.
 A credential value leaves the process only as the bearer of the first-party request it authenticates, and is never printed, logged, cached, written into a test fixture, or exchanged for another credential.
-A refresh token is not read at all: its presence is evidence that a vendor can recover, never a value quota-axi handles.
+A refresh token may be inspected only as narrowly as the [Security Posture](README.md#security-posture) allows, and is never retained or used by quota-axi as credential material.
 A credential the user supplies explicitly is as legitimate a source as one discovered on disk, because people run this in more shapes than one machine with one seat.
 
 ## Absent data stays absent
@@ -66,6 +66,7 @@ The `--tui` surface is a convenience for a human at a terminal, not a second pro
 
 quota-axi is not a router, not a proxy, not a gateway, not a login manager, not an auth app, not a hosted service, and not a desktop application.
 Delegating one renewal to the CLI that owns a credential store does not make it any of those: it mints nothing, stores nothing, and adds no identity of its own.
+Sending its own outbound vendor calls through the host's already-configured `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` egress path does not make it a proxy or gateway either: quota-axi routes nothing on anyone else's behalf, exposes no proxy service, and reads no proxy URL into its output; it only reaches the same address it would have reached directly, by the path the host already requires.
 Coverage of popular agents is wanted and pursued on a best-effort basis, and it grows in this tree rather than through a third-party interface that would run unreviewed code against a user's credentials.
 Where a vendor reports money as reliably as it reports capacity, reporting money is open to it; a signal that can only be made accurate for a few providers does not ship.
 Adapter behavior is clean-room from a vendor's own observable behavior, and third-party data is attributed rather than republished.

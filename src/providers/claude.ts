@@ -10,6 +10,7 @@ import {
   readJsonFileResult,
   type JsonFileReadResult,
 } from "../lib/fs.js";
+import { providerFetch } from "../lib/http.js";
 import { execFileText } from "../lib/process.js";
 import { listRunningCommandLines } from "../lib/running-processes.js";
 import { clampPercent, nowIso, retryAfterToIso } from "../lib/time.js";
@@ -342,6 +343,9 @@ async function attemptClaudeQuota(
       source: state.source.source,
       status: "skipped",
       error: `credentials_${state.status}`,
+      // A malformed store still holds a credential, so a sibling source that
+      // answers supersedes it rather than replacing it silently.
+      ...(state.status === "invalid" ? { credentialPresent: true } : {}),
     });
   }
 
@@ -365,6 +369,10 @@ async function attemptClaudeQuota(
                 source: "oauth-profile",
                 status: "failed",
                 error: quota.identityError,
+                // The identity lookup is not a credential source, so its
+                // failure never marks a source as superseded; `account`
+                // already reports the unverified identity.
+                degraded: false,
               }
             : { source: "oauth-profile", status: "success" },
         );
@@ -396,6 +404,7 @@ async function attemptClaudeQuota(
           }
         } else {
           transientFailure = failure.withUsageFetchFailure();
+          break;
         }
       }
     }
@@ -419,12 +428,27 @@ async function attemptClaudeQuota(
     }
   }
 
+  const keychainDenied = credentialStates.some(
+    (state) =>
+      state.status === "skipped" &&
+      state.source.source === "keychain" &&
+      state.source.error === "keychain_access_denied",
+  );
+  let failure =
+    transientFailure ??
+    definitiveFailure ??
+    new ClaudeFailure("Claude quota unavailable", { staleEligible: true });
+  // A denied Keychain read never saw the live session. A 401 from a leftover
+  // oauth-file sidecar is not evidence the user is signed out of Claude.
+  if (keychainDenied && failure.definitiveAuth) {
+    failure = new ClaudeFailure("keychain_access_denied", {
+      staleEligible: true,
+    });
+  }
+
   return {
     kind: "failure",
-    failure:
-      definitiveFailure ??
-      transientFailure ??
-      new ClaudeFailure("Claude quota unavailable", { staleEligible: true }),
+    failure,
     refreshableExpiredRejected,
     keychainWithheld: credentialStates.some(
       (state) =>
@@ -740,6 +764,7 @@ async function readSkippedKeychainCredentialState(
       source: "keychain",
       status: "skipped",
       error: "keychain_presence_check_failed",
+      credentialPresent: true,
     },
   };
 }
@@ -892,6 +917,7 @@ function keychainFailureState(error: unknown): CredentialState {
         source: "keychain",
         status: "skipped",
         error: "keychain_prompt_timeout",
+        credentialPresent: true,
       },
     };
   }
@@ -902,6 +928,7 @@ function keychainFailureState(error: unknown): CredentialState {
         source: "keychain",
         status: "skipped",
         error: KEYCHAIN_UNREACHABLE_ERROR,
+        credentialPresent: true,
       },
     };
   }
@@ -911,6 +938,7 @@ function keychainFailureState(error: unknown): CredentialState {
       source: "keychain",
       status: "skipped",
       error: "keychain_access_denied",
+      credentialPresent: true,
     },
   };
 }
@@ -978,7 +1006,7 @@ async function fetchOauthUsage(credentials: ClaudeCredentials): Promise<{
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    const response = await fetch(API_URL, {
+    const response = await providerFetch(API_URL, {
       headers: {
         authorization: `Bearer ${credentials.accessToken}`,
         "anthropic-beta": OAUTH_BETA,
@@ -1011,7 +1039,7 @@ async function fetchOauthProfile(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    const response = await fetch(PROFILE_API_URL, {
+    const response = await providerFetch(PROFILE_API_URL, {
       headers: {
         authorization: `Bearer ${credentials.accessToken}`,
         "User-Agent": CLAUDE_CODE_USER_AGENT,
@@ -1048,12 +1076,11 @@ function unverifiedClaudeIdentity(error: string): ClaudeIdentityResult {
   };
 }
 
-// Anthropic's OAuth usage endpoint follows plain HTTP semantics: 401/403 mean
-// the access token no longer authenticates, and 429 means the caller must
-// back off, honoring the standard `Retry-After` header (RFC 9110 - either a
-// delay in seconds or an HTTP-date).
+// Anthropic's OAuth usage endpoint uses 401 for failed authentication. A 403
+// can also be a network-policy or WAF denial, so it is not sufficient evidence
+// for a sign-out verdict. 429 follows standard Retry-After semantics (RFC 9110).
 function rejectUnusableUsageResponse(response: Response): void {
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     throw new ClaudeFailure("Claude sign-in required", {
       status: "auth_required",
       definitiveAuth: true,

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readCachedProvider } from "../cache.js";
+import { providerFetch } from "../lib/http.js";
 import { execFileText, commandExists } from "../lib/process.js";
 import { clampPercent, nowIso, retryAfterToIso } from "../lib/time.js";
 import type {
@@ -401,7 +402,7 @@ async function postDashboardRpc(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    const response = await fetch(
+    const response = await providerFetch(
       `${API_URL}/aiserver.v1.DashboardService/${method}`,
       {
         method: "POST",
@@ -444,6 +445,7 @@ async function readCredentialState(): Promise<CredentialState> {
         path: STATE_DB,
         status: "skipped",
         error: "sqlite3_unavailable",
+        credentialPresent: true,
       },
     };
   }
@@ -479,6 +481,7 @@ async function readCredentialState(): Promise<CredentialState> {
         path: STATE_DB,
         status: "invalid",
         error: sqliteError,
+        credentialPresent: true,
       },
     };
   }

@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { readCachedProvider } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
+import { providerFetch } from "../lib/http.js";
 import { findCommandPath, terminateChild } from "../lib/process.js";
 import {
   clampPercent,
@@ -27,6 +28,18 @@ import {
   successProvider,
   withRemaining,
 } from "./common.js";
+import {
+  selectCredential,
+  type AttemptOutcome,
+  type CredentialCandidate,
+  type CredentialSelection,
+} from "./credential-selection.js";
+import {
+  createPiCodexCredentialBroker,
+  type PiCodexCredentialBroker,
+  type PiCodexCredentialInspection,
+  type PiCodexCredentialResolution,
+} from "./pi-codex-credential.js";
 
 const ENDPOINTS = [
   "https://chatgpt.com/backend-api/wham/usage",
@@ -36,6 +49,7 @@ const API_TIMEOUT_MS = 15_000;
 const CLI_TIMEOUT_MS = 15_000;
 const RPC_TIMEOUT_MS = 8_000;
 const CODEX_BINARY_ENV = "QUOTA_AXI_CODEX_BINARY";
+const PI_CODEX_CREDENTIAL_SOURCE = "pi:openai-codex";
 
 type CodexBinaryState =
   | { status: "available"; path: string }
@@ -51,11 +65,38 @@ type AvailableCredentialState = {
   credentials: CodexCredentials;
   source: AuthSourceReport;
 };
-type UnavailableCredentialState = {
-  status: "missing" | "invalid" | "expired";
+/**
+ * Stored-expired, and still carrying its credentials so the bounded read-only
+ * quota probe tests it in its source's declared position. The endpoint, not
+ * the store's own field, decides the verdict.
+ */
+type AdvisoryExpiredCredentialState = {
+  status: "expired";
+  credentials: CodexCredentials;
   source: AuthSourceReport;
 };
-type CredentialState = AvailableCredentialState | UnavailableCredentialState;
+type UnavailableCredentialState = {
+  status: "missing" | "invalid";
+  source: AuthSourceReport;
+};
+type CredentialState =
+  | AvailableCredentialState
+  | AdvisoryExpiredCredentialState
+  | UnavailableCredentialState;
+
+/** Opaque attempt payload for the shared credential-selection loop. */
+type CodexAttemptCredential = {
+  source: ProviderQuota["source"];
+  credentials: CodexCredentials;
+};
+
+type NormalizedCodexQuota = {
+  plan?: string;
+  account?: ProviderQuota["account"];
+  windows: QuotaWindow[];
+  credits?: ProviderQuota["credits"];
+  refreshedAt: string;
+};
 
 type RawWindow = {
   used_percent?: unknown;
@@ -67,55 +108,170 @@ type RawWindow = {
   windowDurationMins?: unknown;
 };
 
-export const codexAdapter: ProviderAdapter = {
-  id: "codex",
-  label: "Codex",
-  fetchQuota,
-  inspectAuth,
+type CodexDependencies = {
+  piCodexBroker: PiCodexCredentialBroker;
 };
+
+const defaultCodexDependencies: CodexDependencies = {
+  piCodexBroker: createPiCodexCredentialBroker(),
+};
+
+export function createCodexAdapter(
+  overrides: Partial<CodexDependencies> = {},
+): ProviderAdapter {
+  const dependencies: CodexDependencies = {
+    ...defaultCodexDependencies,
+    ...overrides,
+  };
+  return {
+    id: "codex",
+    label: "Codex",
+    fetchQuota: (_options) => fetchQuotaWithDependencies(dependencies),
+    inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
+  };
+}
+
+export const codexAdapter = createCodexAdapter();
 
 export async function fetchQuota(
   _options: ProviderOptions,
 ): Promise<ProviderQuota> {
+  return fetchQuotaWithDependencies(defaultCodexDependencies);
+}
+
+async function fetchQuotaWithDependencies(
+  dependencies: CodexDependencies,
+): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [];
   let finalError = "Codex quota unavailable";
-  let retryAfter: string | undefined;
+  // False once a source has recorded a real failure. Sources are consulted in
+  // priority order, so a lower-priority one may only name the failure while
+  // this still holds: a native probe that timed out has already explained the
+  // run, and letting an expired Pi entry restate it as an auth problem would
+  // make statusFromError advise a sign-in for what is a network outage.
+  let errorIsDefault = true;
 
   const credentialState = readCredentialState();
-  if (credentialState.status === "available") {
-    attempts.push({ source: "oauth", status: "failed" });
-    try {
-      const quota = await fetchOauthUsage(credentialState.credentials);
-      attempts[attempts.length - 1] = { source: "oauth", status: "success" };
-      return successProvider({
-        provider: "codex",
-        label: "Codex",
-        source: "oauth",
-        plan: quota.plan,
-        account: quota.account,
-        windows: quota.windows,
-        credits: quota.credits,
-        refreshedAt: quota.refreshedAt,
-        sourcesTried: sourceNames(attempts),
-        attempts,
-      });
-    } catch (error) {
-      finalError = errorMessage(error);
-      attempts[attempts.length - 1] = {
-        source: "oauth",
-        status: "failed",
-        error: finalError,
-      };
-      if (error instanceof RateLimitError) retryAfter = error.retryAfter;
-    }
+  const oauthCandidates: CredentialCandidate<CodexAttemptCredential>[] = [];
+  if (
+    credentialState.status === "available" ||
+    credentialState.status === "expired"
+  ) {
+    oauthCandidates.push({
+      source: "oauth",
+      localState: credentialState.status === "available" ? "valid" : "expired",
+      credential: { source: "oauth", credentials: credentialState.credentials },
+    });
   } else {
     attempts.push({
       source: "oauth",
       status: "skipped",
       error: `credentials_${credentialState.status}`,
+      // A malformed store still holds a credential, so a sibling source that
+      // answers supersedes it rather than replacing it silently.
+      ...(credentialState.status === "missing"
+        ? {}
+        : { credentialPresent: true }),
     });
-    if (credentialState.status !== "missing")
+    finalError = "Codex sign-in required";
+    errorIsDefault = false;
+  }
+
+  const oauthSelection = await selectCredential(oauthCandidates, (candidate) =>
+    attemptCodexCandidate(candidate.credential),
+  );
+  appendSelectionAttempts(attempts, oauthSelection);
+  if (oauthSelection.outcome === "quota") {
+    return codexSuccessReport(oauthSelection.result!, "oauth", attempts);
+  }
+  if (oauthSelection.outcome === "transient") {
+    // The request failed, not the credential, so a sibling credential is not
+    // consulted: it would answer a question this run never got to ask.
+    return codexFailureReport(
+      oauthSelection.transientError ?? finalError,
+      oauthSelection.retryAfter,
+      attempts,
+      "oauth",
+    );
+  }
+  if (oauthSelection.outcome === "all_rejected") {
+    finalError = "Codex sign-in required";
+    errorIsDefault = false;
+  }
+
+  let piResolution: PiCodexCredentialResolution;
+  try {
+    piResolution = await dependencies.piCodexBroker.resolve();
+  } catch {
+    piResolution = { status: "error" };
+  }
+  const piCandidates: CredentialCandidate<CodexAttemptCredential>[] = [];
+  if (piResolution.status === "available") {
+    piCandidates.push({
+      source: PI_CODEX_CREDENTIAL_SOURCE,
+      localState: "valid",
+      credential: {
+        source: PI_CODEX_CREDENTIAL_SOURCE,
+        credentials: piResolution.credentials,
+      },
+    });
+  } else if (
+    piResolution.status === "expired" &&
+    piResolution.credentials !== undefined
+  ) {
+    piCandidates.push({
+      source: PI_CODEX_CREDENTIAL_SOURCE,
+      localState: "expired",
+      refreshable: piResolution.refreshable,
+      credential: {
+        source: PI_CODEX_CREDENTIAL_SOURCE,
+        credentials: piResolution.credentials,
+      },
+    });
+  } else {
+    attempts.push(piSourceAttempt(piResolution));
+    if (
+      piResolution.status === "error" &&
+      (errorIsDefault || statusFromError(finalError) === "auth_required")
+    ) {
+      finalError = "Codex Pi credential resolution failed";
+      errorIsDefault = false;
+    } else if (errorIsDefault) {
+      if (piResolution.status === "expired") {
+        // Expired and unprobeable: the store held no token to test.
+        finalError = "Pi Codex access token expired";
+        errorIsDefault = false;
+      } else if (piResolution.status !== "missing") {
+        finalError = "Codex sign-in required";
+        errorIsDefault = false;
+      }
+    }
+  }
+
+  const piSelection = await selectCredential(piCandidates, (candidate) =>
+    attemptCodexCandidate(candidate.credential),
+  );
+  appendSelectionAttempts(attempts, piSelection);
+  if (piSelection.outcome === "quota") {
+    return codexSuccessReport(
+      piSelection.result!,
+      PI_CODEX_CREDENTIAL_SOURCE,
+      attempts,
+    );
+  }
+  if (piSelection.outcome === "transient") {
+    return codexFailureReport(
+      piSelection.transientError ?? finalError,
+      piSelection.retryAfter,
+      attempts,
+      PI_CODEX_CREDENTIAL_SOURCE,
+    );
+  }
+  if (piSelection.outcome === "all_rejected") {
+    if (errorIsDefault || statusFromError(finalError) === "auth_required") {
       finalError = "Codex sign-in required";
+      errorIsDefault = false;
+    }
   }
 
   attempts.push({ source: "cli-rpc", status: "failed" });
@@ -141,20 +297,105 @@ export async function fetchQuota(
       status: "failed",
       error: message,
     };
-    finalError =
-      finalError === "Codex quota unavailable" ? message : finalError;
+    if (errorIsDefault || !(error instanceof CodexCliUnavailableError)) {
+      finalError = message;
+    }
   }
 
+  return codexFailureReport(finalError, undefined, attempts);
+}
+
+/**
+ * One bounded read-only probe of a single credential. The endpoint, not the
+ * store's expiry field, decides: only a definitive rejection is an auth
+ * verdict, and everything else is transport-class trouble that must not
+ * trigger credential switching.
+ */
+async function attemptCodexCandidate(
+  candidate: CodexAttemptCredential,
+): Promise<AttemptOutcome<NormalizedCodexQuota>> {
+  try {
+    return {
+      kind: "quota",
+      result: await fetchOauthUsage(candidate.credentials),
+    };
+  } catch (error) {
+    const message = credentialSafeErrorMessage(
+      error,
+      candidate.credentials.accessToken,
+    );
+    if (error instanceof RateLimitError) {
+      return {
+        kind: "transient",
+        error: message,
+        retryAfter: error.retryAfter,
+      };
+    }
+    return error instanceof CodexAuthRejectedError
+      ? { kind: "rejected", error: message }
+      : { kind: "transient", error: message };
+  }
+}
+
+/**
+ * Record what each consulted credential did. A candidate the loop never
+ * reached is deliberately left out: an unconsulted source is not a broken
+ * one, and naming it would raise a `degraded_source` row for a store that
+ * was simply not needed.
+ */
+function appendSelectionAttempts(
+  attempts: SourceAttempt[],
+  selection: CredentialSelection<NormalizedCodexQuota>,
+): void {
+  for (const result of selection.results) {
+    if (result.outcome === "not_tried") continue;
+    attempts.push(
+      result.outcome === "quota"
+        ? { source: result.source, status: "success" }
+        : {
+            source: result.source,
+            status: "failed",
+            ...(result.error ? { error: result.error } : {}),
+          },
+    );
+  }
+}
+
+function codexSuccessReport(
+  quota: NormalizedCodexQuota,
+  source: ProviderQuota["source"],
+  attempts: SourceAttempt[],
+): ProviderQuota {
+  return successProvider({
+    provider: "codex",
+    label: "Codex",
+    source,
+    plan: quota.plan,
+    account: quota.account,
+    windows: quota.windows,
+    credits: quota.credits,
+    refreshedAt: quota.refreshedAt,
+    sourcesTried: sourceNames(attempts),
+    attempts,
+  });
+}
+
+function codexFailureReport(
+  error: string,
+  retryAfter: string | undefined,
+  attempts: SourceAttempt[],
+  source?: ProviderQuota["source"],
+): ProviderQuota {
   const cached = readCachedProvider("codex");
   if (cached) {
-    return staleFromCache(cached, finalError, sourceNames(attempts), attempts);
+    return staleFromCache(cached, error, sourceNames(attempts), attempts);
   }
-
   return failedProvider({
     provider: "codex",
     label: "Codex",
-    status: retryAfter ? "rate_limited" : statusFromError(finalError),
-    error: finalError,
+    ...(source ? { source } : {}),
+    status: retryAfter ? "rate_limited" : statusFromError(error),
+    error,
     retryAfter,
     sourcesTried: sourceNames(attempts),
     attempts,
@@ -164,13 +405,30 @@ export async function fetchQuota(
 export async function inspectAuth(
   _options: ProviderOptions,
 ): Promise<AuthProviderReport> {
+  return inspectAuthWithDependencies(defaultCodexDependencies);
+}
+
+async function inspectAuthWithDependencies(
+  dependencies: CodexDependencies,
+): Promise<AuthProviderReport> {
   const authFile = codexAuthFile();
   const credentialState = readCredentialState(authFile);
+  let piSource: AuthSourceReport;
+  try {
+    piSource = piInspectionSource(await dependencies.piCodexBroker.inspect());
+  } catch {
+    piSource = {
+      source: PI_CODEX_CREDENTIAL_SOURCE,
+      status: "error",
+      error: "credential_resolution_failed",
+    };
+  }
   const binary = await resolveCodexBinary();
   return {
     provider: "codex",
     sources: [
       credentialState.source,
+      piSource,
       {
         source: "cli-rpc",
         path: binary.path,
@@ -178,6 +436,59 @@ export async function inspectAuth(
         error: binary.status === "missing" ? binary.error : undefined,
       },
     ],
+  };
+}
+
+function piSourceAttempt(
+  resolution: Exclude<PiCodexCredentialResolution, { status: "available" }>,
+): SourceAttempt {
+  if (resolution.status === "error") {
+    return {
+      source: PI_CODEX_CREDENTIAL_SOURCE,
+      status: "failed",
+      error: "credential_resolution_failed",
+      credentialPresent: true,
+    };
+  }
+  if (resolution.status === "expired") {
+    return {
+      source: PI_CODEX_CREDENTIAL_SOURCE,
+      status: "skipped",
+      error: resolution.refreshable
+        ? "credentials_expired_refreshable"
+        : "credentials_expired",
+      credentialPresent: true,
+    };
+  }
+  const error =
+    resolution.status === "missing"
+      ? "credentials_missing"
+      : resolution.status === "unsupported"
+        ? "unsupported_credential_type"
+        : "credentials_invalid";
+  return {
+    source: PI_CODEX_CREDENTIAL_SOURCE,
+    status: "skipped",
+    error,
+    ...(resolution.status === "missing" ? {} : { credentialPresent: true }),
+  };
+}
+
+function piInspectionSource(
+  inspection: PiCodexCredentialInspection,
+): AuthSourceReport {
+  const status: AuthSourceReport["status"] =
+    inspection.status === "available" ||
+    inspection.status === "missing" ||
+    inspection.status === "expired" ||
+    inspection.status === "error"
+      ? inspection.status
+      : "invalid";
+  return {
+    source: PI_CODEX_CREDENTIAL_SOURCE,
+    path: inspection.path,
+    status,
+    ...(inspection.error ? { error: inspection.error } : {}),
   };
 }
 
@@ -451,21 +762,25 @@ function extractCredentialState(
   const idToken = stringValue(tokens.id_token) ?? stringValue(tokens.idToken);
   const idPayload = decodeJwtPayload(idToken);
   const accessPayload = decodeJwtPayload(accessToken);
-  if (isExpiredJwtPayload(accessPayload)) {
-    return {
-      status: "expired",
-      source: { source: "auth-json", path, status: "expired" },
-    };
-  }
   const decoded = idPayload ?? accessPayload;
   const accountId =
     stringValue(tokens.account_id) ??
     stringValue(tokens.accountId) ??
     stringValue(decoded?.["https://api.openai.com/auth/account_id"]) ??
     stringValue(decoded?.account_id);
+  const credentials: CodexCredentials = { accessToken, accountId };
+  // Stored expiry is liveness metadata only. The credential is still probed
+  // in its source's declared position, and only the endpoint decides.
+  if (isExpiredJwtPayload(accessPayload)) {
+    return {
+      status: "expired",
+      credentials,
+      source: { source: "auth-json", path, status: "expired" },
+    };
+  }
   return {
     status: "available",
-    credentials: { accessToken, accountId },
+    credentials,
     source: { source: "auth-json", path, status: "available" },
   };
 }
@@ -489,7 +804,7 @@ async function fetchOauthUsage(credentials: CodexCredentials): Promise<{
       };
       if (credentials.accountId)
         headers["ChatGPT-Account-Id"] = credentials.accountId;
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         headers,
         signal: controller.signal,
       });
@@ -501,9 +816,13 @@ async function fetchOauthUsage(credentials: CodexCredentials): Promise<{
         throw new RateLimitError(
           retryAfterToIso(response.headers.get("retry-after")),
         );
-      if (!response.ok) continue;
+      if (!response.ok) {
+        lastError = new Error("Codex quota unavailable");
+        continue;
+      }
       const quota = normalizeCodexUsage(await response.json());
       if (quota) return quota;
+      lastError = new Error("Codex quota unavailable");
     } catch (error) {
       if (error instanceof RateLimitError) throw error;
       lastError = error;
@@ -511,8 +830,8 @@ async function fetchOauthUsage(credentials: CodexCredentials): Promise<{
       clearTimeout(timer);
     }
   }
-  if (rejected) throw new Error("Codex sign-in required");
   if (lastError) throw lastError;
+  if (rejected) throw new CodexAuthRejectedError("Codex sign-in required");
   throw new Error("Codex quota unavailable");
 }
 
@@ -525,7 +844,7 @@ async function probeCodexCli(): Promise<{
 }> {
   const binary = await resolveCodexBinary();
   if (binary.status === "missing") {
-    throw new Error(codexBinaryErrorMessage(binary));
+    throw new CodexCliUnavailableError(codexBinaryErrorMessage(binary));
   }
   const child = spawn(
     binary.path,
@@ -789,11 +1108,23 @@ function numberValue(value: unknown): number | undefined {
   return undefined;
 }
 
+function credentialSafeErrorMessage(
+  error: unknown,
+  credential: string,
+): string {
+  return errorMessage(error).replaceAll(credential, "[redacted]");
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError")
     return "Codex quota request timed out";
   return error instanceof Error ? error.message : "Codex quota unavailable";
 }
+
+/** Definitive 401/403 from the quota endpoint: an auth verdict, not transport. */
+class CodexAuthRejectedError extends Error {}
+
+class CodexCliUnavailableError extends Error {}
 
 class RateLimitError extends Error {
   constructor(readonly retryAfter: string | undefined) {
