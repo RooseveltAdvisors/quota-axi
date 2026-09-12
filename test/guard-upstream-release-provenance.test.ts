@@ -70,7 +70,7 @@ function writeFakeGh(): void {
     "#!/usr/bin/env bash",
     'if [ "${FAKE_FAIL:-}" = "1" ]; then echo "api error" >&2; exit 1; fi',
     'endpoint="$2"',
-    "sha=\"\"",
+    'sha=""',
     'case "$endpoint" in',
     '  */compare/*) sha="${endpoint##*...}" ;;',
     '  */contents/*) sha="${endpoint##*ref=}" ;;',
