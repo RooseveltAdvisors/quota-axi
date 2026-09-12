@@ -1,8 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -25,7 +27,10 @@ const GUARDED = "CHANGELOG.md";
 
 /**
  * Facts the fake upstream API reports. Each case overrides only what it is
- * probing, so a failure is attributable to that one field.
+ * probing, so a failure is attributable to that one field. Facts are keyed to
+ * one upstream-known commit SHA; every other SHA the script probes gets the
+ * API's Not Found, exactly as upstream would answer for a commit it does not
+ * contain.
  */
 interface UpstreamFacts {
   defaultBranch: string;
@@ -34,6 +39,8 @@ interface UpstreamFacts {
   signer: string;
   tree: string;
   blob: string;
+  /** The single commit SHA the fake upstream knows about. */
+  knownSha?: string;
   /** When set, every `gh api` call exits non-zero, simulating an API error. */
   fail?: boolean;
 }
@@ -45,25 +52,37 @@ let base: string;
 let head: string;
 let realTree: string;
 let realBlob: string;
+let lastStderr: string;
+let lastQueryLog: string;
 
 function git(args: string[]): string {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 }
 
 /**
- * A stand-in for the `gh` CLI that answers the four endpoints the script calls.
- * It reads its answers from the environment so each case can tamper with one.
+ * A stand-in for the `gh` CLI that answers the four endpoints the script
+ * calls. It reads its answers from the environment so each case can tamper
+ * with one, and answers Not Found for every commit SHA except the one the
+ * case nominates as upstream-known.
  */
 function writeFakeGh(): void {
   const fake = [
     "#!/usr/bin/env bash",
     'if [ "${FAKE_FAIL:-}" = "1" ]; then echo "api error" >&2; exit 1; fi',
     'endpoint="$2"',
+    "sha=\"\"",
+    'case "$endpoint" in',
+    '  */compare/*) sha="${endpoint##*...}" ;;',
+    '  */contents/*) sha="${endpoint##*ref=}" ;;',
+    '  */commits/*) sha="${endpoint##*/commits/}" ;;',
+    '  *) printf "%s\\n" "$FAKE_DEFAULT_BRANCH"; exit 0 ;;',
+    "esac",
+    'printf "%s\\n" "$sha" >>"$FAKE_LOG"',
+    'if [ "$sha" != "$FAKE_KNOWN_SHA" ]; then echo "Not Found" >&2; exit 1; fi',
     'case "$endpoint" in',
     '  */compare/*) printf "%s\\n" "$FAKE_REACH" ;;',
     '  */contents/*) printf "%s\\n" "$FAKE_BLOB" ;;',
-    '  */commits/*) printf "%s\\t%s\\t%s\\n" "$FAKE_VERIFIED" "$FAKE_SIGNER" "$FAKE_TREE" ;;',
-    '  *) printf "%s\\n" "$FAKE_DEFAULT_BRANCH" ;;',
+    '  *) printf "%s\\t%s\\t%s\\n" "$FAKE_VERIFIED" "$FAKE_SIGNER" "$FAKE_TREE" ;;',
     "esac",
   ].join("\n");
   const path = join(bin, "gh");
@@ -71,7 +90,11 @@ function writeFakeGh(): void {
   chmodSync(path, 0o755);
 }
 
-/** Runs the real script against the temp repo. Returns its exit code. */
+/**
+ * Runs the real script the way the workflow does - as a directly executed
+ * executable, not via `bash <script>` - so a script committed without its
+ * executable bit fails here just as it would in CI. Returns its exit code.
+ */
 function run(facts: Partial<UpstreamFacts> = {}): number {
   const merged: UpstreamFacts = {
     defaultBranch: "main",
@@ -82,7 +105,9 @@ function run(facts: Partial<UpstreamFacts> = {}): number {
     blob: realBlob,
     ...facts,
   };
-  const result = spawnSync("bash", [script, base, head, GUARDED], {
+  const log = join(dir, "gh-queries.log");
+  rmSync(log, { force: true });
+  const result = spawnSync(script, [base, head, GUARDED], {
     cwd: repo,
     encoding: "utf8",
     env: {
@@ -96,9 +121,13 @@ function run(facts: Partial<UpstreamFacts> = {}): number {
       FAKE_SIGNER: merged.signer,
       FAKE_TREE: merged.tree,
       FAKE_BLOB: merged.blob,
+      FAKE_KNOWN_SHA: facts.knownSha ?? head,
+      FAKE_LOG: log,
       FAKE_FAIL: merged.fail ? "1" : "",
     },
   });
+  lastStderr = result.stderr ?? "";
+  lastQueryLog = existsSync(log) ? readFileSync(log, "utf8") : "";
   return result.status ?? 1;
 }
 
@@ -135,6 +164,7 @@ describe("verify-upstream-release-provenance.sh", () => {
 
   it("exempts a guarded file whose only commit is a verified upstream release", () => {
     expect(run()).toBe(0);
+    expect(lastQueryLog).toContain(head);
   });
 
   it("rejects a commit that upstream does not contain in its default branch", () => {
@@ -175,11 +205,14 @@ describe("verify-upstream-release-provenance.sh", () => {
 
   /**
    * The case the exemption exists to distinguish: a hand edit carries no
-   * upstream provenance, so the upstream lookups fail and the guard still
-   * reports the violation. Author name and email are never consulted, so a
-   * hand edit cannot buy the exemption by impersonating the bot.
+   * upstream provenance, so upstream answers Not Found for its SHA and the
+   * guard still reports the violation. Author name and email are never
+   * consulted, so a hand edit cannot buy the exemption by impersonating the
+   * bot.
    */
   it("rejects a hand-edited commit that impersonates the release bot", () => {
+    const releaseCommit = head;
+
     writeFileSync(join(repo, GUARDED), "# Changelog\n\nhand edited\n");
     git(["add", "."]);
     git([
@@ -194,18 +227,32 @@ describe("verify-upstream-release-provenance.sh", () => {
     ]);
     head = git(["rev-parse", "HEAD"]);
 
-    // Upstream has never seen this commit, so its lookups fail.
-    expect(run({ fail: true })).toBe(1);
+    expect(run({ knownSha: releaseCommit })).toBe(1);
+    expect(lastStderr).toContain("Not Found");
+    expect(lastQueryLog).toContain(head);
   });
 
+  /**
+   * A mixed range must satisfy the all-commits requirement: the genuine
+   * upstream release commit passes its own checks and the loop moves on to
+   * the hand-edited commit, which upstream has never seen. A guard that only
+   * inspected the newest commit would exempt this range and fail this test.
+   */
   it("rejects when only some commits touching the path are upstream releases", () => {
+    git(["checkout", "--quiet", "--detach", base]);
+
     writeFileSync(join(repo, GUARDED), "# Changelog\n\nhand edited\n");
     git(["add", "."]);
     git(["commit", "--quiet", "-m", "docs: tweak"]);
+    const handEdited = git(["rev-parse", "HEAD"]);
+
+    writeFileSync(join(repo, GUARDED), "# Changelog\n\n## 0.1.41\n");
+    git(["add", "."]);
+    git(["commit", "--quiet", "-m", "chore(main): release 0.1.41"]);
     head = git(["rev-parse", "HEAD"]);
 
-    // The newest commit's blob no longer matches what upstream would report for
-    // the release commit, so the all-commits requirement fails.
-    expect(run({ blob: realBlob })).toBe(1);
+    expect(run()).toBe(1);
+    expect(lastStderr).toContain("Not Found");
+    expect(lastQueryLog).toContain(handEdited);
   });
 });
