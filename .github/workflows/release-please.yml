@@ -12,6 +12,10 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Only the upstream repository releases and publishes this package. A fork
+    # that merges upstream commits into its own main must never cut a release or
+    # reach `npm publish` with its OIDC identity.
+    if: github.repository == 'kunchenguid/quota-axi'
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
