@@ -13,10 +13,38 @@ import type {
   QuotaWindow,
 } from "./types.js";
 
+export function markAgyStaleIfExpiredReset(
+  provider: ProviderQuota,
+  nowMs = Date.now(),
+): ProviderQuota {
+  const hasExpired = provider.windows.some((w) => {
+    if (!w.resetsAt) return false;
+    const ms = Date.parse(w.resetsAt);
+    return Number.isFinite(ms) && ms <= nowMs;
+  });
+  if (
+    hasExpired &&
+    (!provider.state.stale || provider.state.status !== "stale")
+  ) {
+    return {
+      ...provider,
+      state: {
+        ...provider.state,
+        status: "stale",
+        stale: true,
+      },
+    };
+  }
+  return provider;
+}
+
 export function withQuotaSemantics(
   provider: ProviderQuota,
   generatedAt: string,
 ): ProviderQuota {
+  if (provider.provider === "agy") {
+    provider = markAgyStaleIfExpiredReset(provider, Date.parse(generatedAt));
+  }
   const windows = provider.windows.map((window) => ({
     ...window,
     pace: computeWindowPace(window, generatedAt, {
@@ -119,19 +147,116 @@ function semanticsFor(
     case "cursor":
       return cursorSemantics(provider.windows, generatedAt);
     case "copilot":
-    case "agy":
       return unknownSemantics(
         provider.windows,
         `quota-axi does not know whether ${provider.label ?? provider.provider}'s reported windows are independent or jointly bounding, so it does not claim an effective remaining percentage.`,
       );
+    case "agy":
+      return agySemantics(provider.windows, generatedAt);
     case "alibaba":
       return alibabaSemantics(provider.windows, generatedAt);
     case "opencode-go":
-      return unknownSemantics(
+      return opencodeGoSemantics(provider.windows, generatedAt);
+    case "commandcode":
+      return commandCodeSemantics(
         provider.windows,
-        "OpenCode Go reports rolling, weekly, and monthly windows, but quota-axi has no provider evidence that they jointly bound all models, so it does not claim an effective combined percentage.",
+        provider.state.untrustedWindowIds ?? [],
+        generatedAt,
       );
   }
+}
+
+/**
+ * OpenCode Go's usage endpoint reports the plan's stacked caps: the vendor
+ * documents $12 per rolling 5 hours, $30 per week, and $60 per month, and
+ * reaching a cap blocks Go-plan requests (the vendor's free-model fallback or
+ * an opted-in Zen balance may still serve past a zeroed plan window, which
+ * this endpoint does not report). That is the missing joint-bound evidence,
+ * so the three windows jointly bound Go-plan usage at `all_models` scope.
+ */
+function opencodeGoSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const plan = windows.filter(({ id }) =>
+    ["rolling", "five_hour", "weekly", "monthly"].includes(id),
+  );
+  const recognized = new Set(plan);
+  // The endpoint always reports all three stacked caps; a missing cap is a
+  // data gap, not a complete bound, so a subset alone never reads as known.
+  // `five_hour` is the duration-confirmed identity of the `rolling` cap.
+  const present = new Set(
+    plan.map(({ id }) => (id === "five_hour" ? "rolling" : id)),
+  );
+  const missing = (["rolling", "weekly", "monthly"] as const).filter(
+    (id) => !present.has(id),
+  );
+  const unresolved = windows.filter((window) => !recognized.has(window));
+  const unresolvedWindowIds = [
+    ...new Set([...unresolved.map(({ id }) => id), ...missing]),
+  ];
+  if (unresolvedWindowIds.length > 0) {
+    return {
+      status: "partial",
+      description:
+        "OpenCode Go's rolling, weekly, and monthly windows are stacked plan caps that jointly bound Go-plan usage, but unfamiliar or missing windows prevent a definitive effective percentage.",
+      effectiveAvailability:
+        plan.length > 0
+          ? [unresolvedAvailability("all_models", plan, unresolvedWindowIds)]
+          : [],
+      unresolvedWindowIds,
+    };
+  }
+  return knownSemantics(
+    plan.length > 0 ? [availability("all_models", plan, generatedAt)] : [],
+    "OpenCode Go's rolling, weekly, and monthly windows are stacked plan caps ($12 per rolling 5 hours, $30 per week, $60 per month) that jointly bound Go-plan usage, so effective remaining is the minimum across the named windows. A zeroed plan window blocks Go-plan requests; the vendor's free-model fallback or an opted-in Zen balance may still serve past it, which this endpoint does not report.",
+  );
+}
+
+function commandCodeSemantics(
+  windows: QuotaWindow[],
+  untrustedWindowIds: string[],
+  generatedAt: string,
+): QuotaSemantics {
+  const expected = windows.filter(
+    ({ id }) => id === "five_hour" || id === "weekly",
+  );
+  const jointBound =
+    expected.some(({ id }) => id === "five_hour") &&
+    expected.some(({ id }) => id === "weekly");
+  const recognized = new Set(expected);
+  const unresolved = windows.filter((window) => !recognized.has(window));
+  const unresolvedWindowIds = [
+    ...new Set([...unresolved.map(({ id }) => id), ...untrustedWindowIds]),
+  ];
+  const description =
+    "Command Code's five-hour and weekly windows jointly pace included monthly credits. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.";
+  if (unresolvedWindowIds.length > 0) {
+    return {
+      status: "partial",
+      description,
+      effectiveAvailability: jointBound
+        ? [
+            unresolvedAvailability(
+              "included_credits",
+              expected,
+              unresolvedWindowIds,
+            ),
+          ]
+        : [],
+      unresolvedWindowIds,
+    };
+  }
+  if (!jointBound) {
+    return knownSemantics(
+      [],
+      "Command Code reported no rolling included-credit windows, so no effective remaining percentage can be computed.",
+    );
+  }
+  return knownSemantics(
+    [availability("included_credits", expected, generatedAt)],
+    description,
+  );
 }
 
 function alibabaSemantics(
@@ -307,45 +432,45 @@ function grokSemantics(
   );
 }
 
+const KIMI_ACCOUNT_WINDOW_IDS = new Set(["weekly", "five_hour", "month_total"]);
+
+/**
+ * `month_code` is the code-typed share of `month_total` as the vendor serves
+ * it, not a cap of its own, so it is recognized - never unresolved - but it
+ * bounds nothing and no remaining is derived from it.
+ */
+const KIMI_SHARE_WINDOW_IDS = new Set(["month_code"]);
+
+const KIMI_CODE_SHARE_NOTE =
+  "The monthly code window is the code-typed share of that monthly total rather than a separate allowance, so it adds no bound.";
+
 function kimiSemantics(
   windows: QuotaWindow[],
   untrustedWindowIds: string[],
   generatedAt: string,
 ): QuotaSemantics {
+  const bounds = windows.filter(({ id }) => KIMI_ACCOUNT_WINDOW_IDS.has(id));
   const unresolved = windows.filter(
-    ({ id }) => id !== "weekly" && id !== "five_hour",
+    ({ id }) =>
+      !KIMI_ACCOUNT_WINDOW_IDS.has(id) && !KIMI_SHARE_WINDOW_IDS.has(id),
   );
   const unresolvedWindowIds = [
     ...new Set([...unresolved.map(({ id }) => id), ...untrustedWindowIds]),
   ];
   if (unresolvedWindowIds.length > 0) {
-    const recognized = windows.filter(
-      ({ id }) => id === "weekly" || id === "five_hour",
-    );
     return {
       status: "partial",
-      description:
-        "Kimi's valid weekly and five-hour account windows are known bounds, but unrecognized or unparsed limits may add bounds, so effective remaining is unknown.",
+      description: `Kimi's valid weekly, five-hour, and monthly-total account windows are known bounds, but unrecognized or unparsed limits may add bounds, so effective remaining is unknown. ${KIMI_CODE_SHARE_NOTE}`,
       effectiveAvailability:
-        recognized.length > 0
-          ? [
-              unresolvedAvailability(
-                "all_models",
-                recognized,
-                unresolvedWindowIds,
-              ),
-            ]
+        bounds.length > 0
+          ? [unresolvedAvailability("all_models", bounds, unresolvedWindowIds)]
           : [],
       unresolvedWindowIds,
     };
   }
-  const effectiveAvailability =
-    windows.length > 0
-      ? [availability("all_models", windows, generatedAt)]
-      : [];
   return knownSemantics(
-    effectiveAvailability,
-    "Kimi's weekly and five-hour account windows jointly bound every model, so effective remaining is the minimum across the named windows.",
+    bounds.length > 0 ? [availability("all_models", bounds, generatedAt)] : [],
+    `Kimi's weekly, five-hour, and monthly-total account windows jointly bound every model, so effective remaining is the minimum across the named windows. ${KIMI_CODE_SHARE_NOTE}`,
   );
 }
 
@@ -425,7 +550,7 @@ function zaiSemantics(
     return {
       status: "partial",
       description:
-        "Z.AI's five-hour and weekly token windows jointly bound model usage and the monthly tool window is a separate resource, but unfamiliar windows prevent a definitive effective percentage.",
+        "Z.AI's five-hour and weekly usage windows jointly bound model usage and the monthly tool window is a separate resource, but unfamiliar windows prevent a definitive effective percentage.",
       effectiveAvailability,
       unresolvedWindowIds,
     };
@@ -440,7 +565,7 @@ function zaiSemantics(
   }
   return knownSemantics(
     effectiveAvailability,
-    "Z.AI's five-hour and weekly token windows jointly bound model usage, so effective remaining is the minimum across the named windows. The monthly tool window is an independent resource.",
+    "Z.AI's five-hour and weekly usage windows jointly bound model usage, so effective remaining is the minimum across the named windows. The monthly tool window is an independent resource.",
   );
 }
 
@@ -619,6 +744,42 @@ function partialSemantics(
     effectiveAvailability: [],
     unresolvedWindowIds: unresolved.map(({ id }) => id),
   };
+}
+
+function agySemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const gemini = windows.filter(
+    ({ id }) => id === "gemini_5h" || id === "gemini_weekly",
+  );
+  const claudeGpt = windows.filter(
+    ({ id }) => id === "claude_gpt_5h" || id === "claude_gpt_weekly",
+  );
+  const resolved = new Set([...gemini, ...claudeGpt]);
+  const unresolved = windows.filter((window) => !resolved.has(window));
+  const effectiveAvailability: EffectiveAvailability[] = [];
+  if (gemini.length > 0) {
+    effectiveAvailability.push(availability("gemini", gemini, generatedAt));
+  }
+  if (claudeGpt.length > 0) {
+    effectiveAvailability.push(
+      availability("claude_gpt", claudeGpt, generatedAt),
+    );
+  }
+  if (unresolved.length > 0) {
+    return {
+      status: effectiveAvailability.length > 0 ? "partial" : "unknown",
+      description:
+        "Antigravity groups Gemini windows separately from Claude/GPT windows. Within a group, the weekly and 5-hour windows jointly bound that group. Unfamiliar windows are not folded into either bound, so they stay unresolved.",
+      effectiveAvailability,
+      unresolvedWindowIds: unresolved.map(({ id }) => id),
+    };
+  }
+  return knownSemantics(
+    effectiveAvailability,
+    "Antigravity groups Gemini windows separately from Claude/GPT windows. Within a group, the weekly and 5-hour windows jointly bound that group, so that group's effective remaining percentage is the minimum across the named windows.",
+  );
 }
 
 function unknownSemantics(
