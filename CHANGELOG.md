@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.1.47](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.46...quota-axi-v0.1.47) (2026-09-18)
+
+
+### Features
+
+* **providers:** add read-only Command Code quota provider ([#181](https://github.com/kunchenguid/quota-axi/issues/181)) ([96d7242](https://github.com/kunchenguid/quota-axi/commit/96d724202455f9a2a0c444fc5292b02f7fdf9997))
+* **providers:** report each Pi openai-codex account separately ([#206](https://github.com/kunchenguid/quota-axi/issues/206)) ([36093f4](https://github.com/kunchenguid/quota-axi/commit/36093f483409c286a0c80941bb9d57d1c4a51514))
+
+
+### Bug Fixes
+
+* **lib:** pair the proxy dispatcher with its own undici fetch ([#198](https://github.com/kunchenguid/quota-axi/issues/198)) ([9e7163d](https://github.com/kunchenguid/quota-axi/commit/9e7163dcf15e9bceb16213ff5dacfadd0a6823a9))
+* **providers:** confirm Claude token expiry after rate-limited usage reads ([#197](https://github.com/kunchenguid/quota-axi/issues/197)) ([08d3185](https://github.com/kunchenguid/quota-axi/commit/08d3185616de59cc79431e3cf7b3855488039d9d))
+
+## [0.1.46](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.45...quota-axi-v0.1.46) (2026-09-17)
+
+
+### Bug Fixes
+
+* **agy:** detect spaced Antigravity app bundle paths ([#194](https://github.com/kunchenguid/quota-axi/issues/194)) ([4915014](https://github.com/kunchenguid/quota-axi/commit/491501448bdc81b3bdff272a4bee321b81204729))
+* **kimi:** read the current /usages response map alongside the legacy usage shape ([#201](https://github.com/kunchenguid/quota-axi/issues/201)) ([4a7d3f7](https://github.com/kunchenguid/quota-axi/commit/4a7d3f72dd75fd4547d0ff15325f2a096e7b33e5))
+* **providers:** read Copilot quota from the GitHub CLI login when apps.json cannot answer ([#199](https://github.com/kunchenguid/quota-axi/issues/199)) ([30feb5a](https://github.com/kunchenguid/quota-axi/commit/30feb5af65d8d972479968186abd749e4a427b59))
+* **providers:** use Copilot top-level reset date when snapshot reset is zero ([#200](https://github.com/kunchenguid/quota-axi/issues/200)) ([818654c](https://github.com/kunchenguid/quota-axi/commit/818654ce12b2e5585d3c73cf9135536d3c7b9068))
+
+## [0.1.45](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.44...quota-axi-v0.1.45) (2026-09-16)
+
+
+### Features
+
+* **claude:** read CLAUDE_CODE_OAUTH_TOKEN as a credential source ([#196](https://github.com/kunchenguid/quota-axi/issues/196)) ([d1ea843](https://github.com/kunchenguid/quota-axi/commit/d1ea843cbacae0d2b05de1c29d424e755ba90d35))
+* **providers:** report Antigravity quota via CLI /quota with grouped semantics ([#159](https://github.com/kunchenguid/quota-axi/issues/159)) ([4b91f9e](https://github.com/kunchenguid/quota-axi/commit/4b91f9e9064cbadddc079729f35799ef0a996225))
+* **providers:** report Z.AI coding-plan and OpenCode Go contributor-package quota ([#184](https://github.com/kunchenguid/quota-axi/issues/184)) ([408e4f5](https://github.com/kunchenguid/quota-axi/commit/408e4f508e20868e1226d769cfe30cf408a6cc6a))
+
+
+### Bug Fixes
+
+* **codex:** use supported app-server approval policy ([#190](https://github.com/kunchenguid/quota-axi/issues/190)) ([5e2a6ae](https://github.com/kunchenguid/quota-axi/commit/5e2a6aee5309445113e8cda533a893cb45ce2b4a))
+
+## [0.1.44](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.43...quota-axi-v0.1.44) (2026-09-15)
+
+
+### Features
+
+* **cli:** add opt-in --profile-only quota reads for Claude and Codex ([#168](https://github.com/kunchenguid/quota-axi/issues/168)) ([f690918](https://github.com/kunchenguid/quota-axi/commit/f690918bb58fa532643373d41efbc59e35709987))
+
+
+### Bug Fixes
+
+* **agy:** fall back to Antigravity CLI structured usage print when loopback is CSRF-protected ([#172](https://github.com/kunchenguid/quota-axi/issues/172)) ([940194b](https://github.com/kunchenguid/quota-axi/commit/940194ba63c5be61942587346d3f0eee5f84cfcd))
+* **claude:** discover the selected macOS Keychain credential ([#173](https://github.com/kunchenguid/quota-axi/issues/173)) ([abcf211](https://github.com/kunchenguid/quota-axi/commit/abcf211848997ae5aa1917790b24271565dffc9f)), closes [#170](https://github.com/kunchenguid/quota-axi/issues/170)
+* **providers:** read Z.AI Coding Plan keys from Pi auth.json ([#175](https://github.com/kunchenguid/quota-axi/issues/175)) ([5d915de](https://github.com/kunchenguid/quota-axi/commit/5d915dee60e26a40ed56c9d609b91687d8f09dd2))
+
+## [0.1.43](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.42...quota-axi-v0.1.43) (2026-09-14)
+
+
+### Bug Fixes
+
+* **providers:** report refreshable Kimi expiry without sign-out ([#174](https://github.com/kunchenguid/quota-axi/issues/174)) ([e1c67e0](https://github.com/kunchenguid/quota-axi/commit/e1c67e0c15b9ace936afc5339a62031da2e5dc6a))
+* recognize provably unopened future model windows ([#162](https://github.com/kunchenguid/quota-axi/issues/162)) ([9e693a2](https://github.com/kunchenguid/quota-axi/commit/9e693a2cac97d64729e6953a65c90c8dde81a07c))
+
+## [0.1.42](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.41...quota-axi-v0.1.42) (2026-09-12)
+
+
+### Bug Fixes
+
+* **providers:** recognize Z.AI CREDIT_LIMIT quota windows ([#160](https://github.com/kunchenguid/quota-axi/issues/160)) ([2a8b018](https://github.com/kunchenguid/quota-axi/commit/2a8b0186ae30873d1f808f5ea464414209ab92e4))
+
 ## [0.1.41](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.40...quota-axi-v0.1.41) (2026-09-08)
 
 
