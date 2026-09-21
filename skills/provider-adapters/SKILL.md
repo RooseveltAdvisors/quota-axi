@@ -150,7 +150,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 ## 12. DeepSeek & OpenRouter (`deepseek`, `openrouter`)
 
 - **Credential Skeleton**: Shared env + Pi credential handling in `src/providers/env-pi-credential.ts` on top of `src/lib/pi-agent-dir.ts`.
-- **Semantics**: Expose key caps or balance balances as raw credits with unknown effective semantics, never invented model headroom.
+- **Semantics**: Expose key caps or balances as raw credits with unknown effective semantics, never invented model headroom.
 
 ---
 
