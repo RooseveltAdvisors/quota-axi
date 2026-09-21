@@ -247,7 +247,8 @@ export async function fetchQuota(
     }
   }
 
-  // The env context id is presence-only (AGENTS.md), so it cannot distinguish
+  // The env context id is presence-only (skills/cache-architecture/SKILL.md),
+  // so it cannot distinguish
   // which account supplied the token. A stale cache read under it could hand
   // back a different account's snapshot, so an env-selected run never falls
   // back to stale cache.
