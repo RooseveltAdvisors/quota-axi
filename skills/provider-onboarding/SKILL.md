@@ -52,7 +52,7 @@ Credential selection is shared in `src/providers/credential-selection.ts`:
 - **Advisory stored expiry**: Stored `expiresAt` or `expired` fields are advisory only within a source, never a verdict or a reason to reorder declared sources.
 - **Empirical testing**: Stored-expired credentials are tested in that source's fixed priority position before any sign-in or expired verdict. An empirically live credential always wins.
 - **Transient failures**: Network errors, 5xx responses, or timeouts must never switch candidates within one source or become auth verdicts.
-- **Adapters using selection**: Grok, Codex, Kimi, Copilot, and OpenCode Go route through `selectCredential`. Codex, Kimi, and Copilot call it once per source so each provider's ownership-stability order remains authoritative.
+- **Adapters using selection**: Grok, Codex, Kimi, Command Code, Copilot, and OpenCode Go route through `selectCredential`. Codex, Kimi, and Copilot call it once per source so each provider's ownership-stability order remains authoritative.
 - **Probe token safety**: A broker's `expired` resolution carries the stored token for probe use only; it must never be logged, cached, or rendered.
 - **Profile-only mode**: `--profile-only` is the fail-closed single-account quota probe for Claude and Codex: it requires `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, reads only that profile's native credential file, and bypasses alternate sources, delegated refresh, and quota cache access (full JSON keeps non-secret account/source/attempt evidence; ordinary output stays redacted). Omitting the flag must preserve legacy discovery and cache behavior. Contract: [README Profile-only quota reads](../../README.md#profile-only-quota-reads).
 
