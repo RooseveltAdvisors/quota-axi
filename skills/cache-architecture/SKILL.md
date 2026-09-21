@@ -32,6 +32,7 @@ To prevent cross-account or cross-environment cache poisoning, providers whose i
   - **ElevenLabs**: Credential source plus a one-way SHA-256 digest of the answering API key.
   - **Codex**: Hashed ChatGPT account ID stored by the specific credential that produced the reading (resolving collisions between lone discovered lanes and Pi entries).
 - **Fallback Verification**: Stale cache fallback rejects legacy unstamped snapshots or snapshots whose context ID does not match the active configuration.
+- **Codex exception**: Codex stamps are optional - `readCachedCodexProvider` withholds a snapshot only on a proven mismatch against the account ids the failed reading actually tried; a sibling never probed does not vouch for it, and a transient failure is vouched for only by its own credential. An unstamped snapshot, or a reading whose tried credentials name no account, proves nothing and is still served. Contract: [README Cache](../../README.md#cache).
 - **Skip on Unconfirmed**: If a reading cannot confirm context identity (e.g. unreadable configuration), quota-axi skips both writing to cache and clearing the cache slot.
 
 ---

@@ -54,6 +54,7 @@ Credential selection is shared in `src/providers/credential-selection.ts`:
 - **Transient failures**: Network errors, 5xx responses, or timeouts must never switch candidates within one source or become auth verdicts.
 - **Adapters using selection**: Grok, Codex, Kimi, Copilot, and OpenCode Go route through `selectCredential`. Codex, Kimi, and Copilot call it once per source so each provider's ownership-stability order remains authoritative.
 - **Probe token safety**: A broker's `expired` resolution carries the stored token for probe use only; it must never be logged, cached, or rendered.
+- **Profile-only mode**: `--profile-only` is the fail-closed single-account quota probe for Claude and Codex: it requires `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, reads only that profile's native credential file, and bypasses alternate sources, delegated refresh, and quota cache access (full JSON keeps non-secret account/source/attempt evidence; ordinary output stays redacted). Omitting the flag must preserve legacy discovery and cache behavior. Contract: [README Profile-only quota reads](../../README.md#profile-only-quota-reads).
 
 ---
 
@@ -78,7 +79,7 @@ Shared machinery lives in `src/providers/delegated-refresh.ts`. It is the **sing
 - **Never exchange tokens**: quota-axi must never perform an OAuth refresh-token exchange itself. These tokens rotate on use; a second exchange signs the user out of the measured tool.
 - **Presence only**: The refresh token's value must NEVER be read or parsed—inspect presence only (`Object.hasOwn(credential, "refresh_token")`).
 - **Never signal the child**: Quota-axi never signals or force-kills a delegated child process. The budget bounds only how long quota-axi waits. The child runs in its own process group (`detached: true`) so Ctrl+C on a live TUI does not abort it. If the command exceeds budget, resolve as `unconfirmed`/`refresh_timed_out` (reported as unmeasured or stale, never as sign-out, and never retiring cache).
-- **Claude safety check**: Before delegating Claude refresh, `src/lib/running-processes.ts` must confirm no Claude Code process is running, since Claude Code owns that session's refresh. If the process table cannot be listed, stay read-only.
+- **Claude safety check**: Before delegating Claude refresh, `src/lib/running-processes.ts` must confirm no Claude Code process is running, since Claude Code owns that session's refresh. If the process table cannot be listed, stay read-only. The check and spawn are not atomic - the check only narrows the common repeated `--tui` versus live-session collision; together with never signaling the delegate it is strictly safer than force-killing without adding a failure mode. Contract: [README Delegated credential refresh](../../README.md#delegated-credential-refresh).
 - **Approved delegates**: Only commands whose rotation behavior is empirically established from the vendor CLI are permitted:
   - Claude: `claude doctor`
   - Grok: `grok models`
