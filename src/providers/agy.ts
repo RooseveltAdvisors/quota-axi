@@ -1,7 +1,14 @@
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as https from "node:https";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
-import { currentUserProcessListArgs, execFileText } from "../lib/process.js";
+import {
+  currentUserProcessListArgs,
+  execFileText,
+  type ExecFileTextOptions,
+} from "../lib/process.js";
 import {
   clampPercent,
   nowIso,
@@ -67,6 +74,7 @@ export type AgyProbeRuntime = {
     command: string,
     args: string[],
     timeoutMs: number,
+    options?: ExecFileTextOptions,
   ): Promise<string>;
   requestJson(
     endpoint: AgyConnectionEndpoint,
@@ -248,14 +256,19 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
   }
 
   let text: string;
+  let openerGuard: Awaited<ReturnType<typeof createOpenerGuard>> | undefined;
   try {
+    openerGuard = await createOpenerGuard();
     text = await runtime.execFileText(
       commandPath,
       ["-p", "/quota", "--output-format", "json"],
       CLI_QUOTA_TIMEOUT_MS,
+      { env: openerGuard.env },
     );
   } catch (error) {
     throw sanitizeCliError(error);
+  } finally {
+    await openerGuard?.dispose();
   }
   let parsed: unknown;
   try {
@@ -268,6 +281,53 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
     throw new AgyMalformedResponseError("agy /quota quota summary malformed");
   }
   return summary;
+}
+
+async function createOpenerGuard(): Promise<{
+  env: NodeJS.ProcessEnv;
+  dispose(): Promise<void>;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "quota-axi-agy-"));
+  try {
+    if (process.platform === "win32") {
+      await Promise.all(
+        ["xdg-open.cmd", "open.cmd"].map((name) =>
+          writeFile(join(directory, name), "@exit /b 1\r\n"),
+        ),
+      );
+    } else {
+      await Promise.all([
+        ...["xdg-open", "open"].map((name) =>
+          writeFile(join(directory, name), "#!/bin/sh\nexit 1\n", {
+            mode: 0o700,
+          }),
+        ),
+        symlink(process.execPath, join(directory, "node")),
+      ]);
+    }
+    const inheritedPath = process.env.PATH;
+    return {
+      env: {
+        ...process.env,
+        ...(process.platform === "win32"
+          ? { NoDefaultCurrentDirectoryInExePath: "1" }
+          : {}),
+        PATH: inheritedPath
+          ? `${directory}${delimiter}${inheritedPath}`
+          : directory,
+      },
+      async dispose() {
+        await rm(directory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      },
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    throw error;
+  }
 }
 
 function isMissingCommandError(error: unknown): boolean {
