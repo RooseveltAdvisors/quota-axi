@@ -76,6 +76,7 @@ $ quota-axi --provider claude --json
   "providers": [
     {
       "provider": "claude",
+      "accountKeys": ["default"],
       "plan": "pro",
       "windows": [
         {
@@ -390,9 +391,11 @@ Discovery order is the built-in `openai-codex` entry, then other `openai-codex-*
 Two keys that carry the same stored `accountId` are the same ChatGPT account and are not reported as extra capacity.
 The later key stays a credential fallback until a probe succeeds or every candidate is rejected.
 The lane keeps the first key as its `accountKey`, while `source` names the key that answered.
+See [Account keys and compatibility](#account-keys-and-compatibility) for how consumers join folded keys to a row.
 A key whose identity cannot be compared is left as its own lane so the uncertainty stays visible.
 
 When only the built-in Pi entry (or none) is present, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
+That row's `accountKeys` names the key of the credential that produced it: `codex-home` for the native login or CLI fallback, `openai-codex` for the built-in entry. A failed row names the credential it speaks for, and a stale row names the one that produced its cached snapshot. The other key is added when the native login and the built-in entry store the same `accountId`. A `--profile-only` row is always `codex-home`.
 When siblings are present and a native `$CODEX_HOME/auth.json` exists, that login stays first as its own `codex-home` lane, read from `auth.json` and then the CLI fallback.
 The built-in `openai-codex` entry whose stored `accountId` matches the native login is not a separate lane; it stays the native lane's fallback, as it was before.
 Without a native `auth.json`, an installed Codex CLI fallback is probed once as the `codex-home` lane.
@@ -409,6 +412,12 @@ A proven sign-out, or a native login that coalesces into a Pi lane with a fresh 
 
 When a provider expands to multiple accounts, the report uses quota `schemaVersion: 6` (auth and models use version 2).
 Every provider record then has an `accountKey`; providers still using one selected account use the literal `default`.
+Every quota-axi output quota row, in schema 5 and schema 6 alike, has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them. The exported `ProviderQuota.accountKeys` type remains optional so package consumers can construct reports without it; quota-axi output sets it on every quota row.
+A row covering one credential lists just its own key. A consumer that holds a credential key binds the row whose `accountKeys` contains that key. Matching `accountKey` alone misses a key that was folded into another row.
+A provider without account discovery lists `accountKeys: ["default"]`, the same literal as its schema 6 `accountKey` filler. A discovering provider that stays on one row, such as two Pi keys for one account with no native login, keeps schema 5 and no `accountKey`, and its `accountKeys` starts with that lane's key.
+Membership mirrors quota-axi's own grouping exactly: every key the provider grouped into the row, and no other. That grouping relies on stored account identity when no fresh live reading confirms it, so a fold is published as applied even when a later live reading names a different account.
+`accountKeys` is a quota JSON field. Auth still lists each discovered lane on its own, because a fold that depends on the quota reading has not happened there. TOON does not add a column: its flat blocks already name the published lane by `accountKey`, and the membership list is the JSON account row's join field.
+The shared account collector puts each discovered lane's key first; an adapter adds folded keys to its quota reading's `ProviderQuota.accountKeys`, including keys learned during the read. Codex is the only adapter that discovers accounts today; other providers report `default`. The list itself is not cached; Codex reconstructs a stale row's originating key from the cached credential source.
 Every flat TOON block adds `accountKey` immediately after `provider`, and the quota/exhaustion/attention join becomes **`provider` + `accountKey` + `scope`**.
 Models and model sort ties use **`provider` + `accountKey` + `id`**.
 Models `unmatchedWindowIds` entries gain the same key, so an unmapped window reads `provider/accountKey/scope` instead of `provider/scope`; the key keeps two accounts of one provider from reporting the same unmapped window indistinguishably.
@@ -421,7 +430,7 @@ A key the report cannot publish (malformed or repeated) costs only its own lane:
 The provider falls back to its single selected account only when no usable lane remains.
 `--full` adds the vendor identity the usage endpoint supplied, when any.
 
-If no provider expands, output stays byte-compatible in shape and field order: quota schema 5, auth/models schema 1, and no account column.
+If no provider expands, existing fields retain their shape and order, while quota JSON adds `accountKeys`: quota schema 5, auth/models schema 1, and no account column.
 A sole discovered Pi sibling uses that legacy representation.
 Expansion follows the lanes discovered rather than the rows published, so when a native login and a Pi sibling turn out to be one account the single surviving row still carries its key and the report stays schema 6.
 Consumers must honor the schema version; a legacy keyless row means the single selected lane, and keys must never be inferred from row position.
@@ -439,7 +448,7 @@ The `quota` command's `--json` emits `schemaVersion: 5`, or `6` when a provider 
 
 The package publishes TypeScript declarations from its package root, so consumers can use `import type { QuotaAxiResponse, ModelsResponse } from "quota-axi"`. The adapter contract is `ProviderAdapter` in and normalized `ProviderQuota` out: adapters report observed quota data, never rank, mint credentials, or retain raw responses. The narrowly bounded vendor-owned renewal path is documented under [Delegated credential refresh](#delegated-credential-refresh).
 
-`schemaVersion` is command-specific. Additive optional fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively.
+`schemaVersion` is command-specific. Additive fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively. For quota row membership, see [Account keys and compatibility](#account-keys-and-compatibility).
 
 ### Default report blocks
 
@@ -501,7 +510,7 @@ An unknown or stale scope deliberately gets **no** `quota[]` row: the absence of
 | `effectiveAvailability[].pace.behindWindowIds`, `onPaceWindowIds`                                                                              |
 | Account identity (`account`) and per-source `attempts`                                                                                         |
 
-Everything a consumer branches on stays in the default tier: `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`; and sparse `notSetUp`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
+Everything a consumer branches on stays in the default tier: `accountKey` and `accountKeys` on an account row; `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`; and sparse `notSetUp`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
 
 `notSetUp: true` is present only on a provider lane that has positive evidence of absence (the same `providerPresence` classification the human report uses). Every provider stays in `providers[]` on both default `--json` and `--full`; omitting entries would change downstream consumers that look a provider up by id. The field is additive, so `schemaVersion` stays 5, or 6 when a provider expands to multiple accounts. Default TOON is the only output that omits these providers.
 
@@ -509,12 +518,12 @@ Everything a consumer branches on stays in the default tier: `state.status`, `st
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                                 |
-|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Quota report                  | `providers`                                                                                                                                            |
-| Provider report               | `provider`, optional `accountKey`, `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, optional `jobs`, and optional `notSetUp` |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                         |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                    |
+| Object                        | Fields                                                                                                                                                                                  |
+|-------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Quota report                  | `providers`                                                                                                                                                                             |
+| Provider report               | `provider`, optional `accountKey`, `accountKeys` (every quota row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, optional `jobs`, and optional `notSetUp` |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                                          |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                     |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
