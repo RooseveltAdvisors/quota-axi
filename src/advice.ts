@@ -1,3 +1,4 @@
+import { coveredAccountKeys } from "./providers/accounts.js";
 import {
   REFRESH_COMMAND_NOT_FOUND,
   REFRESH_EXIT_STATUS,
@@ -25,13 +26,19 @@ export function annotateQuotaAdvice(
   response: Omit<QuotaAxiResponse, "schemaVersion">,
 ): QuotaAxiResponse {
   const expanded = response.providers.some((provider) => provider.accountKey);
-  const providers = response.providers.map((provider) =>
-    annotateProviderAdvice(
-      expanded
-        ? { ...provider, accountKey: provider.accountKey ?? "default" }
-        : provider,
-    ),
-  );
+  const providers = response.providers.map((provider) => {
+    const accountKey = expanded
+      ? (provider.accountKey ?? "default")
+      : undefined;
+    return annotateProviderAdvice({
+      ...provider,
+      ...(accountKey ? { accountKey } : {}),
+      accountKeys: coveredAccountKeys(
+        accountKey ?? provider.accountKeys?.[0] ?? "default",
+        provider.accountKeys,
+      ),
+    });
+  });
   const help = providers.flatMap(providerHelpLines);
   return {
     generatedAt: response.generatedAt,
