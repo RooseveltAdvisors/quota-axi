@@ -6,12 +6,14 @@ import {
   createMimoAdapter,
   MIMO_ENV_SOURCE,
   MIMO_PI_PROVIDER_IDS,
-  MIMO_PI_SOURCE,
+  mimoPiSource,
   resolveMimoCredentials,
 } from "../../src/providers/mimo.js";
 
 const OPTIONS = { allowKeychainPrompt: false, refreshCredentials: false };
 const SYNTHETIC_MIMO_KEY = "synthetic-mimo-key";
+const UNAVAILABLE = "mimo_credential_unavailable";
+const ALL_PI_SOURCES = MIMO_PI_PROVIDER_IDS.map(mimoPiSource);
 
 let piDir: string;
 const piPath = () => join(piDir, "auth.json");
@@ -38,6 +40,12 @@ function adapterFor(
     credential: () => resolveMimoCredentials(environment, piPath()),
   });
 }
+
+const skipped = (source: string) => ({
+  source,
+  status: "skipped" as const,
+  error: UNAVAILABLE,
+});
 
 /** MiMo never sends a request: a usable key is model auth, not a quota read. */
 function stubNoFetch() {
@@ -71,13 +79,18 @@ describe("MiMo provider", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(MIMO_PI_PROVIDER_IDS)(
-    "reads Pi's %s entry as a usable credential",
-    async (piProviderId) => {
+  it.each(MIMO_PI_PROVIDER_IDS.map((id, index) => ({ id, index })))(
+    "reads Pi's $id entry as its own source, naming the entry that answered",
+    async ({ id, index }) => {
       const fetch = stubNoFetch();
       writePiStore({
-        [piProviderId]: { type: "api_key", key: SYNTHETIC_MIMO_KEY },
+        [id]: { type: "api_key", key: SYNTHETIC_MIMO_KEY },
       });
+      const declared = [
+        MIMO_ENV_SOURCE,
+        ...MIMO_PI_PROVIDER_IDS.slice(0, index + 1).map(mimoPiSource),
+      ];
+      const answered = declared[declared.length - 1];
 
       const report = await adapterFor().fetchQuota(OPTIONS);
 
@@ -89,17 +102,14 @@ describe("MiMo provider", () => {
           status: "fresh",
           stale: false,
           authStatus: "usable",
-          sourcesTried: [MIMO_ENV_SOURCE, MIMO_PI_SOURCE],
+          sourcesTried: declared,
         },
-        attempts: [
-          {
-            source: MIMO_ENV_SOURCE,
-            status: "skipped",
-            error: "mimo_credential_unavailable",
-          },
-          { source: MIMO_PI_SOURCE, status: "success" },
-        ],
       });
+      expect(report.attempts).toEqual([
+        skipped(MIMO_ENV_SOURCE),
+        ...declared.slice(1, -1).map((source) => skipped(source)),
+        { source: answered, status: "success" },
+      ]);
       expect(fetch).not.toHaveBeenCalled();
     },
   );
@@ -122,7 +132,11 @@ describe("MiMo provider", () => {
       resolveMimoCredentials({ MIMO_API_KEY: "${MIMO_API_KEY}" }, piPath()),
     ).toEqual([
       { status: "missing", source: MIMO_ENV_SOURCE },
-      { status: "missing", source: MIMO_PI_SOURCE, path: piPath() },
+      ...ALL_PI_SOURCES.map((source) => ({
+        status: "missing",
+        source,
+        path: piPath(),
+      })),
     ]);
   });
 
@@ -133,21 +147,13 @@ describe("MiMo provider", () => {
       source: "unavailable",
       state: {
         status: "auth_required",
-        error: "mimo_credential_unavailable",
-        sourcesTried: [MIMO_ENV_SOURCE, MIMO_PI_SOURCE],
+        error: UNAVAILABLE,
+        sourcesTried: [MIMO_ENV_SOURCE, ...ALL_PI_SOURCES],
       },
     });
     expect(report.attempts).toEqual([
-      {
-        source: MIMO_ENV_SOURCE,
-        status: "skipped",
-        error: "mimo_credential_unavailable",
-      },
-      {
-        source: MIMO_PI_SOURCE,
-        status: "skipped",
-        error: "mimo_credential_unavailable",
-      },
+      skipped(MIMO_ENV_SOURCE),
+      ...ALL_PI_SOURCES.map(skipped),
     ]);
     for (const attempt of report.attempts ?? []) {
       expect(attempt.credentialPresent).toBeUndefined();
@@ -174,11 +180,12 @@ describe("MiMo provider", () => {
         },
       });
       expect(report.attempts).toContainEqual({
-        source: MIMO_PI_SOURCE,
+        source: mimoPiSource("xiaomi-token-plan-sgp"),
         status: "failed",
         error: "mimo_credential_invalid",
         credentialPresent: true,
       });
+      expect(report.attempts).toContainEqual(skipped(mimoPiSource("xiaomi")));
     },
   );
 
@@ -188,15 +195,17 @@ describe("MiMo provider", () => {
     const report = await adapterFor().fetchQuota(OPTIONS);
 
     expect(report.state.status).toBe("auth_required");
-    expect(report.attempts).toContainEqual({
-      source: MIMO_PI_SOURCE,
-      status: "failed",
-      error: "mimo_credential_invalid",
-      credentialPresent: true,
-    });
+    for (const source of ALL_PI_SOURCES) {
+      expect(report.attempts).toContainEqual({
+        source,
+        status: "failed",
+        error: "mimo_credential_invalid",
+        credentialPresent: true,
+      });
+    }
   });
 
-  it("inspects both credential sources with the stored key's presence", async () => {
+  it("inspects every declared source, marking the ones that are not absent", async () => {
     writePiStore({ xiaomi: { type: "api_key", key: SYNTHETIC_MIMO_KEY } });
 
     const auth = await adapterFor().inspectAuth(OPTIONS);
@@ -206,12 +215,31 @@ describe("MiMo provider", () => {
       sources: [
         { source: MIMO_ENV_SOURCE, status: "missing" },
         {
-          source: MIMO_PI_SOURCE,
+          source: mimoPiSource("xiaomi"),
           path: piPath(),
           status: "available",
           credentialPresent: true,
         },
+        ...ALL_PI_SOURCES.slice(1).map((source) => ({
+          source,
+          path: piPath(),
+          status: "missing",
+        })),
       ],
+    });
+  });
+
+  it("marks a present-but-unusable entry in auth the same way the quota path does", async () => {
+    writePiStore({ xiaomi: { type: "oauth", access: "x" } });
+
+    const auth = await adapterFor().inspectAuth(OPTIONS);
+
+    expect(auth.sources).toContainEqual({
+      source: mimoPiSource("xiaomi"),
+      path: piPath(),
+      status: "invalid",
+      error: "mimo_credential_invalid",
+      credentialPresent: true,
     });
   });
 });

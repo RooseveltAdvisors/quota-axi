@@ -18,14 +18,14 @@ import {
 } from "./env-pi-credential.js";
 
 export const MIMO_ENV_SOURCE = "env:MIMO_API_KEY";
-export const MIMO_PI_SOURCE = "pi:xiaomi";
 
 /**
  * Pi stores Xiaomi MiMo's keys under the vendor's own provider entry names,
  * not under `mimo`: the pay-as-you-go key plus one Token Plan key per cluster.
- * Declared in source order; the first entry that resolves a usable literal
- * `api_key` answers, and a present-but-unusable entry keeps the source visible
- * as present rather than absent.
+ * Each entry is its own credential source (`pi:<entry id>`) in this declared
+ * order, so a report names the exact entry that answered, a present-but-unusable
+ * entry stays visible as present rather than absent, and an absent entry never
+ * speaks for a sibling store.
  */
 export const MIMO_PI_PROVIDER_IDS = [
   "xiaomi",
@@ -33,6 +33,11 @@ export const MIMO_PI_PROVIDER_IDS = [
   "xiaomi-token-plan-cn",
   "xiaomi-token-plan-ams",
 ] as const;
+
+/** Attempt and inspection source name for one Pi entry. */
+export function mimoPiSource(piProviderId: string): string {
+  return `pi:${piProviderId}`;
+}
 
 const LABEL = "MiMo";
 
@@ -53,16 +58,19 @@ export function resolveMimoCredentials(
       : { status: "missing", source: MIMO_ENV_SOURCE },
   );
   const result: JsonFileReadResult = readJsonFileResult(path);
-  if (result.status === "missing") {
-    credentials.push({ status: "missing", source: MIMO_PI_SOURCE, path });
-  } else if (result.status === "invalid") {
-    credentials.push({
-      status: result.error === "file_read_error" ? "error" : "invalid",
-      source: MIMO_PI_SOURCE,
-      path,
-    });
-  } else {
-    credentials.push(extractMimoPiCredential(result.value, path));
+  for (const piProviderId of MIMO_PI_PROVIDER_IDS) {
+    const source = mimoPiSource(piProviderId);
+    if (result.status === "missing") {
+      credentials.push({ status: "missing", source, path });
+    } else if (result.status === "invalid") {
+      credentials.push({
+        status: result.error === "file_read_error" ? "error" : "invalid",
+        source,
+        path,
+      });
+    } else {
+      credentials.push(extractMimoPiEntry(result.value, piProviderId, path));
+    }
   }
   return credentials;
 }
@@ -73,23 +81,24 @@ export function resolveMimoCredentials(
  * a MiMo credential - Pi never writes an OAuth-shaped Xiaomi entry, so any
  * other shape is a present but unusable credential, not usable model auth.
  */
-export function extractMimoPiCredential(
+export function extractMimoPiEntry(
   value: unknown,
+  piProviderId: string,
   path: string,
 ): EnvPiCredentialResolution {
-  let present = false;
-  for (const piProviderId of MIMO_PI_PROVIDER_IDS) {
-    const classified = classifyPiAuthEntry(value, piProviderId);
-    if (classified.status === "missing") continue;
-    present = true;
-    if (classified.status !== "present") continue;
-    if (classified.entry.type !== "api_key") continue;
-    const key = usableLiteralSecret(classified.entry.key);
-    if (key) return { status: "available", key, source: MIMO_PI_SOURCE, path };
-  }
-  return present
-    ? { status: "invalid", source: MIMO_PI_SOURCE, path }
-    : { status: "missing", source: MIMO_PI_SOURCE, path };
+  const source = mimoPiSource(piProviderId);
+  const classified = classifyPiAuthEntry(value, piProviderId);
+  if (classified.status === "missing")
+    return { status: "missing", source, path };
+  if (classified.status === "invalid")
+    return { status: "invalid", source, path };
+  const key =
+    classified.entry.type === "api_key"
+      ? usableLiteralSecret(classified.entry.key)
+      : undefined;
+  return key
+    ? { status: "available", key, source, path }
+    : { status: "invalid", source, path };
 }
 
 export function createMimoAdapter(
@@ -185,10 +194,12 @@ async function inspectAuthWithDependencies(
   dependencies: MimoDependencies,
 ): Promise<AuthProviderReport> {
   const report = inspectEnvPiAuth("mimo", dependencies.credential());
+  // `credentialPresent` marks every source that is not genuinely absent, so
+  // `auth` and the quota path agree on a present-but-unusable Pi entry.
   return {
     ...report,
     sources: report.sources.map((source) =>
-      source.status === "available"
+      source.status === "available" || source.status === "invalid"
         ? { ...source, credentialPresent: true }
         : source,
     ),

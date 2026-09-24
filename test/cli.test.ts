@@ -1667,7 +1667,13 @@ describe("new provider public quota output", () => {
           status: "auth_required",
           stale: false,
           error: "mimo_credential_unavailable",
-          sourcesTried: ["env:MIMO_API_KEY", "pi:xiaomi"],
+          sourcesTried: [
+            "env:MIMO_API_KEY",
+            "pi:xiaomi",
+            "pi:xiaomi-token-plan-sgp",
+            "pi:xiaomi-token-plan-cn",
+            "pi:xiaomi-token-plan-ams",
+          ],
         },
       }),
     ]);
