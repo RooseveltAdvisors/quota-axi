@@ -1,39 +1,102 @@
+import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
+import { resolvePiAuthFilePath } from "../lib/pi-agent-dir.js";
+import { classifyPiAuthEntry } from "../lib/pi-auth-store.js";
 import { usableLiteralSecret } from "../lib/secret.js";
 import type {
   AuthProviderReport,
-  AuthSourceReport,
   ProviderAdapter,
   ProviderQuota,
   SourceAttempt,
 } from "../types.js";
 import { failedProvider, sourceNames } from "./common.js";
+import {
+  type EnvPiCredentialResolution,
+  inspectEnvPiAuth,
+  type KeyCredentialFailure,
+  keyCredentialFailure,
+  preferCredentialFailure,
+} from "./env-pi-credential.js";
 
 export const MIMO_ENV_SOURCE = "env:MIMO_API_KEY";
+export const MIMO_PI_SOURCE = "pi:xiaomi";
+
+/**
+ * Pi stores Xiaomi MiMo's keys under the vendor's own provider entry names,
+ * not under `mimo`: the pay-as-you-go key plus one Token Plan key per cluster.
+ * Declared in source order; the first entry that resolves a usable literal
+ * `api_key` answers, and a present-but-unusable entry keeps the source visible
+ * as present rather than absent.
+ */
+export const MIMO_PI_PROVIDER_IDS = [
+  "xiaomi",
+  "xiaomi-token-plan-sgp",
+  "xiaomi-token-plan-cn",
+  "xiaomi-token-plan-ams",
+] as const;
+
 const LABEL = "MiMo";
 
-type MimoCredentialResolution =
-  | { status: "available"; key: string; source: string }
-  | { status: "missing"; source: string };
-
 type MimoDependencies = {
-  credential: () => MimoCredentialResolution;
+  credential: () => EnvPiCredentialResolution[];
   now: () => number;
 };
 
-export function resolveMimoCredential(
+export function resolveMimoCredentials(
   environment: Readonly<Record<string, string | undefined>> = process.env,
-): MimoCredentialResolution {
+  path = resolvePiAuthFilePath(),
+): EnvPiCredentialResolution[] {
+  const credentials: EnvPiCredentialResolution[] = [];
   const key = usableLiteralSecret(environment.MIMO_API_KEY);
-  return key
-    ? { status: "available", key, source: MIMO_ENV_SOURCE }
-    : { status: "missing", source: MIMO_ENV_SOURCE };
+  credentials.push(
+    key
+      ? { status: "available", key, source: MIMO_ENV_SOURCE }
+      : { status: "missing", source: MIMO_ENV_SOURCE },
+  );
+  const result: JsonFileReadResult = readJsonFileResult(path);
+  if (result.status === "missing") {
+    credentials.push({ status: "missing", source: MIMO_PI_SOURCE, path });
+  } else if (result.status === "invalid") {
+    credentials.push({
+      status: result.error === "file_read_error" ? "error" : "invalid",
+      source: MIMO_PI_SOURCE,
+      path,
+    });
+  } else {
+    credentials.push(extractMimoPiCredential(result.value, path));
+  }
+  return credentials;
+}
+
+/**
+ * Pi's entry boundary: only `classifyPiAuthEntry` decides absent versus
+ * present, and only a literal `type: "api_key"` record with a usable `key` is
+ * a MiMo credential - Pi never writes an OAuth-shaped Xiaomi entry, so any
+ * other shape is a present but unusable credential, not usable model auth.
+ */
+export function extractMimoPiCredential(
+  value: unknown,
+  path: string,
+): EnvPiCredentialResolution {
+  let present = false;
+  for (const piProviderId of MIMO_PI_PROVIDER_IDS) {
+    const classified = classifyPiAuthEntry(value, piProviderId);
+    if (classified.status === "missing") continue;
+    present = true;
+    if (classified.status !== "present") continue;
+    if (classified.entry.type !== "api_key") continue;
+    const key = usableLiteralSecret(classified.entry.key);
+    if (key) return { status: "available", key, source: MIMO_PI_SOURCE, path };
+  }
+  return present
+    ? { status: "invalid", source: MIMO_PI_SOURCE, path }
+    : { status: "missing", source: MIMO_PI_SOURCE, path };
 }
 
 export function createMimoAdapter(
   overrides: Partial<MimoDependencies> = {},
 ): ProviderAdapter {
   const dependencies: MimoDependencies = {
-    credential: () => resolveMimoCredential(),
+    credential: () => resolveMimoCredentials(),
     now: Date.now,
     ...overrides,
   };
@@ -50,57 +113,84 @@ export const mimoAdapter = createMimoAdapter();
 async function fetchQuotaWithDependencies(
   dependencies: MimoDependencies,
 ): Promise<ProviderQuota> {
-  const resolution = dependencies.credential();
-  const attempts: SourceAttempt[] = [
-    {
+  const attempts: SourceAttempt[] = [];
+  let failure: KeyCredentialFailure | undefined;
+
+  for (const resolution of dependencies.credential()) {
+    if (resolution.status === "available") {
+      attempts.push({ source: resolution.source, status: "success" });
+
+      // MiMo's provider-owned Pi setup establishes API-key authentication,
+      // while its quota display is dashboard/cookie based. Do not attach
+      // cookies or probe an inference endpoint merely to manufacture a quota
+      // reading.
+      return {
+        provider: "mimo",
+        label: LABEL,
+        source: "api",
+        windows: [],
+        state: {
+          status: "fresh",
+          stale: false,
+          authStatus: "usable",
+          refreshedAt: new Date(dependencies.now()).toISOString(),
+          sourcesTried: sourceNames(attempts),
+        },
+        attempts,
+      };
+    }
+
+    const local = keyCredentialFailure("mimo", resolution);
+    attempts.push({
       source: resolution.source,
-      status: resolution.status === "available" ? "success" : "skipped",
-      ...(resolution.status !== "available"
-        ? { error: "mimo_credential_unavailable" }
-        : {}),
-    },
-  ];
-  if (resolution.status !== "available") {
-    return failedProvider({
-      provider: "mimo",
-      label: LABEL,
-      status: "auth_required",
-      error: "mimo_credential_unavailable",
-      source: "unavailable",
-      sourcesTried: sourceNames(attempts),
-      attempts,
+      status: resolution.status === "missing" ? "skipped" : "failed",
+      error: local.error,
+      ...(resolution.status === "invalid" ? { credentialPresent: true } : {}),
     });
+    failure = preferMimoFailure(failure, local);
   }
 
-  // MiMo's provider-owned Pi setup establishes API-key authentication, while
-  // its quota display is dashboard/cookie based. Do not attach cookies or
-  // probe an inference endpoint merely to manufacture a quota reading.
-  return {
+  const final = failure ?? {
+    status: "auth_required" as const,
+    error: "mimo_credential_unavailable",
+  };
+  return failedProvider({
     provider: "mimo",
     label: LABEL,
-    source: "api",
-    windows: [],
-    state: {
-      status: "fresh",
-      stale: false,
-      authStatus: "usable",
-      refreshedAt: new Date(dependencies.now()).toISOString(),
-      sourcesTried: sourceNames(attempts),
-    },
+    status: final.status,
+    error: final.error,
+    source: "unavailable",
+    sourcesTried: sourceNames(attempts),
     attempts,
-  };
+  });
+}
+
+/**
+ * A present-but-unusable Pi entry outranks an earlier plain absence: the
+ * machine does hold a MiMo credential surface, so naming it `unavailable`
+ * would describe the wrong failure. A credential-resolution error still
+ * outranks both through the shared rule.
+ */
+function preferMimoFailure(
+  current: KeyCredentialFailure | undefined,
+  next: KeyCredentialFailure,
+): KeyCredentialFailure {
+  if (current?.error === "mimo_credential_unavailable") {
+    if (next.error !== "mimo_credential_unavailable") return next;
+  }
+  return preferCredentialFailure(current, next);
 }
 
 async function inspectAuthWithDependencies(
   dependencies: MimoDependencies,
 ): Promise<AuthProviderReport> {
-  const resolution = dependencies.credential();
-  const source: AuthSourceReport = {
-    source: resolution.source,
-    status: resolution.status === "available" ? "available" : "missing",
-    ...(resolution.status === "available" ? { credentialPresent: true } : {}),
+  const report = inspectEnvPiAuth("mimo", dependencies.credential());
+  return {
+    ...report,
+    sources: report.sources.map((source) =>
+      source.status === "available"
+        ? { ...source, credentialPresent: true }
+        : source,
+    ),
   };
-  return { provider: "mimo", sources: [source] };
 }
-
-export type { MimoCredentialResolution };
