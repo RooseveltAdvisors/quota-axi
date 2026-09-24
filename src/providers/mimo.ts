@@ -154,7 +154,11 @@ async function fetchQuotaWithDependencies(
       source: resolution.source,
       status: resolution.status === "missing" ? "skipped" : "failed",
       error: local.error,
-      ...(resolution.status === "invalid" ? { credentialPresent: true } : {}),
+      // Not genuinely absent: a present-but-unusable entry, and an auth store
+      // that exists but could not be read (README source-attempt contract).
+      ...(resolution.status === "invalid" || resolution.status === "error"
+        ? { credentialPresent: true }
+        : {}),
     });
     failure = preferMimoFailure(failure, local);
   }
@@ -195,11 +199,14 @@ async function inspectAuthWithDependencies(
 ): Promise<AuthProviderReport> {
   const report = inspectEnvPiAuth("mimo", dependencies.credential());
   // `credentialPresent` marks every source that is not genuinely absent, so
-  // `auth` and the quota path agree on a present-but-unusable Pi entry.
+  // `auth` and the quota path agree on a present-but-unusable Pi entry and on
+  // an auth store that exists but could not be read.
   return {
     ...report,
     sources: report.sources.map((source) =>
-      source.status === "available" || source.status === "invalid"
+      source.status === "available" ||
+      source.status === "invalid" ||
+      source.status === "error"
         ? { ...source, credentialPresent: true }
         : source,
     ),

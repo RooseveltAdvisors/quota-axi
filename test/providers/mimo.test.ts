@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -200,6 +200,36 @@ describe("MiMo provider", () => {
         source,
         status: "failed",
         error: "mimo_credential_invalid",
+        credentialPresent: true,
+      });
+    }
+  });
+
+  it("marks an unreadable Pi store as present rather than absent", async () => {
+    // A store that exists but cannot be read still is not an absent source:
+    // README lets a read failure carry credentialPresent, and both the quota
+    // and auth paths must say the same thing about it.
+    mkdirSync(piPath(), { recursive: true });
+
+    const report = await adapterFor().fetchQuota(OPTIONS);
+    const auth = await adapterFor().inspectAuth(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "mimo_credential_resolution_failed",
+    });
+    for (const source of ALL_PI_SOURCES) {
+      expect(report.attempts).toContainEqual({
+        source,
+        status: "failed",
+        error: "mimo_credential_resolution_failed",
+        credentialPresent: true,
+      });
+      expect(auth.sources).toContainEqual({
+        source,
+        path: piPath(),
+        status: "error",
+        error: "mimo_credential_resolution_failed",
         credentialPresent: true,
       });
     }
