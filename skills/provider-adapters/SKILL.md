@@ -1,12 +1,12 @@
 ---
 name: provider-adapters
-description: "Detailed provider-specific auth sources, quota windows, endpoint shapes, error recovery, and unique quirks for all 17 supported providers in quota-axi."
+description: "Detailed provider-specific auth sources, quota windows, endpoint shapes, error recovery, and unique quirks for all 18 supported providers in quota-axi."
 user-invocable: false
 ---
 
 # Provider Adapters & Quirks
 
-This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for each of the 17 providers supported by quota-axi.
+This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for each of the 18 providers supported by quota-axi.
 
 ---
 
@@ -164,3 +164,26 @@ This reference details the credential sources, endpoint contracts, quota window 
 
 - **Endpoints (MiniMax only)**: Balance and quota inspection endpoints. Context-scoped cache via SHA-256 context hashing of credential source and host. Read-only.
 - **MiMo**: `MIMO_API_KEY` alone establishes usable auth; no endpoint is probed (quota display is dashboard/cookie based), nothing is cached, and windows stay empty.
+
+---
+
+## 15. Devin (`devin`)
+
+- **Credential Sources** (evaluated in order):
+  1. `env:WINDSURF_API_KEY`: non-blank `$WINDSURF_API_KEY` (optional `$WINDSURF_API_SERVER_URL`). A blank value selects nothing.
+  2. `file:credentials.toml`: `$XDG_DATA_HOME/devin/credentials.toml`, `~/.local/share/devin/credentials.toml`, or `%APPDATA%\devin\credentials.toml` on Windows, reading the `windsurf_api_key` key.
+  - The session token never expires and carries no refresh token: there is no delegated refresh, `devin` is never launched, and `devin auth login` appears only as sign-out advice after a definitive 401/403.
+- **Endpoint**: One read-only Connect-JSON `POST` of `SeatManagementService/GetUserStatus` through `providerFetch`. The token is sent only to `https://server.codeium.com`; any other `api_server_url` origin is a skipped `unsupported_server` attempt and never receives the token.
+- **Quota Windows**: `weekly` (`week`, 604,800s) plus `daily` only when `planInfo.hideDailyQuota` is explicitly `false` (it reuses the `session` kind: id `daily`, label `day`, 86,400s). Both bound `included_quota` jointly when both are trusted (weekly alone when `hideDailyQuota` is explicitly `true`), never `all_models`. A `billingStrategy` other than `BILLING_STRATEGY_QUOTA` publishes no windows, and a proto3-omitted percent with a present reset reads 0 remaining.
+- **Context Scoping**: Snapshots carry an opaque SHA-256 of the answering source and first-party host plus a one-way digest of the token (`devinReadingContextId` in `src/providers/devin-cache-context.ts`); a definitive rejection retires only a snapshot whose identity matches the rejected token.
+
+---
+
+## 16. Higgsfield (`higgsfield`)
+
+- **Credential Source**: The installed `higgsfield` CLI (`higgsfield-cli`). `inspectAuth` reports the command present or missing without probing quota; quota-axi never reads Higgsfield credential files, never runs `higgsfield auth token`, and never publishes the account email the status payload includes.
+- **Fixed argv**: `higgsfield account status --json`, `higgsfield account transactions --json --size 100`, and `higgsfield generate list --json --size 20`, each bounded to 15 seconds. The transactions and jobs aux commands run concurrently; a failure omits that aux rather than failing the status reading and is additionally surfaced as a `degraded_source` attention row (`higgsfield-transactions` or `higgsfield-jobs`).
+- **Quota Windows**: The status payload has no limit or reset field, so a `credits` window (scope `included_credits`) is published only when a `subscription credits` grant from `account transactions` supplies the allowance and remaining still fits it; otherwise the raw `credits.remaining` balance is reported with no percentage. The grant must be on the first page. No cycle is invented: pace, runway, and selection stay unknown.
+- **Jobs rollup**: `generate list` entries are reduced to `jobs.{sampled,completed,failed,other}` counts; job ids, prompts, URLs, and model names are discarded, and job counts are never cached.
+- **Error handling**: A status failure classifies only from the closed sentinel set (`higgsfield_cli_unavailable`, `higgsfield_sign_in_required`, `higgsfield_status_malformed_json`, wrapped `higgsfield_status_failed`); never re-run keyword regexes over wrapped stderr.
+- **Delegated Refresh**: None; `ProviderOptions.refreshCredentials` is ignored.

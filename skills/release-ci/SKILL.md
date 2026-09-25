@@ -15,7 +15,7 @@ This document describes the automated release pipeline, CI workflow constraints,
 - **Conventional Commits**: Releases are driven by conventional commit messages (`feat:`, `fix:`, `chore:`, etc.) merged into `main`.
 - **Release Please**:
   - Automatically manages version bumps, changelog generation, and release PRs.
-  - `.release-please-manifest.json` is primed at `0.1.0` (the version published manually before release-please integration).
+  - `.release-please-manifest.json` was primed at `0.1.0` (the version published manually before release-please integration); release-please updates it with each release.
   - `release-please-config.json` locks `bootstrap-sha` to `9f5dc949c50ab8ac0a441be777e1c3693ee0b612` (the commit producing the published 0.1.0 package). Never alter this SHA unless correcting the published baseline.
   - **Never Hand-Edit Generated Files**: Do not manually edit `CHANGELOG.md` or `.release-please-manifest.json`. A guard workflow (`.github/workflows/guard-generated-files.yml`) automatically rejects PRs that touch them; a fork-sync PR is exempt only when every commit touching the path is a verified upstream release commit per `.github/scripts/verify-upstream-release-provenance.sh`, which fails closed and deliberately never tests author name or email - those fields are spoofable.
 - **npm Publishing**:
