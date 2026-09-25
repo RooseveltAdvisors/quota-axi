@@ -703,11 +703,11 @@ A bounding window with no `resetsAt` at all has not been triggered yet (e.g. a C
 
 In default TOON the scalar is the `spendPriority` column of the scope's `quota[]` row - there is no separate `selection[]` block, at any tier, because the column already carries it. An unmeasurable scalar renders the literal `unknown`, never `0`: `0` is exact utilization, a completely different claim.
 
-| Field                   | Meaning                                                                                                                     |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `status`                | `known` when every bounding window is measurable and no [`boundConflict`](#quota-windows) is disclosed; otherwise `unknown` |
-| `spendPriority`         | The clamped scope scalar. Present only when `status` is `known`                                                             |
-| `unmeasurableWindowIds` | The bounding windows that blocked the scalar. Present whenever one made the scope `unknown`                                 |
+| Field                   | Meaning                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                | `known` when at least one bounding window is measurable, every other bound is an untriggered zero-use window, and no [`boundConflict`](#quota-windows) is disclosed; otherwise `unknown` |
+| `spendPriority`         | The clamped scope scalar. Present only when `status` is `known`                                                                                                                          |
+| `unmeasurableWindowIds` | The bounding windows that blocked the scalar. Present only when a named bound made the scope `unknown`                                                                                   |
 
 For each bounding window `w` of the scope:
 
@@ -728,6 +728,8 @@ scopeMetric = SUM(gap_w * cycleSeconds_w) / SUM(cycleSeconds_w)
 A higher `spendPriority` therefore marks the scope where spending recovers the most paid allowance that would otherwise expire unused. At `burnMultiple` 1, `S_w` reduces exactly to that window's `reservePercentPoints`; the metric generalizes reserve to projected forfeiture at the observed burn pace.
 
 Any bounding window without usable pace makes the **whole scope** unmeasurable: `status` is `unknown`, no scalar is emitted, and `unmeasurableWindowIds` names the blockers. An unknown window is never assumed healthy and never treated as zero. A window whose remaining cycle time has effectively run out is unmeasurable rather than infinite. The one case where an absent `burnMultiple` is not a gap is a window with zero elapsed cycle time and zero usage: nothing can have been consumed yet, so its observed burn is `0` and the scope stays measurable.
+
+A bounding window with no `resetsAt` at all has not been triggered yet (e.g. a Z.AI `five_hour` window before its first request this window, whose vendor omits the reset while the window is idle) rather than being a data gap. Under the same rule as the runway aggregate, when that untriggered window also reports zero usage (100% remaining, 0% used) it is treated as fully available and excluded from the weighted mean instead of blocking the scalar, so the scope's other bounding windows still determine `spendPriority`. When every bounding window is untriggered there is no measurable cycle to weight, so the scope publishes no scalar and `spendPriority` renders the literal `unknown`. A missing `resetsAt` paired with any other usage shape (unknown usage, or nonzero usage without an active clock), and a present-but-unparseable `resetsAt`, remain real data gaps that fail closed into `unmeasurableWindowIds`.
 
 `selection` is derived per report from the same `generatedAt` clock as `pace` and `runway`, and is not cached.
 
