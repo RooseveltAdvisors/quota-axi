@@ -330,6 +330,19 @@ describe("quota semantics", () => {
     ]);
   });
 
+  it("reports OpenCode Go with no windows as unknown, not partial with all caps unresolved", () => {
+    const result = withQuotaSemantics(
+      provider("opencode-go", []),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics).toMatchObject({
+      status: "unknown",
+      effectiveAvailability: [],
+      unresolvedWindowIds: [],
+    });
+  });
+
   it("treats OpenCode Go rolling, weekly, and monthly windows as stacked plan caps", () => {
     const result = withQuotaSemantics(
       provider("opencode-go", [
@@ -821,6 +834,39 @@ describe("quota semantics", () => {
         }),
       }),
     ]);
+  });
+
+  it("ranks the Z.AI all-models scope when an idle five-hour window has not been triggered yet", () => {
+    const result = withQuotaSemantics(
+      provider("zai", [
+        window("five_hour", "session", 100, {
+          percentUsed: 0,
+          windowSeconds: 18_000,
+          // No resetsAt: the vendor omits nextResetTime while the session
+          // window is idle, so the 5h clock has not started. This must not
+          // block spendPriority.
+        }),
+        window("weekly", "weekly", 51, {
+          windowSeconds: WEEK_SECONDS,
+          resetsAt: weeklyResetsAt(0.6),
+        }),
+      ]),
+      GENERATED_AT,
+    );
+
+    const allModels = result.quotaSemantics?.effectiveAvailability.find(
+      (item) => item.scope === "all_models",
+    );
+    expect(allModels?.status).toBe("known");
+    expect(allModels?.selection?.status).toBe("known");
+    expect(allModels?.selection?.unmeasurableWindowIds).toBeUndefined();
+    expect(typeof allModels?.selection?.[SELECTION_SCALAR_KEY]).toBe("number");
+
+    const fiveHour = result.windows.find((item) => item.id === "five_hour");
+    expect(fiveHour?.pace).toEqual({
+      status: "unknown",
+      reason: "missing_cycle",
+    });
   });
 
   it("keeps the Z.AI tool window out of the all-models bound when limits are unresolved", () => {
@@ -1363,5 +1409,26 @@ describe("per-scope selection signal", () => {
     expect(result.state.status).toBe("stale");
     expect(result.state.stale).toBe(true);
     expect(result.quotaSemantics?.status).toBe("unknown");
+  });
+
+  it("bounds Higgsfield credits at included_credits and does not invent a model lane", () => {
+    const result = withQuotaSemantics(
+      provider("higgsfield", [window("credits", "credits", 99)]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "included_credits",
+        status: "known",
+        effectivePercentRemaining: 99,
+        boundedBy: ["credits"],
+      }),
+    ]);
+    expect(result.quotaSemantics?.effectiveAvailability).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scope: "all_models" }),
+      ]),
+    );
   });
 });

@@ -182,6 +182,14 @@ function semanticsFor(
       );
     case "elevenlabs":
       return elevenLabsSemantics(provider.windows, generatedAt);
+    case "devin":
+      return devinSemantics(
+        provider.windows,
+        provider.state.untrustedWindowIds ?? [],
+        generatedAt,
+      );
+    case "higgsfield":
+      return higgsfieldSemantics(provider.windows, generatedAt);
   }
 }
 
@@ -194,6 +202,58 @@ function semanticsFor(
  * spent, not that requests stop. It is a speech allowance rather than a
  * coding-agent lane, so it never binds a model scope either.
  */
+/**
+ * Devin's daily and weekly windows meter included plan quota. Paid extra usage
+ * continues past a zeroed window, and free models do not draw on these windows,
+ * so they bound `included_quota` rather than `all_models`. Max omits the daily
+ * window only when `hideDailyQuota` is explicitly true, and weekly alone is
+ * then the bound. Otherwise incomplete caps remain unresolved rather than
+ * publishing a known effective remaining percentage.
+ */
+function devinSemantics(
+  windows: QuotaWindow[],
+  untrustedWindowIds: string[],
+  generatedAt: string,
+): QuotaSemantics {
+  const daily = windows.filter(({ id }) => id === "daily");
+  const weekly = windows.filter(({ id }) => id === "weekly");
+  const expected = [...weekly, ...daily];
+  const recognized = new Set(expected);
+  const unresolved = windows.filter((window) => !recognized.has(window));
+  const unresolvedWindowIds = [
+    ...new Set([...unresolved.map(({ id }) => id), ...untrustedWindowIds]),
+  ];
+  const description =
+    "Devin's daily and weekly windows bound included quota. Free models do not draw on them, and paid extra usage continues past a zeroed window, so they are not an all-model bound. Organization and administrator limits are not reported in these fields.";
+  if (unresolvedWindowIds.length > 0) {
+    return {
+      status: "partial",
+      description,
+      effectiveAvailability:
+        weekly.length > 0
+          ? [
+              unresolvedAvailability(
+                "included_quota",
+                expected,
+                unresolvedWindowIds,
+              ),
+            ]
+          : [],
+      unresolvedWindowIds,
+    };
+  }
+  if (weekly.length === 0) {
+    return knownSemantics(
+      [],
+      "Devin reported no weekly included-quota window, so no effective remaining percentage can be computed.",
+    );
+  }
+  return knownSemantics(
+    [availability("included_quota", expected, generatedAt)],
+    description,
+  );
+}
+
 function elevenLabsSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
@@ -204,6 +264,27 @@ function elevenLabsSemantics(
   return knownSemantics(
     characters.length > 0
       ? [availability("included_characters", characters, generatedAt)]
+      : [],
+    description,
+  );
+}
+
+/**
+ * Higgsfield meters plan generation credits, not a coding-agent model lane.
+ * The credits window is only published when a subscription grant supplies the
+ * cap, so it bounds `included_credits` rather than `all_models`. Pace stays
+ * unknown until the vendor reports a reset.
+ */
+function higgsfieldSemantics(
+  windows: QuotaWindow[],
+  generatedAt: string,
+): QuotaSemantics {
+  const credits = windows.filter(({ id }) => id === "credits");
+  const description =
+    "Higgsfield's credits window is the subscription plan's included generation-credit allowance when a subscription grant supplies that cap, so it bounds the included_credits scope only. It is not a model lane, and extra purchases can add credits, so a zeroed window means the included allowance is spent, not that every request is refused. Pace, runway, and selection stay unknown until the vendor reports a reset.";
+  return knownSemantics(
+    credits.length > 0
+      ? [availability("included_credits", credits, generatedAt)]
       : [],
     description,
   );
@@ -221,6 +302,13 @@ function opencodeGoSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
 ): QuotaSemantics {
+  // No windows at all means the provider was never set up (or is signed
+  // out), not that a subset of the plan's stacked caps is missing - that
+  // distinction is handled below. Fall through to the standard no-window
+  // reading instead of naming all three caps as unresolved.
+  if (windows.length === 0) {
+    return unknownSemantics(windows, "OpenCode Go reported no quota windows.");
+  }
   const plan = windows.filter(({ id }) =>
     ["rolling", "five_hour", "weekly", "monthly"].includes(id),
   );
