@@ -1460,7 +1460,7 @@ describe("human report folding for providers that are not set up", () => {
     expect(output).not.toMatch(/╭─ ○ (agy|alibaba|commandcode) /);
 
     expect(output).toMatch(
-      /· 1 live · 0 stale · 1 needs attention · 15 not set up\n/,
+      /· 1 live · 0 stale · 1 needs attention · 16 not set up\n/,
     );
     expect(output).toContain("╭─ ● codex ");
     expect(output).toContain("╭─ ○ claude ");
@@ -1473,7 +1473,7 @@ describe("human report folding for providers that are not set up", () => {
     stubFoldFleet();
     const output = await capture(["--tui", "--once", "--all"]);
 
-    expect(output).toContain("  ○ not set up · 15\n");
+    expect(output).toContain("  ○ not set up · 16\n");
     expect(output).toContain("╭─ ○ copilot ");
     expect(output).toContain("╭─ ○ elevenlabs ");
     expect(output).toContain("╭─ ○ higgsfield ");
@@ -1539,7 +1539,7 @@ describe("human report folding for providers that are not set up", () => {
 
       process.stdin.emit("data", Buffer.from("a"));
       await settle("a hide not set up");
-      expect(lastFrame()).toContain("  ○ not set up · 15");
+      expect(lastFrame()).toContain("  ○ not set up · 16");
       expect(lastFrame()).toContain("╭─ ○ zai ");
 
       process.stdin.emit("data", Buffer.from("q"));
