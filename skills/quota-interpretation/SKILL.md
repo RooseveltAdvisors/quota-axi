@@ -35,7 +35,7 @@ Implemented in `src/pace.ts`:
 - **Selection Signal (`effectiveAvailability[].selection`)**:
   - Computed purely from reported figures via `summarizeEffectiveSelection` in `src/pace.ts`.
   - Published field name is centralized in `SELECTION_SCALAR_KEY` in `src/types.ts`.
-  - If any bounding window lacks usable pace data, the whole scope is deemed unmeasurable (no scalar published, `unmeasurableWindowIds` listed).
+  - If any bounding window lacks usable pace data, the whole scope is deemed unmeasurable (no scalar published, `unmeasurableWindowIds` listed). A not-yet-triggered zero-use window (no `resetsAt` plus zero usage) is fully available and is excluded from the weighted mean instead of blocking; when every bounding window is untriggered the scope publishes no scalar and reports `unknown` with no `unmeasurableWindowIds`.
   - **Data only**: quota-axi never routes, recommends, or ranks winners.
 
 ---
@@ -52,7 +52,7 @@ Structured into three concise decision blocks:
 
 **Core Invariants**:
 
-- Every requested provider must appear in `quota[]` or `attention[]`.
+- Every requested provider must appear in `quota[]` or `attention[]`, except providers with positive evidence of absence, which default TOON omits and counts in a single help line; `--full` and an explicit `--provider` name them.
 - `quota[]` rows preserve provider declaration order and are **never metric-sorted**.
 - `spendPriority` renders literal `unknown`, never `0`. An unknown or stale scope receives no `quota[]` row; any finite runway is preserved in `attention[]`.
 
