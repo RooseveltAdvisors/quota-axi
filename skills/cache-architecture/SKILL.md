@@ -30,6 +30,8 @@ To prevent cross-account or cross-environment cache poisoning, providers whose i
   - **Command Code**: Winning source plus the account identity validated by `whoami`.
   - **MiniMax**: Answering credential source plus deployment host.
   - **ElevenLabs**: Credential source plus a one-way SHA-256 digest of the answering API key.
+  - **Devin**: Answering source, the first-party host it was sent to, and a one-way SHA-256 digest of the answering API key; the key never enters the cache.
+  - **Muse**: Answering source plus a one-way SHA-256 digest of the credential that answered (the Muse CLI's stored OAuth access token or an exported `META_API_KEY`); a since-refreshed token is a cache miss, never a cross-attribution between accounts.
   - **Codex**: Hashed ChatGPT account ID stored by the specific credential that produced the reading (resolving collisions between lone discovered lanes and Pi entries).
 - **Fallback Verification**: Stale cache fallback rejects legacy unstamped snapshots or snapshots whose context ID does not match the active configuration.
 - **Codex exception**: Codex stamps are optional - `readCachedCodexProvider` withholds a snapshot only on a proven mismatch against the account ids the failed reading actually tried; a sibling never probed does not vouch for it, and a transient failure is vouched for only by its own credential. An unstamped snapshot, or a reading whose tried credentials name no account, proves nothing and is still served. Contract: [README Cache](../../README.md#cache).
