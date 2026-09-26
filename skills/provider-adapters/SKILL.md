@@ -1,12 +1,12 @@
 ---
 name: provider-adapters
-description: "Detailed provider-specific auth sources, quota windows, endpoint shapes, error recovery, and unique quirks for all 17 supported providers in quota-axi."
+description: "Detailed provider-specific auth sources, quota windows, endpoint shapes, error recovery, and unique quirks for all 18 supported providers in quota-axi."
 user-invocable: false
 ---
 
 # Provider Adapters & Quirks
 
-This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for each of the 17 providers supported by quota-axi.
+This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for each of the 18 providers supported by quota-axi.
 
 ---
 
