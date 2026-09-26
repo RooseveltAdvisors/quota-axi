@@ -1,12 +1,12 @@
 ---
 name: provider-adapters
-description: "Detailed provider-specific auth sources, quota windows, endpoint shapes, error recovery, and unique quirks for all 17 supported providers in quota-axi."
+description: "Provider-specific auth sources, quota windows, endpoint shapes, error recovery, and quirks for the quota-axi providers with dedicated sections below; Devin and Muse are covered in the README provider notes."
 user-invocable: false
 ---
 
 # Provider Adapters & Quirks
 
-This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for each of the 17 providers supported by quota-axi.
+This reference details the credential sources, endpoint contracts, quota window structures, error handling, and vendor-specific quirks for the providers with dedicated sections below. Devin and Muse have no section here; their specifications live in the README provider notes.
 
 ---
 
@@ -34,7 +34,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 - **Multi-Account Lanes**:
   - `src/providers/accounts.ts` collects distinct Pi entries and the native `codex-home` lane.
   - Accounts are matched and deduplicated on the ChatGPT account ID reported by the probe/store, never on email or token strings.
-  - If a native reading matches an existing Pi lane account ID, it collapses into that lane, publishing whichever reading is fresher and retiring the `codex-home` cache snapshot.
+  - If a native reading matches an existing Pi lane account ID, it collapses into that lane, publishing whichever reading is fresher; coalescing never removes the shared `codex-home` cache slot by name, so another account's snapshot cannot be discarded. Contract: [README Multiple accounts](../../README.md#multiple-accounts).
 - **Authorization Rules**: OAuth access token is authoritative. An expired `id_token` alone must never mark `auth-json` expired or skip the bearer probe. Never send `OPENAI_API_KEY` to ChatGPT quota endpoints.
 - **Bound Conflict**: Codex model windows are metered separately as `additional_rate_limits`/`rateLimitsByLimitId`. If an inherited base weekly window reads zero while a model window retains allowance, quota-axi publishes `effectiveAvailability[].boundConflict` and reports scope `unknown` rather than asserting exhaustion.
 - **Delegated Refresh**: Codex `app-server` JSON-RPC probe acts as both CLI fallback and delegated refresh.
@@ -102,7 +102,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 ## 7. Z.AI GLM (`zai`)
 
 - **Credential Sources**: Pi `auth.json` `zai` `api_key` first (source `pi:zai`), then opencode `auth.json` (`zai-coding-plan` or alias).
-- **Endpoint**: Single GET to `/api/monitor/usage/quota/limit` with the key passed bare (no `Bearer`).
+- **Endpoint**: Single GET to `/api/monitor/usage/quota/limit` with the key in a Bearer `Authorization` header.
 - **Window Decoding**: Tolerant schema mapping using magic numbers:
   - `TOKENS_LIMIT` / `CREDIT_LIMIT`: `unit: 3, number: 5` -> `five_hour`; `unit: 6, number: 1` -> `weekly`.
   - `TIME_LIMIT` -> `mcp_month`.
@@ -114,7 +114,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 ## 8. OpenCode Go (`opencode-go`)
 
 - **Quota Semantics**: Rolling 5-hour ($12), weekly ($30), and monthly ($60) stacked plan caps jointly bind `all_models`. Requests are blocked when any cap is hit.
-- **Limitations**: The endpoint provides no cycle duration (pace, runway, and selection remain unknown) and no Zen balance. An exhausted plan window with balance fallback reports plan-exhausted with fallback named in prose.
+- **Limitations**: The endpoint supplies no cycle duration of its own, so plan-declared cycle lengths fill in when the payload carries none (a payload-supplied duration still wins) and pace, runway, and selection are measurable. The endpoint provides no Zen balance. An exhausted plan window with balance fallback reports plan-exhausted with fallback named in prose.
 - **Sources**: `defaultOpenCodeGoCredentialSources` (supports opt-in Pi auth). Read-only; no refresh delegate.
 
 ---
