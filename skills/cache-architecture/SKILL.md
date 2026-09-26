@@ -46,8 +46,8 @@ The following fields and statuses are **never cached**:
 - **Failed reads**: Any provider report with `state.status: "failed"` is never written to cache.
 - **Stale reads**: Stale data is never re-persisted as fresh.
 - **Account identities**: Explicit `account` objects are scrubbed before writing.
-- **Source attempts**: `state.sourceAttempts` and attempt diagnostic logs are excluded.
-- **Derived pace & runway**: `pace`, `runwaySeconds`, and selection signals are dynamic derivations computed from `generatedAt` vs current time. They must never be frozen into cache.
+- **Source attempts**: The report's `attempts` list and attempt diagnostic logs are excluded.
+- **Derived pace & runway**: `pace`, `runway`, and selection signals are dynamic derivations computed from `generatedAt` vs current time. They must never be frozen into cache.
 
 ---
 

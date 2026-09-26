@@ -34,7 +34,7 @@ This reference details the credential sources, endpoint contracts, quota window 
 - **Multi-Account Lanes**:
   - `src/providers/accounts.ts` collects distinct Pi entries and the native `codex-home` lane.
   - Accounts are matched and deduplicated on the ChatGPT account ID reported by the probe/store, never on email or token strings.
-  - If a native reading matches an existing Pi lane account ID, it collapses into that lane, publishing whichever reading is fresher and retiring the `codex-home` cache snapshot.
+  - If a native reading matches an existing Pi lane account ID, it collapses into that lane, publishing whichever reading is fresher; coalescing never removes the shared `codex-home` cache slot by name, so another account's snapshot cannot be discarded. Contract: [README Multiple accounts](../../README.md#multiple-accounts).
 - **Authorization Rules**: OAuth access token is authoritative. An expired `id_token` alone must never mark `auth-json` expired or skip the bearer probe. Never send `OPENAI_API_KEY` to ChatGPT quota endpoints.
 - **Bound Conflict**: Codex model windows are metered separately as `additional_rate_limits`/`rateLimitsByLimitId`. If an inherited base weekly window reads zero while a model window retains allowance, quota-axi publishes `effectiveAvailability[].boundConflict` and reports scope `unknown` rather than asserting exhaustion.
 - **Delegated Refresh**: Codex `app-server` JSON-RPC probe acts as both CLI fallback and delegated refresh.
