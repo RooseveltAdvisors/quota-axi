@@ -226,14 +226,9 @@ export function normalizeHiggsfieldQuota(input: {
 
   const plan = stringValue(root.subscription_plan_type);
   const remaining = finiteNumber(root.credits);
-  const allowance = subscriptionGrantAllowance(input.transactions);
+  const allowance = subscriptionGrantAllowance(input.transactions, remaining);
   const windows: QuotaWindow[] = [];
-  if (
-    remaining !== undefined &&
-    allowance &&
-    allowance.limit > 0 &&
-    remaining <= allowance.limit
-  ) {
+  if (remaining !== undefined && allowance) {
     const used = allowance.limit - remaining;
     windows.push({
       id: CREDITS_WINDOW_ID,
@@ -241,7 +236,7 @@ export function normalizeHiggsfieldQuota(input: {
       kind: "credits",
       percentUsed: clampPercentage((used / allowance.limit) * 100),
       percentRemaining: clampPercentage((remaining / allowance.limit) * 100),
-      ...(allowance.startsAt ? { startsAt: allowance.startsAt } : {}),
+      startsAt: allowance.startsAt,
     });
   }
 
@@ -272,23 +267,41 @@ export function isHiggsfieldStatusPayload(raw: unknown): boolean {
 
 function subscriptionGrantAllowance(
   raw: unknown,
-): { limit: number; startsAt?: string } | undefined {
+  remaining: number | undefined,
+): { limit: number; startsAt: string } | undefined {
+  if (remaining === undefined) return undefined;
   const items = transactionItems(raw);
   if (!items) return undefined;
 
-  let allowance: { limit: number; startsAt?: string } | undefined;
+  let matched: { limit: number; at: number; startsAt: string } | undefined;
   for (const item of items) {
     const limit = finiteNumber(item.credits);
-    if (limit === undefined || limit <= 0) continue;
-    if (allowance) return undefined;
+    if (limit === undefined) return undefined;
+    if (limit <= 0) continue;
+    if (matched) return undefined;
     if (stringValue(item.action) !== "grant") return undefined;
     if (normalizeName(item.display_name) !== SUBSCRIPTION_GRANT_NAME) {
       return undefined;
     }
     const startsAt = parseTimestamp(item.created_at);
-    allowance = { limit, ...(startsAt ? { startsAt } : {}) };
+    if (startsAt === undefined) return undefined;
+    matched = { limit, at: Date.parse(startsAt), startsAt };
   }
-  return allowance;
+  if (!matched) return undefined;
+
+  let expected = matched.limit;
+  for (const item of items) {
+    const credits = finiteNumber(item.credits);
+    if (credits === undefined) return undefined;
+    const at = parseTimestamp(item.created_at);
+    if (at === undefined) return undefined;
+    if (Date.parse(at) > matched.at) {
+      expected += credits;
+    }
+  }
+  return remaining === expected
+    ? { limit: matched.limit, startsAt: matched.startsAt }
+    : undefined;
 }
 
 function normalizeHiggsfieldJobs(

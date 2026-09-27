@@ -145,6 +145,7 @@ describe("Higgsfield CLI quota provider", () => {
           items: [
             {
               action: "grant",
+              created_at: "2026-08-25T12:23:04.620Z",
               credits: 100,
               display_name: "Subscription Credits",
             },
@@ -205,6 +206,69 @@ describe("Higgsfield CLI quota provider", () => {
         },
       }).windows,
     ).toEqual([]);
+  });
+
+  it("omits the credits window when the balance carries residue the page cannot explain", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 5900, subscription_plan_type: "ultra" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-01T00:00:00.000Z",
+              credits: -4100,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-08-25T12:23:04.620Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([]);
+  });
+
+  it("reconciles the balance against only the entries newer than the grant", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 5950, subscription_plan_type: "ultra" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -50,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-08-25T12:23:04.620Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+            {
+              action: "spend",
+              created_at: "2026-07-10T00:00:00.000Z",
+              credits: -300,
+              display_name: "Example Image Model",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+        percentUsed: (50 / 6000) * 100,
+        percentRemaining: (5950 / 6000) * 100,
+        startsAt: "2026-08-25T12:23:04.620Z",
+      },
+    ]);
   });
 
   it("does not hardcode an Ultra 6000 cap from the plan name", () => {
