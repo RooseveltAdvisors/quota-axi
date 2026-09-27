@@ -352,7 +352,7 @@ function isTransactionsPayload(raw: unknown): boolean {
     (item) =>
       stringValue(item.action) !== undefined &&
       stringValue(item.display_name) !== undefined &&
-      stringValue(item.created_at) !== undefined &&
+      parseTimestamp(item.created_at) !== undefined &&
       finiteNumber(item.credits) !== undefined,
   );
 }

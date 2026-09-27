@@ -504,6 +504,39 @@ describe("Higgsfield CLI quota provider", () => {
     ]);
   });
 
+  it("names a transactions payload whose created_at is not a parseable date", async () => {
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        if (args[0] === "account" && args[1] === "transactions") {
+          return readFixture("transactions-bad-date.json");
+        }
+        return readFixture("jobs.json");
+      },
+    }).fetchQuota(OPTIONS);
+
+    expect(report.windows).toEqual([]);
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      {
+        source: "higgsfield-transactions",
+        status: "failed",
+        error: "higgsfield_transactions_malformed_json",
+      },
+      { source: "higgsfield-jobs", status: "success" },
+    ]);
+    const withSemantics = withQuotaSemantics(report, GENERATED_AT);
+    expect(withSemantics.state.degradedSources).toEqual([
+      {
+        source: "higgsfield-transactions",
+        error: "higgsfield_transactions_malformed_json",
+      },
+    ]);
+  });
+
   it("names a jobs payload with an unrecognized container", async () => {
     const report = await createHiggsfieldAdapter({
       findCommandPath: async () => "/mock/higgsfield",
