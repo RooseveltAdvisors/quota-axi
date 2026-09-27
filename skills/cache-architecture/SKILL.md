@@ -49,7 +49,7 @@ The following fields and statuses are **never cached**:
 - **Source attempts**: The report's `attempts` list and attempt diagnostic logs are excluded.
 - **Derived pace & runway**: `pace`, `runway`, and selection signals are dynamic derivations computed from `generatedAt` vs current time. They must never be frozen into cache.
 
-PHI-safe job counts (`jobs.sampled` / `completed` / `failed` / `other`) are stored and restored with the snapshot the same way `credits` is, so `--max-age` reuse keeps the optional jobs rollup. A snapshot that never carried jobs stays without them; prompts, URLs, ids, and account identity never enter the cache.
+PHI-safe job counts (`jobs.sampled` / `completed` / `failed` / `other`) are stored with the snapshot the same way `credits` is. A snapshot that never carried jobs stays without them; prompts, URLs, ids, and account identity never enter the cache. Higgsfield is excluded from `--max-age` fresh reuse (`excludeFromFreshReuse`), matching Muse: a CLI login switch is not a traced file, and the status payload has no stable non-email account discriminator.
 
 ---
 

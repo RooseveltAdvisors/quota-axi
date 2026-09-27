@@ -362,51 +362,59 @@ describe("quota cache", () => {
     });
   });
 
-  it("restores Higgsfield jobs alongside credits on --max-age reuse", () => {
+  it("does not serve Higgsfield through --max-age, including after a login switch", () => {
     useTempCache();
     const jobs = { sampled: 4, completed: 2, failed: 1, other: 1 };
     const snapshot = higgsfieldQuota(jobs);
     stampReadingInputs(snapshot, tracedInputs());
     writeCachedProviders([snapshot], snapshot.state.refreshedAt);
 
-    const reused = readReusableProviders(
-      "higgsfield",
-      90,
-      Date.parse("2026-07-06T18:10:30Z"),
-    );
-    expect(reused).toHaveLength(1);
-    expect(reused?.[0].credits).toEqual({
+    expect(
+      readReusableProviders(
+        "higgsfield",
+        90,
+        Date.parse("2026-07-06T18:10:30Z"),
+      ),
+    ).toBeUndefined();
+    expect(readCachedProvider("higgsfield")?.jobs).toEqual(jobs);
+    expect(readCachedProvider("higgsfield")?.credits).toEqual({
       remaining: 5999.8,
       unit: "credits",
     });
-    expect(reused?.[0].jobs).toEqual(jobs);
-    expect(Object.keys(reused![0].jobs!)).toEqual([
-      "sampled",
-      "completed",
-      "failed",
-      "other",
-    ]);
-    expect(reused?.[0].state.reused).toBe(true);
   });
 
-  it("keeps Higgsfield jobs absent on reuse when the snapshot carried none", () => {
+  it("still reuses a non-Higgsfield CLI snapshot through --max-age", () => {
     useTempCache();
-    const snapshot = higgsfieldQuota();
-    stampReadingInputs(snapshot, tracedInputs());
-    writeCachedProviders([snapshot], snapshot.state.refreshedAt);
+    const alibaba = {
+      ...quota("alibaba", 18),
+      source: "cli" as const,
+    };
+    stampReadingInputs(alibaba, tracedInputs());
+    writeCachedProviders([alibaba], alibaba.state.refreshedAt);
 
     const reused = readReusableProviders(
-      "higgsfield",
+      "alibaba",
       90,
       Date.parse("2026-07-06T18:10:30Z"),
     );
     expect(reused).toHaveLength(1);
-    expect(reused?.[0].credits).toEqual({
+    expect(reused?.[0]).toMatchObject({
+      provider: "alibaba",
+      source: "cli",
+      windows: [{ percentUsed: 18 }],
+      state: { reused: true },
+    });
+  });
+
+  it("keeps Higgsfield jobs absent on a stale cache read when the snapshot carried none", () => {
+    useTempCache();
+    writeCachedProviders([higgsfieldQuota()]);
+
+    expect(readCachedProvider("higgsfield")?.jobs).toBeUndefined();
+    expect(readCachedProvider("higgsfield")?.credits).toEqual({
       remaining: 5999.8,
       unit: "credits",
     });
-    expect(reused?.[0].jobs).toBeUndefined();
-    expect(reused?.[0].state.reused).toBe(true);
   });
 
   it("does not invent Higgsfield jobs from a partial cached rollup", () => {

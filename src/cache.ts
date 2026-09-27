@@ -586,7 +586,11 @@ function isCacheExcluded(provider: ProviderQuota): boolean {
 }
 
 function excludeFromFreshReuse(provider: ProviderId): boolean {
-  return provider === "muse";
+  // Muse Keychain and Higgsfield CLI logins are not traced files, and the
+  // Higgsfield status payload we already fetch has no stable non-email
+  // account discriminator, so --max-age must never serve another seat's
+  // credits or jobs as fresh.
+  return provider === "muse" || provider === "higgsfield";
 }
 
 function cacheIdentity(provider: ProviderQuota): string {
