@@ -18,10 +18,13 @@ import {
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
+  readReusableProviders,
   retireCodexAccount,
+  stampReadingInputs,
   writeCachedProviders,
   stampCodexStoredAccountId,
 } from "../src/cache.js";
+import { inputsDigest } from "../src/lib/input-trace.js";
 import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
 import {
@@ -357,6 +360,102 @@ describe("quota cache", () => {
       source: "cli",
       windows: [{ percentUsed: 18 }],
     });
+  });
+
+  it("restores Higgsfield jobs alongside credits on --max-age reuse", () => {
+    useTempCache();
+    const jobs = { sampled: 4, completed: 2, failed: 1, other: 1 };
+    const snapshot = higgsfieldQuota(jobs);
+    stampReadingInputs(snapshot, tracedInputs());
+    writeCachedProviders([snapshot], snapshot.state.refreshedAt);
+
+    const reused = readReusableProviders(
+      "higgsfield",
+      90,
+      Date.parse("2026-07-06T18:10:30Z"),
+    );
+    expect(reused).toHaveLength(1);
+    expect(reused?.[0].credits).toEqual({
+      remaining: 5999.8,
+      unit: "credits",
+    });
+    expect(reused?.[0].jobs).toEqual(jobs);
+    expect(Object.keys(reused![0].jobs!)).toEqual([
+      "sampled",
+      "completed",
+      "failed",
+      "other",
+    ]);
+    expect(reused?.[0].state.reused).toBe(true);
+  });
+
+  it("keeps Higgsfield jobs absent on reuse when the snapshot carried none", () => {
+    useTempCache();
+    const snapshot = higgsfieldQuota();
+    stampReadingInputs(snapshot, tracedInputs());
+    writeCachedProviders([snapshot], snapshot.state.refreshedAt);
+
+    const reused = readReusableProviders(
+      "higgsfield",
+      90,
+      Date.parse("2026-07-06T18:10:30Z"),
+    );
+    expect(reused).toHaveLength(1);
+    expect(reused?.[0].credits).toEqual({
+      remaining: 5999.8,
+      unit: "credits",
+    });
+    expect(reused?.[0].jobs).toBeUndefined();
+    expect(reused?.[0].state.reused).toBe(true);
+  });
+
+  it("does not invent Higgsfield jobs from a partial cached rollup", () => {
+    useTempCache();
+    writeCachedProviders([
+      {
+        ...higgsfieldQuota(),
+        jobs: { sampled: 4 } as ProviderQuota["jobs"],
+      },
+    ]);
+
+    expect(readCachedProvider("higgsfield")?.jobs).toBeUndefined();
+    expect(readCachedProvider("higgsfield")?.credits).toEqual({
+      remaining: 5999.8,
+      unit: "credits",
+    });
+  });
+
+  it("strips Higgsfield job identity fields before they reach the cache file", () => {
+    useTempCache();
+    writeCachedProviders([
+      {
+        ...higgsfieldQuota({
+          sampled: 4,
+          completed: 2,
+          failed: 1,
+          other: 1,
+        }),
+        jobs: {
+          sampled: 4,
+          completed: 2,
+          failed: 1,
+          other: 1,
+          prompt: "secret prompt",
+          id: "job-1",
+        } as ProviderQuota["jobs"],
+      },
+    ]);
+
+    const cached = readCachedProvider("higgsfield");
+    expect(cached?.jobs).toEqual({
+      sampled: 4,
+      completed: 2,
+      failed: 1,
+      other: 1,
+    });
+    const raw = readFileSync(cacheFilePath(), "utf8");
+    expect(raw).not.toContain("secret prompt");
+    expect(raw).not.toContain("job-1");
   });
 
   it("never writes a Copilot native snapshot over a servable legacy one", () => {
@@ -936,6 +1035,42 @@ function quotaWithoutWindows(provider: ProviderId): ProviderQuota {
     ...quota(provider, 0),
     windows: [],
   };
+}
+
+function higgsfieldQuota(jobs?: ProviderQuota["jobs"]): ProviderQuota {
+  return {
+    provider: "higgsfield",
+    label: "Higgsfield",
+    source: "cli",
+    plan: "ultra",
+    windows: [
+      {
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+        percentUsed: 0.2,
+        percentRemaining: 99.8,
+      },
+    ],
+    credits: { remaining: 5999.8, unit: "credits" },
+    ...(jobs ? { jobs } : {}),
+    state: {
+      status: "fresh",
+      stale: false,
+      refreshedAt: "2026-07-06T18:10:00Z",
+      sourcesTried: [
+        "higgsfield-cli",
+        "higgsfield-transactions",
+        "higgsfield-jobs",
+      ],
+    },
+  };
+}
+
+function tracedInputs() {
+  const path = join(tempDir as string, "traced-input");
+  writeFileSync(path, "");
+  return { paths: [path], digest: inputsDigest([path]) };
 }
 
 function providerLabel(provider: ProviderId): string {

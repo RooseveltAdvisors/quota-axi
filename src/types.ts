@@ -317,7 +317,8 @@ export type ProviderQuota = {
   };
   /**
    * PHI-safe job-outcome sample from a vendor list command. Counts only;
-   * never prompts, URLs, ids, or account identity. Not cached.
+   * never prompts, URLs, ids, or account identity. Restored on cache reuse
+   * the same way `credits` is; absent when the snapshot carried none.
    */
   jobs?: {
     sampled: number;

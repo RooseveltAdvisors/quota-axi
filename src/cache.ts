@@ -705,6 +705,7 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
       plan: provider.plan,
       windows: provider.windows,
       credits: provider.credits,
+      jobs: provider.jobs,
       state: {
         status: provider.state.status,
         stale: false,
@@ -862,11 +863,13 @@ function normalizeCachedProvider(
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
   const credits = normalizeCachedCredits(data.credits);
+  const jobs = normalizeCachedJobs(data.jobs);
   if (plan) snapshot.plan = plan;
   if (refreshedAt) snapshot.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds)
     snapshot.state.untrustedWindowIds = untrustedWindowIds;
   if (credits) snapshot.credits = credits;
+  if (jobs) snapshot.jobs = jobs;
   const credentialContext = stringValue(data.credentialContext);
   const reuse = normalizeReuseStamp(data.reuse);
   return {
@@ -1060,6 +1063,28 @@ function normalizeCachedCredits(
     unlimited,
     unit,
   };
+}
+
+function normalizeCachedJobs(raw: unknown): ProviderQuota["jobs"] | undefined {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const sampled = numberValue(data.sampled);
+  const completed = numberValue(data.completed);
+  const failed = numberValue(data.failed);
+  const other = numberValue(data.other);
+  if (
+    sampled === undefined ||
+    completed === undefined ||
+    failed === undefined ||
+    other === undefined ||
+    sampled < 0 ||
+    completed < 0 ||
+    failed < 0 ||
+    other < 0 ||
+    sampled !== completed + failed + other
+  )
+    return undefined;
+  return { sampled, completed, failed, other };
 }
 
 function assignNumber<T extends object, K extends keyof T>(
