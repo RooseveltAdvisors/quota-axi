@@ -341,7 +341,7 @@ function higgsfieldSemantics(
 ): QuotaSemantics {
   const credits = windows.filter(({ id }) => id === "credits");
   const description =
-    "Higgsfield's credits window is the subscription plan's included generation-credit allowance when a subscription grant supplies that cap, so it bounds the included_credits scope only. It is not a model lane, and extra purchases can add credits, so a zeroed window means the included allowance is spent, not that every request is refused. Pace, runway, and selection stay unknown until the vendor reports a reset.";
+    "Higgsfield's credits window is the subscription plan's included generation-credit allowance, bounding the included_credits scope only and never a model lane, and it publishes only when the first transactions page's sole positive-credit Subscription Credits grant reconciles with the reported balance (that grant plus the on-page entries newer than it), so a zeroed published window means zero balance; pace, runway, and selection stay unknown until the vendor reports a reset.";
   return knownSemantics(
     credits.length > 0
       ? [availability("included_credits", credits, generatedAt)]
