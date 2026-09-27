@@ -154,6 +154,59 @@ describe("Higgsfield CLI quota provider", () => {
     ).toEqual([]);
   });
 
+  it("omits the credits window when the first page shows other credit inflows", async () => {
+    const argsFile = join(tempDir, "args");
+    installMockHiggsfield(argsFile, {
+      status: JSON.stringify({
+        credits: 3500,
+        subscription_plan_type: "ultra",
+      }),
+      transactions: readFixture("transactions-grant-purchase.json"),
+    });
+    process.env.PATH = tempDir;
+
+    const report = await createHiggsfieldAdapter().fetchQuota(OPTIONS);
+
+    expect(report.credits).toEqual({ remaining: 3500, unit: "credits" });
+    expect(report.windows).toEqual([]);
+    expect(report.state.status).toBe("fresh");
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      { source: "higgsfield-transactions", status: "success" },
+      { source: "higgsfield-jobs", status: "success" },
+    ]);
+  });
+
+  it("omits the credits window when a previous cycle grant is also on the page", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 3000, subscription_plan_type: "ultra" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -100,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-09-01T00:00:00.000Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+            {
+              action: "grant",
+              created_at: "2026-08-01T00:00:00.000Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([]);
+  });
+
   it("does not hardcode an Ultra 6000 cap from the plan name", () => {
     expect(
       normalizeHiggsfieldQuota({
@@ -310,6 +363,123 @@ describe("Higgsfield CLI quota provider", () => {
     }).fetchQuota(OPTIONS);
 
     expect(report.state.status).toBe("fresh");
+    expect(report.jobs).toBeUndefined();
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      { source: "higgsfield-transactions", status: "success" },
+      {
+        source: "higgsfield-jobs",
+        status: "failed",
+        error: "higgsfield_jobs_malformed_json",
+      },
+    ]);
+  });
+
+  it("names a transactions payload with an unrecognized container", async () => {
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        if (args[0] === "account" && args[1] === "transactions") {
+          const page = JSON.parse(readFixture("transactions.json")) as {
+            items: unknown[];
+          };
+          return JSON.stringify({ transactions: page.items });
+        }
+        return readFixture("jobs.json");
+      },
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state.status).toBe("fresh");
+    expect(report.windows).toEqual([]);
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      {
+        source: "higgsfield-transactions",
+        status: "failed",
+        error: "higgsfield_transactions_malformed_json",
+      },
+      { source: "higgsfield-jobs", status: "success" },
+    ]);
+    const withSemantics = withQuotaSemantics(report, GENERATED_AT);
+    expect(withSemantics.state.degradedSources).toEqual([
+      {
+        source: "higgsfield-transactions",
+        error: "higgsfield_transactions_malformed_json",
+      },
+    ]);
+  });
+
+  it("names a transactions payload whose entries lost the grant fields", async () => {
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        if (args[0] === "account" && args[1] === "transactions") {
+          return JSON.stringify({
+            items: [{ action: "grant", credits: 6000 }],
+          });
+        }
+        return readFixture("jobs.json");
+      },
+    }).fetchQuota(OPTIONS);
+
+    expect(report.windows).toEqual([]);
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      {
+        source: "higgsfield-transactions",
+        status: "failed",
+        error: "higgsfield_transactions_malformed_json",
+      },
+      { source: "higgsfield-jobs", status: "success" },
+    ]);
+  });
+
+  it("names a jobs payload with an unrecognized container", async () => {
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        if (args[0] === "account" && args[1] === "transactions") {
+          return readFixture("transactions.json");
+        }
+        return JSON.stringify({ records: [{ status: "completed" }] });
+      },
+    }).fetchQuota(OPTIONS);
+
+    expect(report.jobs).toBeUndefined();
+    expect(report.attempts).toEqual([
+      { source: "higgsfield-cli", status: "success" },
+      { source: "higgsfield-transactions", status: "success" },
+      {
+        source: "higgsfield-jobs",
+        status: "failed",
+        error: "higgsfield_jobs_malformed_json",
+      },
+    ]);
+  });
+
+  it("names a jobs payload whose records lost the status field", async () => {
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        if (args[0] === "account" && args[1] === "transactions") {
+          return readFixture("transactions.json");
+        }
+        return JSON.stringify([{ state: "completed" }, { state: "failed" }]);
+      },
+    }).fetchQuota(OPTIONS);
+
     expect(report.jobs).toBeUndefined();
     expect(report.attempts).toEqual([
       { source: "higgsfield-cli", status: "success" },

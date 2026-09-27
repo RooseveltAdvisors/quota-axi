@@ -121,12 +121,14 @@ async function fetchQuotaWithDependencies(
         commandPath,
         TRANSACTIONS_ARGS,
         "higgsfield_transactions",
+        isTransactionsPayload,
       ),
       readOptionalCommand(
         dependencies,
         commandPath,
         JOBS_ARGS,
         "higgsfield_jobs",
+        isJobsPayload,
       ),
     ]);
     attempts.push(
@@ -274,24 +276,19 @@ function subscriptionGrantAllowance(
   const items = transactionItems(raw);
   if (!items) return undefined;
 
-  let latest: { limit: number; at: number; startsAt?: string } | undefined;
+  let allowance: { limit: number; startsAt?: string } | undefined;
   for (const item of items) {
-    if (stringValue(item.action) !== "grant") continue;
-    if (normalizeName(item.display_name) !== SUBSCRIPTION_GRANT_NAME) continue;
     const limit = finiteNumber(item.credits);
     if (limit === undefined || limit <= 0) continue;
-    const startsAt = parseTimestamp(item.created_at);
-    const at = startsAt ? Date.parse(startsAt) : Number.NEGATIVE_INFINITY;
-    if (!latest || at >= latest.at) {
-      latest = { limit, at, ...(startsAt ? { startsAt } : {}) };
+    if (allowance) return undefined;
+    if (stringValue(item.action) !== "grant") return undefined;
+    if (normalizeName(item.display_name) !== SUBSCRIPTION_GRANT_NAME) {
+      return undefined;
     }
+    const startsAt = parseTimestamp(item.created_at);
+    allowance = { limit, ...(startsAt ? { startsAt } : {}) };
   }
-  return latest
-    ? {
-        limit: latest.limit,
-        ...(latest.startsAt ? { startsAt: latest.startsAt } : {}),
-      }
-    : undefined;
+  return allowance;
 }
 
 function normalizeHiggsfieldJobs(
@@ -335,6 +332,24 @@ function jobRecords(raw: unknown): Record<string, unknown>[] | undefined {
   return undefined;
 }
 
+function isTransactionsPayload(raw: unknown): boolean {
+  const items = transactionItems(raw);
+  if (!items) return false;
+  return items.every(
+    (item) =>
+      stringValue(item.action) !== undefined &&
+      stringValue(item.display_name) !== undefined &&
+      stringValue(item.created_at) !== undefined &&
+      finiteNumber(item.credits) !== undefined,
+  );
+}
+
+function isJobsPayload(raw: unknown): boolean {
+  const records = jobRecords(raw);
+  if (!records) return false;
+  return records.every((record) => stringValue(record.status) !== undefined);
+}
+
 function objectList(value: unknown[]): Record<string, unknown>[] | undefined {
   const items: Record<string, unknown>[] = [];
   for (const entry of value) {
@@ -356,13 +371,15 @@ async function readOptionalCommand(
   commandPath: string,
   args: readonly string[],
   failurePrefix: string,
+  validate: (raw: unknown) => boolean,
 ): Promise<OptionalCommandOutcome> {
   try {
-    return {
-      output: parseJson(
-        await dependencies.execFileText(commandPath, [...args], CLI_TIMEOUT_MS),
-      ),
-    };
+    const output = parseJson(
+      await dependencies.execFileText(commandPath, [...args], CLI_TIMEOUT_MS),
+    );
+    return validate(output)
+      ? { output }
+      : { error: `${failurePrefix}_malformed_json` };
   } catch (error) {
     if (error instanceof SyntaxError) {
       return { error: `${failurePrefix}_malformed_json` };
