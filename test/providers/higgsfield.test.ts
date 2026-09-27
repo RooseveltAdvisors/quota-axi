@@ -850,6 +850,66 @@ describe("Higgsfield CLI quota provider", () => {
       "higgsfield,all,jobs,sampled 20 · completed 20 · failed 0 · other 0,none",
     );
   });
+
+  it("keeps runway unknown for the resetless credits window while headroom publishes", () => {
+    const interpret = (percentRemaining: number, percentUsed: number) =>
+      withQuotaSemantics(
+        {
+          provider: "higgsfield",
+          label: "Higgsfield",
+          source: "cli",
+          plan: "ultra",
+          windows: [
+            {
+              id: "credits",
+              label: "credits",
+              kind: "credits",
+              percentUsed,
+              percentRemaining,
+              startsAt: "2026-08-25T12:23:04.620Z",
+            },
+          ],
+          credits: {
+            remaining: (percentRemaining / 100) * 6000,
+            unit: "credits",
+          },
+          state: {
+            status: "fresh",
+            stale: false,
+            authStatus: "usable",
+            sourcesTried: ["higgsfield-cli"],
+          },
+        } satisfies ProviderQuota,
+        GENERATED_AT,
+      );
+
+    expect(
+      interpret(100, 0).quotaSemantics?.effectiveAvailability?.[0],
+    ).toMatchObject({
+      status: "known",
+      effectivePercentRemaining: 100,
+      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+    });
+
+    const empty = interpret(0, 100);
+    expect(empty.quotaSemantics?.effectiveAvailability?.[0]).toMatchObject({
+      status: "known",
+      effectivePercentRemaining: 0,
+      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+    });
+
+    const toon = renderQuotaToon(
+      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [empty] },
+      "quota-axi",
+      false,
+    );
+    expect(toon).toContain(
+      "higgsfield,included_credits,0,unknown,unknown,unknown,credits,unknown",
+    );
+    expect(toon).toContain(
+      "higgsfield,included_credits,unmeasurable,credits blocks runway + spendPriority,none",
+    );
+  });
 });
 
 function readFixture(name: string): string {

@@ -108,10 +108,19 @@ export function computeEffectiveRunway(
   windows: QuotaWindow[],
   generatedAt: string,
 ): EffectiveRunway {
+  const generatedAtMs = Date.parse(generatedAt);
+
+  if (
+    windows.every(
+      (window) => resolveResetsAtOutcome(window.resetsAt).kind === "missing",
+    )
+  ) {
+    return unknownRunway(windows);
+  }
+
   const exhausted = windows.find(
     (window) => finiteNumber(window.percentRemaining) === 0,
   );
-  const generatedAtMs = Date.parse(generatedAt);
 
   if (exhausted) {
     return {
@@ -124,7 +133,7 @@ export function computeEffectiveRunway(
     };
   }
 
-  if (windows.length === 0 || !isRepresentableDateMs(generatedAtMs)) {
+  if (!isRepresentableDateMs(generatedAtMs)) {
     return unknownRunway(windows);
   }
 
