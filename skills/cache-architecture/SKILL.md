@@ -47,6 +47,7 @@ The following fields and statuses are **never cached**:
 - **Stale reads**: Stale data is never re-persisted as fresh.
 - **Account identities**: Explicit `account` objects are scrubbed before writing.
 - **Source attempts**: The report's `attempts` list and attempt diagnostic logs are excluded.
+- **Job counts**: A provider's auxiliary job rollup (`jobs.*`, e.g. Higgsfield's `generate list` counts) never enters the cached snapshot.
 - **Derived pace & runway**: `pace`, `runway`, and selection signals are dynamic derivations computed from `generatedAt` vs current time. They must never be frozen into cache.
 
 ---

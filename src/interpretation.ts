@@ -329,9 +329,11 @@ function elevenLabsSemantics(
 
 /**
  * Higgsfield meters plan generation credits, not a coding-agent model lane.
- * The credits window is only published when a subscription grant supplies the
- * cap, so it bounds `included_credits` rather than `all_models`. Pace stays
- * unknown until the vendor reports a reset.
+ * The credits window is only published when the first transactions page's sole
+ * subscription-credit grant reconciles with the reported balance (that grant
+ * plus the on-page entries newer than it), so it bounds `included_credits`
+ * rather than `all_models`. Pace stays unknown until the vendor reports a
+ * reset.
  */
 function higgsfieldSemantics(
   windows: QuotaWindow[],
