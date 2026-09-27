@@ -28,6 +28,8 @@ const CLI_TIMEOUT_MS = 15_000;
 const LABEL = "Higgsfield";
 const CREDITS_WINDOW_ID = "credits";
 const SUBSCRIPTION_GRANT_NAME = "subscription credits";
+/** Slack for remaining vs grant plus newer on-page entries. Below a 0.01-credit contradiction; above IEEE noise from summing the first page. */
+const CREDITS_RECONCILE_EPS = 1e-6;
 
 const COMPLETED_JOB_STATUSES = new Set([
   "completed",
@@ -299,9 +301,13 @@ function subscriptionGrantAllowance(
       expected += credits;
     }
   }
-  return remaining === expected
+  return creditsReconcile(remaining, expected)
     ? { limit: matched.limit, startsAt: matched.startsAt }
     : undefined;
+}
+
+function creditsReconcile(remaining: number, expected: number): boolean {
+  return Math.abs(remaining - expected) <= CREDITS_RECONCILE_EPS;
 }
 
 function normalizeHiggsfieldJobs(

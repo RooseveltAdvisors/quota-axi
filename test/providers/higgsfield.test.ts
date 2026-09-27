@@ -271,6 +271,75 @@ describe("Higgsfield CLI quota provider", () => {
     ]);
   });
 
+  it("publishes a credits window when remaining matches grant plus newer entries within float slack", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 5999.8, subscription_plan_type: "ultra" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-21T00:00:00.000Z",
+              credits: -0.1,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -0.1,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-08-25T12:23:04.620Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+        percentUsed: ((6000 - 5999.8) / 6000) * 100,
+        percentRemaining: (5999.8 / 6000) * 100,
+        startsAt: "2026-08-25T12:23:04.620Z",
+      },
+    ]);
+  });
+
+  it("still omits the window when remaining disagrees with grant plus newer entries by a real credit gap", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 5999.7, subscription_plan_type: "ultra" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-21T00:00:00.000Z",
+              credits: -0.1,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -0.1,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-08-25T12:23:04.620Z",
+              credits: 6000,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([]);
+  });
+
   it("does not hardcode an Ultra 6000 cap from the plan name", () => {
     expect(
       normalizeHiggsfieldQuota({
