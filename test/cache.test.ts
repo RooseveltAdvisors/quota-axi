@@ -417,7 +417,7 @@ describe("quota cache", () => {
     });
   });
 
-  it("does not invent Higgsfield jobs from a partial cached rollup", () => {
+  it("rejects a Higgsfield record whose cached jobs rollup is malformed", () => {
     useTempCache();
     writeCachedProviders([
       {
@@ -426,11 +426,22 @@ describe("quota cache", () => {
       },
     ]);
 
-    expect(readCachedProvider("higgsfield")?.jobs).toBeUndefined();
-    expect(readCachedProvider("higgsfield")?.credits).toEqual({
-      remaining: 5999.8,
-      unit: "credits",
-    });
+    expect(readCachedProvider("higgsfield")).toBeUndefined();
+
+    writeCachedProviders([higgsfieldQuota()]);
+    const file = cacheFilePath();
+    const cached = JSON.parse(readFileSync(file, "utf8")) as {
+      providers: Array<{ provider: string; jobs?: unknown }>;
+    };
+    cached.providers.find((entry) => entry.provider === "higgsfield")!.jobs = {
+      sampled: 4,
+      completed: 9,
+      failed: 0,
+      other: 0,
+    };
+    writeFileSync(file, JSON.stringify(cached));
+
+    expect(readCachedProvider("higgsfield")).toBeUndefined();
   });
 
   it("strips Higgsfield job identity fields before they reach the cache file", () => {

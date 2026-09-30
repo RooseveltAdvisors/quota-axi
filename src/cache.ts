@@ -868,6 +868,7 @@ function normalizeCachedProvider(
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
   const credits = normalizeCachedCredits(data.credits);
   const jobs = normalizeCachedJobs(data.jobs);
+  if (data.jobs !== undefined && !jobs) return undefined;
   if (plan) snapshot.plan = plan;
   if (refreshedAt) snapshot.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds)
