@@ -310,6 +310,63 @@ describe("Higgsfield CLI quota provider", () => {
     ]);
   });
 
+  it("publishes a credits window for a fractional grant/remaining pair at vendor credit precision", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 67.17, subscription_plan_type: "pro" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -33.333,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-09-01T00:00:00.000Z",
+              credits: 100.5,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+        percentUsed: ((100.5 - 67.17) / 100.5) * 100,
+        percentRemaining: (67.17 / 100.5) * 100,
+        startsAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("omits the window when a fractional pair disagrees beyond vendor credit precision", () => {
+    expect(
+      normalizeHiggsfieldQuota({
+        status: { credits: 67.15, subscription_plan_type: "pro" },
+        transactions: {
+          items: [
+            {
+              action: "spend",
+              created_at: "2026-09-20T00:00:00.000Z",
+              credits: -33.333,
+              display_name: "Example Image Model",
+            },
+            {
+              action: "grant",
+              created_at: "2026-09-01T00:00:00.000Z",
+              credits: 100.5,
+              display_name: "Subscription Credits",
+            },
+          ],
+        },
+      }).windows,
+    ).toEqual([]);
+  });
+
   it("still omits the window when remaining disagrees with grant plus newer entries by a real credit gap", () => {
     expect(
       normalizeHiggsfieldQuota({

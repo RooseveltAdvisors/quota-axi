@@ -28,8 +28,14 @@ const CLI_TIMEOUT_MS = 15_000;
 const LABEL = "Higgsfield";
 const CREDITS_WINDOW_ID = "credits";
 const SUBSCRIPTION_GRANT_NAME = "subscription credits";
-/** Slack for remaining vs grant plus newer on-page entries. Below a 0.01-credit contradiction; above IEEE noise from summing the first page. */
-const CREDITS_RECONCILE_EPS = 1e-6;
+/**
+ * Slack for remaining vs grant plus newer on-page entries. Higgsfield reports
+ * fractional credits, and the balance is rounded to the vendor's 0.01-credit
+ * precision, so a difference at or below one hundredth of a credit is vendor
+ * rounding, not a contradiction. A larger difference means the page cannot
+ * explain the balance and the window stays withheld.
+ */
+const CREDITS_RECONCILE_EPS = 0.01;
 
 const COMPLETED_JOB_STATUSES = new Set([
   "completed",
