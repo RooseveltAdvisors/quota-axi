@@ -15,6 +15,8 @@ import {
   type KeyCredentialFailure,
   keyCredentialFailure,
   preferCredentialFailure,
+  pushEnvCredential,
+  pushPiReadCredential,
 } from "./env-pi-credential.js";
 
 export const MIMO_ENV_SOURCE = "env:MIMO_API_KEY";
@@ -51,26 +53,16 @@ export function resolveMimoCredentials(
   path = resolvePiAuthFilePath(),
 ): EnvPiCredentialResolution[] {
   const credentials: EnvPiCredentialResolution[] = [];
-  const key = usableLiteralSecret(environment.MIMO_API_KEY);
-  credentials.push(
-    key
-      ? { status: "available", key, source: MIMO_ENV_SOURCE }
-      : { status: "missing", source: MIMO_ENV_SOURCE },
-  );
+  pushEnvCredential(credentials, environment, "MIMO_API_KEY", MIMO_ENV_SOURCE);
   const result: JsonFileReadResult = readJsonFileResult(path);
   for (const piProviderId of MIMO_PI_PROVIDER_IDS) {
-    const source = mimoPiSource(piProviderId);
-    if (result.status === "missing") {
-      credentials.push({ status: "missing", source, path });
-    } else if (result.status === "invalid") {
-      credentials.push({
-        status: result.error === "file_read_error" ? "error" : "invalid",
-        source,
-        path,
-      });
-    } else {
-      credentials.push(extractMimoPiEntry(result.value, piProviderId, path));
-    }
+    pushPiReadCredential(
+      credentials,
+      result,
+      mimoPiSource(piProviderId),
+      path,
+      (value) => extractMimoPiEntry(value, piProviderId, path),
+    );
   }
   return credentials;
 }
