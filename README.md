@@ -197,7 +197,7 @@ $ quota-axi --provider claude --json
 $ quota-axi auth
 bin: ~/.npm/_npx/.../quota-axi
 description: Inspect local quota auth sources without printing secret values
-auth[36]{provider,source,path,status,error}:
+auth[42]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
@@ -234,9 +234,17 @@ auth[36]{provider,source,path,status,error}:
   deepseek,pi:deepseek,~/.pi/agent/auth.json,available,none
   openrouter,env:OPENROUTER_API_KEY,none,missing,none
   openrouter,pi:openrouter,~/.pi/agent/auth.json,available,none
+  elevenlabs,env:ELEVENLABS_API_KEY,none,missing,none
+  devin,env:WINDSURF_API_KEY,none,missing,none
+  devin,file:credentials.toml,~/.devin/credentials.toml,missing,none
+  muse,muse:auth.json,~/.muse/auth.json,missing,none
+  muse,cli-keychain,none,skipped,keychain_prompt_required
+  muse,env:META_API_KEY,none,missing,none
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access
 ```
+
+This `auth` example's header count and the rows below it come from one capture and are internally consistent (the count equals the rows shown); a live `auth` run varies by the providers and credential stores actually present on the machine.
 
 ## Install
 
