@@ -127,17 +127,55 @@ describe("MiMo provider", () => {
     ]);
   });
 
-  it("treats template and missing API keys as unavailable", () => {
+  it("keeps a set-but-unusable API key visible as a credential rather than an absence", () => {
     expect(
       resolveMimoCredentials({ MIMO_API_KEY: "${MIMO_API_KEY}" }, piPath()),
     ).toEqual([
-      { status: "missing", source: MIMO_ENV_SOURCE },
+      { status: "invalid", source: MIMO_ENV_SOURCE },
       ...ALL_PI_SOURCES.map((source) => ({
         status: "missing",
         source,
         path: piPath(),
       })),
     ]);
+  });
+
+  it("treats missing and blank API keys as absent sources", () => {
+    for (const environment of [{}, { MIMO_API_KEY: "   " }]) {
+      expect(resolveMimoCredentials(environment, piPath())).toEqual([
+        { status: "missing", source: MIMO_ENV_SOURCE },
+        ...ALL_PI_SOURCES.map((source) => ({
+          status: "missing",
+          source,
+          path: piPath(),
+        })),
+      ]);
+    }
+  });
+
+  it("marks a template environment key present on the quota and auth paths", async () => {
+    stubNoFetch();
+    const environment = { MIMO_API_KEY: "${MIMO_API_KEY}" };
+
+    const report = await adapterFor(environment).fetchQuota(OPTIONS);
+    const auth = await adapterFor(environment).inspectAuth(OPTIONS);
+
+    expect(report).toMatchObject({
+      source: "unavailable",
+      state: { status: "auth_required", error: "mimo_credential_invalid" },
+    });
+    expect(report.attempts).toContainEqual({
+      source: MIMO_ENV_SOURCE,
+      status: "failed",
+      error: "mimo_credential_invalid",
+      credentialPresent: true,
+    });
+    expect(auth.sources).toContainEqual({
+      source: MIMO_ENV_SOURCE,
+      status: "invalid",
+      error: "mimo_credential_invalid",
+      credentialPresent: true,
+    });
   });
 
   it("reports a machine without any MiMo credential as not set up", async () => {

@@ -33,8 +33,9 @@ export type EnvPiCredentialSources = {
 
 /**
  * The env half of an env-plus-Pi credential surface: a usable literal value
- * under `envVar` is an available credential, anything else is a missing
- * source.
+ * under `envVar` is an available credential, an unset or blank variable
+ * selects nothing, and a set value that is not a usable literal secret is a
+ * present-but-invalid credential rather than an absence.
  */
 export function pushEnvCredential(
   credentials: EnvPiCredentialResolution[],
@@ -42,11 +43,14 @@ export function pushEnvCredential(
   envVar: string,
   envSource: string,
 ): void {
-  const key = usableLiteralSecret(environment[envVar]);
+  const raw = environment[envVar];
+  const key = usableLiteralSecret(raw);
   credentials.push(
     key
       ? { status: "available", key, source: envSource }
-      : { status: "missing", source: envSource },
+      : raw !== undefined && raw.trim().length > 0
+        ? { status: "invalid", source: envSource }
+        : { status: "missing", source: envSource },
   );
 }
 
