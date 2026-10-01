@@ -234,12 +234,12 @@ auth[42]{provider,source,path,status,error}:
   deepseek,pi:deepseek,~/.pi/agent/auth.json,available,none
   openrouter,env:OPENROUTER_API_KEY,none,missing,none
   openrouter,pi:openrouter,~/.pi/agent/auth.json,available,none
-  elevenlabs,env:ELEVENLABS_API_KEY,none,missing,none
-  devin,env:WINDSURF_API_KEY,none,missing,none
-  devin,file:credentials.toml,~/.devin/credentials.toml,missing,none
-  muse,muse:auth.json,~/.muse/auth.json,missing,none
-  muse,cli-keychain,none,skipped,keychain_prompt_required
-  muse,env:META_API_KEY,none,missing,none
+  elevenlabs,env:ELEVENLABS_API_KEY,ELEVENLABS_API_KEY,missing,none
+  devin,env:WINDSURF_API_KEY,WINDSURF_API_KEY,missing,none
+  devin,file:credentials.toml,~/.local/share/devin/credentials.toml,missing,none
+  muse,muse:auth.json,~/.config/muse/auth.json,missing,none
+  muse,cli-keychain,Keychain ai.meta.dev.credentials,skipped,keychain_prompt_required
+  muse,env:META_API_KEY,META_API_KEY,missing,none
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit native secure-store access
 ```
