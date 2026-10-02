@@ -119,6 +119,8 @@ const ENV_KEYS = [
   "MIMO_API_KEY",
   "DEEPSEEK_API_KEY",
   "OPENROUTER_API_KEY",
+  "MINIMAX_API_KEY",
+  "MMX_CONFIG_DIR",
   "WINDSURF_API_KEY",
   "WINDSURF_API_SERVER_URL",
   "QUOTA_AXI_OPENCODE_GO_PI_AUTH",
@@ -161,6 +163,8 @@ beforeEach(() => {
   delete process.env.MIMO_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
+  process.env.MMX_CONFIG_DIR = join(tempDir, "mmx");
   process.env.XDG_CONFIG_HOME = join(tempDir, "config");
   delete process.env.WINDSURF_API_KEY;
   delete process.env.WINDSURF_API_SERVER_URL;
@@ -405,6 +409,101 @@ describe("credential source contract", { timeout: 30_000 }, () => {
           status: "failed",
           error: invalidError,
           credentialPresent: true,
+        },
+      ]);
+      expect(providerPresence(result)).toBe("attention");
+    });
+  });
+
+  /**
+   * MiniMax keeps its own env-plus-Pi-plus-CLI pipeline instead of routing
+   * through the shared env-plus-Pi helpers, so the same two halves of the
+   * rule are pinned on its env axis directly against the real adapter.
+   */
+  describe("minimax env axis", () => {
+    const source = "env:MINIMAX_API_KEY";
+    const invalidError = "minimax_credential_invalid";
+
+    it("leaves an unset variable unmarked, so nothing reads as degraded", async () => {
+      stubRejectingApi();
+
+      const result = await readQuota("minimax");
+
+      const attempts = attemptsFor(result, source);
+      expect(attempts.length).toBeGreaterThan(0);
+      for (const attempt of attempts) {
+        expect(attempt.credentialPresent).toBeUndefined();
+      }
+      expect(result.state.status).toBe("auth_required");
+      expect(providerPresence(result)).toBe("absent");
+    });
+
+    it.each([
+      ["an environment reference", "$MINIMAX_API_KEY"],
+      ["a command reference", "!op read op://vault/key"],
+      ["a control byte", "minimax-\u0007-fixture"],
+    ])(
+      "marks a present but unusable variable (%s) as a credential that exists",
+      async (_label, value) => {
+        process.env.MINIMAX_API_KEY = value;
+        const api = stubRejectingApi();
+
+        const result = await readQuota("minimax");
+
+        const attempts = attemptsFor(result, source);
+        expect(attempts.length).toBeGreaterThan(0);
+        for (const attempt of attempts) {
+          expect(attempt.status).toBe("failed");
+          expect(attempt.error).toBe(invalidError);
+          expect(attempt.credentialPresent).toBe(true);
+        }
+        expect(result.state).toMatchObject({
+          status: "auth_required",
+          error: invalidError,
+        });
+        expect(providerPresence(result)).toBe("attention");
+        expect(api.bearers).toEqual([]);
+
+        const auth = await readAuth("minimax");
+        expect(auth.sources).toContainEqual({
+          source,
+          status: "invalid",
+          error: invalidError,
+          credentialPresent: true,
+        });
+      },
+    );
+
+    it("ranks a present-but-unusable Pi entry above the unset environment variable", async () => {
+      writePiStore({ minimax: {} });
+      stubRejectingApi();
+
+      const result = await readQuota("minimax");
+
+      expect(result.state).toMatchObject({
+        status: "auth_required",
+        error: invalidError,
+      });
+      expect(attemptsFor(result, source)).toEqual([
+        {
+          source,
+          status: "skipped",
+          error: "minimax_credential_unavailable",
+        },
+      ]);
+      expect(attemptsFor(result, "pi:minimax")).toEqual([
+        {
+          source: "pi:minimax",
+          status: "failed",
+          error: invalidError,
+          credentialPresent: true,
+        },
+      ]);
+      expect(attemptsFor(result, "minimax:config.json")).toEqual([
+        {
+          source: "minimax:config.json",
+          status: "skipped",
+          error: "minimax_credential_unavailable",
         },
       ]);
       expect(providerPresence(result)).toBe("attention");
