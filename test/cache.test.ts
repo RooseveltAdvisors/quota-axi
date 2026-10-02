@@ -444,6 +444,18 @@ describe("quota cache", () => {
     expect(readCachedProvider("higgsfield")).toBeUndefined();
   });
 
+  it("rejects a Higgsfield record whose cached jobs counts are fractional", () => {
+    useTempCache();
+    writeCachedProviders([
+      {
+        ...higgsfieldQuota(),
+        jobs: { sampled: 1.5, completed: 0.75, failed: 0.5, other: 0.25 },
+      },
+    ]);
+
+    expect(readCachedProvider("higgsfield")).toBeUndefined();
+  });
+
   it("strips Higgsfield job identity fields before they reach the cache file", () => {
     useTempCache();
     writeCachedProviders([
