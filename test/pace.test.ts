@@ -420,6 +420,7 @@ describe("computeEffectiveRunway", () => {
             id: "weekly",
             percentUsed: 100,
             percentRemaining: 0,
+            resetsAt: resetsAfter(0.5),
           }),
         ],
         GENERATED_AT,
@@ -429,6 +430,18 @@ describe("computeEffectiveRunway", () => {
       usableRunwaySeconds: 0,
       projectedExhaustedAt: GENERATED_AT,
       limitingWindowId: "weekly",
+    });
+  });
+
+  it("keeps zero remaining unknown when no window reports a reset", () => {
+    expect(
+      computeEffectiveRunway(
+        [window({ id: "credits", percentUsed: 100, percentRemaining: 0 })],
+        GENERATED_AT,
+      ),
+    ).toEqual({
+      status: "unknown",
+      unmeasurableWindowIds: ["credits"],
     });
   });
 
@@ -645,7 +658,7 @@ describe("computeEffectiveRunway", () => {
     });
   });
 
-  it("reports through_reset when every window in scope has not yet triggered", () => {
+  it("keeps a scope whose windows report no reset unknown", () => {
     const fiveHour = window({
       id: "five_hour",
       kind: "session",
@@ -663,8 +676,8 @@ describe("computeEffectiveRunway", () => {
     sevenDay.pace = computeWindowPace(sevenDay, GENERATED_AT);
 
     expect(computeEffectiveRunway([fiveHour, sevenDay], GENERATED_AT)).toEqual({
-      status: "through_reset",
-      projectionConfidence: "established",
+      status: "unknown",
+      unmeasurableWindowIds: ["five_hour", "seven_day"],
     });
   });
 

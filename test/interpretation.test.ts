@@ -603,9 +603,13 @@ describe("quota semantics", () => {
   it("keeps a Codex model exhausted when its own window is the zero", () => {
     const result = withQuotaSemantics(
       provider("codex", [
-        window("weekly", "weekly", 0),
-        window("model:codex_bengalfox:5h", "model", 92),
-        window("model:codex_bengalfox:7d", "model", 0),
+        window("weekly", "weekly", 0, { resetsAt: weeklyResetsAt(0.5) }),
+        window("model:codex_bengalfox:5h", "model", 92, {
+          resetsAt: offsetFromGeneratedAt(9_000),
+        }),
+        window("model:codex_bengalfox:7d", "model", 0, {
+          resetsAt: weeklyResetsAt(0.5),
+        }),
       ]),
       GENERATED_AT,
     );
@@ -1409,5 +1413,26 @@ describe("per-scope selection signal", () => {
     expect(result.state.status).toBe("stale");
     expect(result.state.stale).toBe(true);
     expect(result.quotaSemantics?.status).toBe("unknown");
+  });
+
+  it("bounds Higgsfield credits at included_credits and does not invent a model lane", () => {
+    const result = withQuotaSemantics(
+      provider("higgsfield", [window("credits", "credits", 99)]),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "included_credits",
+        status: "known",
+        effectivePercentRemaining: 99,
+        boundedBy: ["credits"],
+      }),
+    ]);
+    expect(result.quotaSemantics?.effectiveAvailability).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scope: "all_models" }),
+      ]),
+    );
   });
 });
