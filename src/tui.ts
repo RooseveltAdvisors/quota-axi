@@ -112,6 +112,7 @@ const ACCENTS: Record<ProviderId, StyleSpec> = {
   elevenlabs: { rgb: [214, 170, 255], ansi16: "95", bold: true },
   devin: { rgb: [126, 196, 224], ansi16: "96", bold: true },
   muse: { rgb: [0, 132, 255], ansi16: "94", bold: true },
+  higgsfield: { rgb: [255, 176, 122], ansi16: "93", bold: true },
 };
 
 const STYLES: Record<Exclude<StyleName, `accent:${ProviderId}`>, StyleSpec> = {
