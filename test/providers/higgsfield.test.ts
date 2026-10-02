@@ -765,6 +765,55 @@ describe("Higgsfield CLI quota provider", () => {
     );
   });
 
+  it("redacts emails and credentials from CLI errors on every report path", async () => {
+    const leaky =
+      "\u001b[31mrequest failed\u001b[0m for jane.doe@example.com " +
+      "token=abc123secret Authorization: Bearer sk_live_9f8e7d6c " +
+      "api_key: 'k-1' eyJhbGciOiJIUzI1NiJ9abcdefghijklmnopqrstuvwxyz0123";
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        throw new Error(leaky);
+      },
+    }).fetchQuota(OPTIONS);
+    const toon = renderQuotaToon(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 5,
+        providers: [withQuotaSemantics(report, GENERATED_AT)],
+      },
+      "quota-axi",
+      false,
+    );
+    const statusReport = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async () => {
+        throw new Error(leaky);
+      },
+    }).fetchQuota(OPTIONS);
+
+    for (const text of [toon, String(statusReport.state.error)]) {
+      expect(text).toContain("request failed for [redacted-email]");
+      for (const secret of [
+        "jane.doe@example.com",
+        "abc123secret",
+        "sk_live_9f8e7d6c",
+        "k-1",
+        "eyJhbGciOiJIUzI1NiJ9",
+        "\u001b",
+      ]) {
+        expect(text).not.toContain(secret);
+      }
+    }
+    expect(toon).toContain("higgsfield_transactions_failed: request failed");
+    expect(statusReport.state.error).toMatch(
+      /^higgsfield_status_failed: request failed/,
+    );
+  });
+
   it("rolls up job statuses including unknown values as other", () => {
     expect(
       normalizeHiggsfieldQuota({
