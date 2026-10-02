@@ -1082,6 +1082,7 @@ function normalizeCachedJobs(raw: unknown): ProviderQuota["jobs"] | undefined {
     completed === undefined ||
     failed === undefined ||
     other === undefined ||
+    ![sampled, completed, failed, other].every(Number.isSafeInteger) ||
     sampled < 0 ||
     completed < 0 ||
     failed < 0 ||

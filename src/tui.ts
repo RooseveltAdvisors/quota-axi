@@ -408,6 +408,17 @@ function buildLiveCard(
     }
   }
 
+  const jobs = provider.jobs;
+  if (jobs) {
+    lines.push(interior([], border));
+    for (const text of [
+      `   jobs sampled ${jobs.sampled} · completed ${jobs.completed}`,
+      `        failed ${jobs.failed} · other ${jobs.other}`,
+    ]) {
+      lines.push(interior([{ text, style: "dim" }], border));
+    }
+  }
+
   for (const note of cardNotes(provider, generatedAtMs)) {
     lines.push(
       interior(
