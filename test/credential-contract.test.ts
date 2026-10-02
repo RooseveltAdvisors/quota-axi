@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { providerPresence } from "../src/lib/source-attempts.js";
-import type { ProviderQuota, SourceAttempt } from "../src/types.js";
+import type {
+  AuthProviderReport,
+  ProviderQuota,
+  SourceAttempt,
+} from "../src/types.js";
 
 /**
  * The cross-provider invariant every multi-source adapter has to hold, checked
@@ -207,6 +211,14 @@ async function readQuota(provider: string): Promise<ProviderQuota> {
   });
 }
 
+async function readAuth(provider: string): Promise<AuthProviderReport> {
+  const { PROVIDERS } = await import("../src/providers/index.js");
+  return PROVIDERS[provider as keyof typeof PROVIDERS].inspectAuth({
+    allowKeychainPrompt: false,
+    refreshCredentials: false,
+  });
+}
+
 const attemptsFor = (result: ProviderQuota, source: string): SourceAttempt[] =>
   (result.attempts ?? []).filter((attempt) => attempt.source === source);
 
@@ -311,9 +323,14 @@ describe("credential source contract", { timeout: 30_000 }, () => {
   });
 
   describe.each([
-    ["deepseek", "env:DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"],
-    ["openrouter", "env:OPENROUTER_API_KEY", "OPENROUTER_API_KEY"],
-  ])("%s env axis", (provider, source, envVar) => {
+    ["deepseek", "env:DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY", "pi:deepseek"],
+    [
+      "openrouter",
+      "env:OPENROUTER_API_KEY",
+      "OPENROUTER_API_KEY",
+      "pi:openrouter",
+    ],
+  ])("%s env axis", (provider, source, envVar, piSource) => {
     const invalidError = `${provider}_credential_invalid`;
 
     it("leaves an unset variable unmarked, so nothing reads as degraded", async () => {
@@ -347,14 +364,51 @@ describe("credential source contract", { timeout: 30_000 }, () => {
         for (const attempt of attempts) {
           expect(attempt.status).toBe("failed");
           expect(attempt.error).toBe(invalidError);
+          expect(attempt.credentialPresent).toBe(true);
         }
         expect(result.state).toMatchObject({
           status: "auth_required",
           error: invalidError,
         });
         expect(providerPresence(result)).toBe("attention");
+
+        const auth = await readAuth(provider);
+        expect(auth.sources).toContainEqual({
+          source,
+          status: "invalid",
+          error: invalidError,
+          credentialPresent: true,
+        });
       },
     );
+
+    it("ranks a present-but-unusable Pi entry above the unset environment variable", async () => {
+      writePiStore({ [provider]: {} });
+      stubRejectingApi();
+
+      const result = await readQuota(provider);
+
+      expect(result.state).toMatchObject({
+        status: "auth_required",
+        error: invalidError,
+      });
+      expect(attemptsFor(result, source)).toEqual([
+        {
+          source,
+          status: "skipped",
+          error: `${provider}_credential_unavailable`,
+        },
+      ]);
+      expect(attemptsFor(result, piSource)).toEqual([
+        {
+          source: piSource,
+          status: "failed",
+          error: invalidError,
+          credentialPresent: true,
+        },
+      ]);
+      expect(providerPresence(result)).toBe("attention");
+    });
   });
 
   /**
