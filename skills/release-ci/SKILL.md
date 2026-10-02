@@ -21,7 +21,7 @@ This document describes the automated release pipeline, CI workflow constraints,
 - **npm Publishing**:
   - Merging the release PR triggers `.github/workflows/release-please.yml` to publish to npm.
   - Uses npm's OIDC trusted-publisher flow (`id-token: write` + `--provenance`) without stored token secrets.
-  - The publishing job is gated on `github.repository == 'kunchenguid/quota-axi'`, so a fork that merges upstream commits can never cut a release or publish with its own OIDC identity; do not remove that guard.
+  - Publish steps are gated only on `steps.release.outputs.release_created`. This lineage has no `github.repository == 'kunchenguid/quota-axi'` job condition (removed on the house line by 5be1029); do not restore that guard in a docs-only change.
 - **Skill Generation**:
   - `skills/quota-axi/SKILL.md` is generated from `src/skill.ts`.
   - Regenerate via `pnpm run build:skill` rather than editing directly. CI validates parity via `pnpm run build:skill -- --check`.

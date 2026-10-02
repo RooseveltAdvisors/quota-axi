@@ -43,7 +43,7 @@ To prevent cross-account or cross-environment cache poisoning, providers whose i
 
 The following fields and statuses are **never cached**:
 
-- **Failed reads**: Any provider report with `state.status: "failed"` is never written to cache.
+- **Non-fresh reads**: Only a `state.status: "fresh"` report with windows and a non-`cache` source is written (`toCacheProvider` in `src/cache.ts`). Stale, unavailable, auth_required, rate_limited, and error reports are never persisted; `failed` is an attempt status, not a provider `state.status`.
 - **Stale reads**: Stale data is never re-persisted as fresh.
 - **Account identities**: Explicit `account` objects are scrubbed before writing.
 - **Source attempts**: The report's `attempts` list and attempt diagnostic logs are excluded.
