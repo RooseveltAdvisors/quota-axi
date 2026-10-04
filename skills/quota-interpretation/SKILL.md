@@ -31,7 +31,7 @@ Implemented in `src/pace.ts`:
   - Quantifies how usage tracks against elapsed window time.
   - Positive values indicate usage is tracking behind the elapsed time clock (headroom remaining).
   - Negative values indicate usage is running ahead of the reset clock (burn rate higher than cycle average).
-- **Effective Usable Runway**: Aggregates all authoritative bounds to determine time until exhaustion, preserving uncertainty if any binding window lacks timing metadata. Runway is dynamic and never cached. When every bound is resetless (`resetsAt` missing), `computeEffectiveRunway` fails closed to `unknown` naming every bound rather than publishing `through_reset` or `exhausted_now`; Higgsfield credits stay in that case until the vendor reports a reset.
+- **Effective Usable Runway**: Aggregates all authoritative bounds to determine time until exhaustion, preserving uncertainty if any binding window lacks timing metadata. Runway is dynamic and never cached.
 - **Selection Signal (`effectiveAvailability[].selection`)**:
   - Computed purely from reported figures via `summarizeEffectiveSelection` in `src/pace.ts`.
   - Published field name is centralized in `SELECTION_SCALAR_KEY` in `src/types.ts`.

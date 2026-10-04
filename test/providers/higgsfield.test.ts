@@ -957,7 +957,7 @@ describe("Higgsfield CLI quota provider", () => {
     );
   });
 
-  it("keeps runway unknown for the resetless credits window while headroom publishes", () => {
+  it("bounds resetless credits at included_credits without inventing a model lane", () => {
     const interpret = (percentRemaining: number, percentUsed: number) =>
       withQuotaSemantics(
         {
@@ -992,29 +992,20 @@ describe("Higgsfield CLI quota provider", () => {
     expect(
       interpret(100, 0).quotaSemantics?.effectiveAvailability?.[0],
     ).toMatchObject({
+      scope: "included_credits",
       status: "known",
       effectivePercentRemaining: 100,
-      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+      boundedBy: ["credits"],
     });
 
-    const empty = interpret(0, 100);
-    expect(empty.quotaSemantics?.effectiveAvailability?.[0]).toMatchObject({
+    expect(
+      interpret(0, 100).quotaSemantics?.effectiveAvailability?.[0],
+    ).toMatchObject({
+      scope: "included_credits",
       status: "known",
       effectivePercentRemaining: 0,
-      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+      boundedBy: ["credits"],
     });
-
-    const toon = renderQuotaToon(
-      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [empty] },
-      "quota-axi",
-      false,
-    );
-    expect(toon).toContain(
-      "higgsfield,included_credits,0,unknown,unknown,unknown,credits,unknown",
-    );
-    expect(toon).toContain(
-      "higgsfield,included_credits,unmeasurable,credits blocks runway + spendPriority,none",
-    );
   });
 });
 
