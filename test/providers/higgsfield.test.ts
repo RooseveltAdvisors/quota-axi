@@ -996,6 +996,16 @@ describe("Higgsfield CLI quota provider", () => {
       status: "known",
       effectivePercentRemaining: 100,
       boundedBy: ["credits"],
+      runway: { status: "through_reset" },
+    });
+
+    expect(
+      interpret(50, 50).quotaSemantics?.effectiveAvailability?.[0],
+    ).toMatchObject({
+      scope: "included_credits",
+      status: "known",
+      effectivePercentRemaining: 50,
+      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
     });
 
     expect(
@@ -1005,6 +1015,11 @@ describe("Higgsfield CLI quota provider", () => {
       status: "known",
       effectivePercentRemaining: 0,
       boundedBy: ["credits"],
+      runway: {
+        status: "exhausted_now",
+        usableRunwaySeconds: 0,
+        limitingWindowId: "credits",
+      },
     });
   });
 });
