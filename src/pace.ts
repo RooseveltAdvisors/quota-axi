@@ -110,17 +110,6 @@ export function computeEffectiveRunway(
 ): EffectiveRunway {
   const generatedAtMs = Date.parse(generatedAt);
 
-  // No bound reports a reset, so the scope has no current cycle to derive any
-  // verdict from: fail closed to `unknown` naming every bound rather than
-  // publishing `through_reset` or `exhausted_now` from a resetless scope.
-  if (
-    windows.every(
-      (window) => resolveResetsAtOutcome(window.resetsAt).kind === "missing",
-    )
-  ) {
-    return unknownRunway(windows);
-  }
-
   const exhausted = windows.find(
     (window) => finiteNumber(window.percentRemaining) === 0,
   );
@@ -134,6 +123,18 @@ export function computeEffectiveRunway(
         ? { projectedExhaustedAt: new Date(generatedAtMs).toISOString() }
         : {}),
     };
+  }
+
+  // No bound reports a reset, so the scope has no current cycle to derive a
+  // reset-implying verdict from: fail closed to `unknown` naming every bound
+  // rather than publishing `through_reset` or a projection. A vendor-reported
+  // zero above still yields `exhausted_now`, which needs no cycle.
+  if (
+    windows.every(
+      (window) => resolveResetsAtOutcome(window.resetsAt).kind === "missing",
+    )
+  ) {
+    return unknownRunway(windows);
   }
 
   if (!isRepresentableDateMs(generatedAtMs)) {
