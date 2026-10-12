@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import * as processUtils from "../lib/process.js";
 import type {
   AuthProviderReport,
@@ -414,7 +415,7 @@ async function readOptionalCommand(
       error:
         message === ""
           ? `${failurePrefix}_failed`
-          : `${failurePrefix}_failed: ${message.slice(0, 240)}`,
+          : `${failurePrefix}_failed: ${cliErrorDetail(message)}`,
     };
   }
 }
@@ -470,10 +471,28 @@ function errorMessage(error: unknown): string {
     }
     if (isAuthFailure(message)) return "higgsfield_sign_in_required";
     return message
-      ? `higgsfield_status_failed: ${message.slice(0, 240)}`
+      ? `higgsfield_status_failed: ${cliErrorDetail(message)}`
       : "higgsfield_status_failed";
   }
   return "higgsfield_status_failed";
+}
+
+/**
+ * CLI error text lands in report rows, so keep the cause but drop terminal
+ * escapes, emails, and credential-shaped values before the length cap.
+ */
+function cliErrorDetail(message: string): string {
+  return stripVTControlCharacters(message)
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, "[redacted-email]")
+    .replace(/\b(bearer)\s+\S+/gi, "$1 [redacted]")
+    .replace(
+      /\b([\w-]*(?:token|key|password|passwd|secret|authorization)[\w-]*\s*[:=]\s*)["']?[^\s"',;]+["']?/gi,
+      "$1[redacted]",
+    )
+    .replace(/[A-Za-z0-9_\-+=]{32,}/g, "[redacted]")
+    .trim()
+    .slice(0, 240);
 }
 
 function isAuthFailure(message: string): boolean {

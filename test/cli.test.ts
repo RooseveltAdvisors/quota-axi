@@ -8,12 +8,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFlags, parseModelsFlags } from "../src/args.js";
 import { main, normalizeArgv } from "../src/cli.js";
 import { authCommand, quotaCommand } from "../src/commands.js";
 import { PROVIDERS } from "../src/providers/index.js";
 import { redactedResponse } from "../src/render.js";
+import * as systemTheme from "../src/lib/system-theme.js";
 import type {
   ProviderAdapter,
   ProviderOptions,
@@ -49,6 +50,9 @@ const originalDeepSeekApiKey = process.env.DEEPSEEK_API_KEY;
 const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
 const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalMmxConfigDir = process.env.MMX_CONFIG_DIR;
+const originalTheme = process.env.QUOTA_AXI_THEME;
+const originalColorFgBg = process.env.COLORFGBG;
+const originalForceColor = process.env.FORCE_COLOR;
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -82,6 +86,9 @@ afterEach(() => {
   restoreEnvironment("OPENROUTER_API_KEY", originalOpenRouterApiKey);
   restoreEnvironment("PI_CODING_AGENT_DIR", originalPiCodingAgentDir);
   restoreEnvironment("MMX_CONFIG_DIR", originalMmxConfigDir);
+  restoreEnvironment("QUOTA_AXI_THEME", originalTheme);
+  restoreEnvironment("COLORFGBG", originalColorFgBg);
+  restoreEnvironment("FORCE_COLOR", originalForceColor);
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
   process.exitCode = undefined;
@@ -258,6 +265,32 @@ describe("CLI flag parsing", () => {
     await expect(
       authCommand(["--all"], { binPath: "quota-axi" }),
     ).rejects.toThrow("--all is only supported with --tui");
+  });
+
+  it("parses --theme for the human report", () => {
+    expect(parseFlags(["--tui", "--theme", "light"]).theme).toBe("light");
+    expect(parseFlags(["--tui", "--theme=dark"]).theme).toBe("dark");
+    expect(parseFlags(["--tui", "--theme", "system"]).theme).toBe("system");
+    expect(parseFlags(["--tui", "--theme=system"]).theme).toBe("system");
+    expect(parseFlags(["--tui"]).theme).toBeUndefined();
+    for (const value of ["", "Light", "solarized", "auto"]) {
+      expect(() => parseFlags(["--tui", "--theme", value])).toThrow(
+        "--theme requires light, dark, or system",
+      );
+    }
+    expect(() => parseFlags(["--theme", "light"])).toThrow(
+      "--theme is only supported with --tui",
+    );
+    expect(() => parseFlags(["--tui", "--theme"])).toThrow(
+      "--theme requires light, dark, or system",
+    );
+    expect(() => parseFlags(["--tui", "--theme="])).toThrow(
+      "--theme requires light, dark, or system",
+    );
+    expect(
+      parseFlags(["--tui", "--theme", "light", "--theme=dark"]).theme,
+    ).toBe("dark");
+    expect(parseFlags(["--tui", "--", "--theme", "light"]).theme).toBe("light");
   });
 
   it("rejects live-only flags without --tui", () => {
@@ -618,14 +651,15 @@ describe("CLI quota rendering", () => {
     expect(output).toContain(
       'Tell your user: run `quota-axi --allow-keychain-prompt` once and approve Keychain access ("Always Allow") so quota-axi can read claude\'s live quota.',
     );
-    // Codex still reports headroom; its only bound is an idle, not-yet-
-    // triggered session window that reports no reset, so no cycle-derived
-    // runway or spendPriority is published and the blocker is named.
-    expect(output).toContain(
-      "codex,all_models,100,unknown,unknown,unknown,five_hour,unknown",
-    );
+    // Codex still reports remaining; its only bound is an idle session with
+    // no resetsAt, so fail-closed runway is unknown (literal `unknown`
+    // spendPriority) and the bound is named unmeasurable rather than
+    // inventing through_reset.
     expect(output).toContain(
       "codex,all_models,unmeasurable,five_hour blocks runway,none",
+    );
+    expect(output).toContain(
+      "codex,all_models,100,unknown,unknown,unknown,five_hour,unknown",
     );
     expect(output).not.toContain("codex,all,");
   });
@@ -1637,6 +1671,7 @@ describe("new provider public quota output", () => {
   it("keeps registered MiMo authentication without a fabricated quota scope", async () => {
     useTempCache();
     process.env.MIMO_API_KEY = "synthetic-mimo-cli-key";
+    process.env.PI_CODING_AGENT_DIR = join(tempDir!, "pi-agent-empty");
 
     const json = JSON.parse(
       await capture(["--provider", "mimo", "--json", "--full"]),
@@ -1664,6 +1699,7 @@ describe("new provider public quota output", () => {
   it("reports missing registered MiMo authentication through JSON", async () => {
     useTempCache();
     delete process.env.MIMO_API_KEY;
+    process.env.PI_CODING_AGENT_DIR = join(tempDir!, "pi-agent-empty");
 
     const json = JSON.parse(
       await capture(["--provider", "mimo", "--json", "--full"]),
@@ -1677,7 +1713,13 @@ describe("new provider public quota output", () => {
           status: "auth_required",
           stale: false,
           error: "mimo_credential_unavailable",
-          sourcesTried: ["env:MIMO_API_KEY"],
+          sourcesTried: [
+            "env:MIMO_API_KEY",
+            "pi:xiaomi",
+            "pi:xiaomi-token-plan-sgp",
+            "pi:xiaomi-token-plan-cn",
+            "pi:xiaomi-token-plan-ams",
+          ],
         },
       }),
     ]);
@@ -1910,6 +1952,226 @@ describe("new provider public quota output", () => {
       delete process.env.WINDSURF_API_KEY;
     }
   });
+});
+
+describe("--tui theme selection", () => {
+  const MOCHA_CODEX = "\x1b[1;38;2;148;226;213m";
+  const LATTE_CODEX = "\x1b[1;38;2;23;146;153m";
+  const tuiOnce = ["--tui", "--once", "--provider", "codex"];
+
+  beforeEach(() => {
+    useTempCache();
+    PROVIDERS.codex = providerWithQuota(freshCodexQuota());
+    process.env.FORCE_COLOR = "3";
+    delete process.env.QUOTA_AXI_THEME;
+    delete process.env.COLORFGBG;
+    vi.spyOn(systemTheme, "resolveSystemTuiTheme").mockResolvedValue("dark");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders Mocha by default with nothing set", async () => {
+    const output = await capture(tuiOnce);
+    expect(output).toContain(MOCHA_CODEX);
+    expect(output).not.toContain(LATTE_CODEX);
+    expect(output).toBe(await capture([...tuiOnce, "--theme", "dark"]));
+    expect(systemTheme.resolveSystemTuiTheme).not.toHaveBeenCalled();
+  });
+
+  it("renders Latte for --theme light and Mocha for --theme dark", async () => {
+    expect(await capture([...tuiOnce, "--theme", "light"])).toContain(
+      LATTE_CODEX,
+    );
+    expect(await capture([...tuiOnce, "--theme", "dark"])).toContain(
+      MOCHA_CODEX,
+    );
+  });
+
+  it("honors QUOTA_AXI_THEME when the flag is absent", async () => {
+    process.env.QUOTA_AXI_THEME = "light";
+    expect(await capture(tuiOnce)).toContain(LATTE_CODEX);
+  });
+
+  it("resolves --theme system once for --once", async () => {
+    vi.mocked(systemTheme.resolveSystemTuiTheme).mockResolvedValue("light");
+    expect(await capture([...tuiOnce, "--theme", "system"])).toContain(
+      LATTE_CODEX,
+    );
+    expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledOnce();
+  });
+
+  it("honors QUOTA_AXI_THEME=system and lets the flag override it", async () => {
+    vi.mocked(systemTheme.resolveSystemTuiTheme).mockResolvedValue("light");
+    process.env.QUOTA_AXI_THEME = "system";
+    expect(await capture(tuiOnce)).toContain(LATTE_CODEX);
+    expect(await capture([...tuiOnce, "--theme", "dark"])).toContain(
+      MOCHA_CODEX,
+    );
+    expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledOnce();
+    process.env.QUOTA_AXI_THEME = "dark";
+    expect(await capture([...tuiOnce, "--theme", "system"])).toContain(
+      LATTE_CODEX,
+    );
+    expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves system only on initial load, manual refresh, and scheduled refresh", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date("2026-09-22T12:00:00.000Z"));
+    vi.mocked(systemTheme.resolveSystemTuiTheme)
+      .mockResolvedValueOnce("dark")
+      .mockResolvedValueOnce("light")
+      .mockResolvedValueOnce("dark");
+    const stdout = process.stdout as unknown as Record<string, unknown>;
+    const stdin = process.stdin as unknown as Record<string, unknown>;
+    const saved = {
+      stdoutTty: stdout.isTTY,
+      stdinTty: stdin.isTTY,
+      setRawMode: stdin.setRawMode,
+      rows: stdout.rows,
+      columns: stdout.columns,
+    };
+    const painted: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      painted.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stdin, "resume").mockImplementation(() => process.stdin);
+    vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    stdout.isTTY = true;
+    stdin.isTTY = true;
+    stdin.setRawMode = () => process.stdin;
+    stdout.rows = 80;
+    stdout.columns = 100;
+    const settle = async (ready: () => boolean): Promise<void> => {
+      for (let tries = 0; tries < 200; tries++) {
+        if (ready()) return;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      throw new Error("live theme frame did not settle");
+    };
+    let run: Promise<string> | undefined;
+    try {
+      run = capture([
+        "--tui",
+        "--provider",
+        "codex",
+        "--theme",
+        "system",
+        "--refresh",
+        "30s",
+      ]);
+      await settle(() => (painted.at(-1) ?? "").includes(MOCHA_CODEX));
+      const frames = painted.length;
+      process.stdin.emit("data", Buffer.from("j"));
+      await settle(() => painted.length > frames);
+      process.stdout.emit("resize");
+      await settle(() => painted.length > frames + 1);
+      expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledOnce();
+
+      // The selected setting is fixed; only the OS appearance is re-read.
+      process.env.QUOTA_AXI_THEME = "invalid";
+      process.stdin.emit("data", Buffer.from("r"));
+      await settle(() => (painted.at(-1) ?? "").includes(LATTE_CODEX));
+      expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle(() => (painted.at(-1) ?? "").includes(MOCHA_CODEX));
+      expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledTimes(3);
+      process.stdin.emit("data", Buffer.from("q"));
+      expect(await run).toContain(MOCHA_CODEX);
+      expect(systemTheme.resolveSystemTuiTheme).toHaveBeenCalledTimes(3);
+    } finally {
+      process.stdin.emit("data", Buffer.from("q"));
+      await run;
+      stdout.isTTY = saved.stdoutTty;
+      stdin.isTTY = saved.stdinTty;
+      stdin.setRawMode = saved.setRawMode;
+      stdout.rows = saved.rows;
+      stdout.columns = saved.columns;
+    }
+  });
+
+  it("lets --theme win over QUOTA_AXI_THEME", async () => {
+    process.env.QUOTA_AXI_THEME = "light";
+    expect(await capture([...tuiOnce, "--theme", "dark"])).toContain(
+      MOCHA_CODEX,
+    );
+    process.env.QUOTA_AXI_THEME = "invalid";
+    expect(await capture([...tuiOnce, "--theme", "light"])).toContain(
+      LATTE_CODEX,
+    );
+  });
+
+  it("rejects --theme auto as a usage error", async () => {
+    const output = await capture([...tuiOnce, "--theme", "auto"]);
+    expect(output).toContain("--theme requires light, dark, or system");
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("keeps the default frame dark when COLORFGBG reports a light background", async () => {
+    const defaultOutput = await capture(tuiOnce);
+    process.env.COLORFGBG = "0;15";
+    expect(await capture(tuiOnce)).toBe(defaultOutput);
+    expect(defaultOutput).toContain(MOCHA_CODEX);
+    expect(defaultOutput).not.toContain(LATTE_CODEX);
+  });
+
+  it("treats a blank QUOTA_AXI_THEME as unset", async () => {
+    process.env.COLORFGBG = "0;15";
+    for (const blank of ["", "   "]) {
+      process.env.QUOTA_AXI_THEME = blank;
+      expect(await capture(tuiOnce)).toContain(MOCHA_CODEX);
+    }
+    delete process.env.COLORFGBG;
+    process.env.QUOTA_AXI_THEME = "";
+    expect(await capture(tuiOnce)).toContain(MOCHA_CODEX);
+  });
+
+  it.each(["TOON", "JSON"] as const)(
+    "keeps %s output unchanged",
+    async (format) => {
+      const args = [
+        "--provider",
+        "codex",
+        ...(format === "JSON" ? ["--json"] : []),
+      ];
+      const output = await capture(args);
+      for (const theme of ["light", "system", "auto", "invalid"]) {
+        process.env.QUOTA_AXI_THEME = theme;
+        expect(await capture(args)).toBe(output);
+        expect(process.exitCode).toBeUndefined();
+      }
+      expect(systemTheme.resolveSystemTuiTheme).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies the theme to a non-TTY frame when color is forced on", async () => {
+    // FORCE_COLOR=3 is set in beforeEach; stdout here is a capture sink, not a TTY.
+    expect(process.stdout.isTTY).not.toBe(true);
+    expect(await capture([...tuiOnce, "--theme", "light"])).toContain(
+      LATTE_CODEX,
+    );
+  });
+
+  it.each(["sepia", "auto"])(
+    "rejects QUOTA_AXI_THEME=%s as a usage error",
+    async (value) => {
+      process.env.QUOTA_AXI_THEME = value;
+      const output = await capture(tuiOnce);
+      expect(output).toContain(
+        "QUOTA_AXI_THEME requires light, dark, or system",
+      );
+      expect(output).toContain("code: VALIDATION_ERROR");
+      expect(output).not.toContain("╭─");
+      expect(process.exitCode).toBe(2);
+    },
+  );
 });
 
 describe("default TOON decision blocks", () => {

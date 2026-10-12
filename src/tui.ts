@@ -2,6 +2,7 @@ import {
   providerPresence,
   type ProviderPresence,
 } from "./lib/source-attempts.js";
+import { collapseHome } from "./lib/fs.js";
 import { isUsageFetchFailure } from "./providers/usage-fetch-failure.js";
 import type {
   EffectiveAvailability,
@@ -29,11 +30,21 @@ export type TuiColorDepth = "none" | "16" | "256" | "truecolor";
  * JSON keep the canonical direction whatever it is set to.
  */
 export type TuiShow = "remaining" | "used";
+/** A resolved palette: `dark` is Catppuccin Mocha, `light` is Catppuccin Latte. */
+export type TuiTheme = "dark" | "light";
+export type TuiThemeSetting = TuiTheme | "system";
+export const TUI_THEME_SETTINGS: readonly TuiThemeSetting[] = [
+  "light",
+  "dark",
+  "system",
+];
 
 export type TuiOptions = {
   /** Raw terminal width; clamped to [80, 120], defaults to 100. */
   columns?: number;
   colorDepth?: TuiColorDepth;
+  /** Truecolor/256 palette; defaults to `dark`. The ANSI-16 path is theme-free. */
+  theme?: TuiTheme;
   /** Mirrors `--full`: appends account identity and source-attempt footers. */
   full?: boolean;
   /** IANA time zone for header/absolute times; defaults to the system zone. */
@@ -93,44 +104,102 @@ type StyleSpec = {
   bold?: boolean;
 };
 
-const ACCENTS: Record<ProviderId, StyleSpec> = {
-  claude: { rgb: [250, 179, 135], ansi16: "93", bold: true },
-  codex: { rgb: [148, 226, 213], ansi16: "96", bold: true },
-  cursor: { rgb: [137, 180, 250], ansi16: "94", bold: true },
-  copilot: { rgb: [116, 199, 236], ansi16: "94", bold: true },
-  grok: { rgb: [180, 190, 254], ansi16: "95", bold: true },
-  kimi: { rgb: [245, 194, 231], ansi16: "95", bold: true },
-  zai: { rgb: [129, 216, 209], ansi16: "96", bold: true },
-  agy: { rgb: [232, 184, 109], ansi16: "93", bold: true },
-  alibaba: { rgb: [255, 155, 120], ansi16: "91", bold: true },
-  "opencode-go": { rgb: [160, 210, 255], ansi16: "96", bold: true },
-  commandcode: { rgb: [110, 210, 168], ansi16: "92", bold: true },
-  minimax: { rgb: [255, 196, 112], ansi16: "93", bold: true },
-  mimo: { rgb: [174, 214, 241], ansi16: "96", bold: true },
-  deepseek: { rgb: [88, 160, 242], ansi16: "94", bold: true },
-  openrouter: { rgb: [183, 148, 232], ansi16: "95", bold: true },
-  elevenlabs: { rgb: [214, 170, 255], ansi16: "95", bold: true },
-  devin: { rgb: [126, 196, 224], ansi16: "96", bold: true },
-  muse: { rgb: [0, 132, 255], ansi16: "94", bold: true },
-  higgsfield: { rgb: [255, 176, 122], ansi16: "93", bold: true },
+type Palette = {
+  accents: Record<ProviderId, StyleSpec>;
+  styles: Record<Exclude<StyleName, `accent:${ProviderId}`>, StyleSpec>;
 };
 
-const STYLES: Record<Exclude<StyleName, `accent:${ProviderId}`>, StyleSpec> = {
-  dim: { rgb: [127, 132, 156], ansi16: "90" },
-  dimmer: { rgb: [88, 91, 112], ansi16: "90" },
-  dimBold: { rgb: [127, 132, 156], ansi16: "90", bold: true },
-  label: { rgb: [166, 173, 200], ansi16: "37" },
-  ok: { rgb: [166, 227, 161], ansi16: "32" },
-  okBold: { rgb: [166, 227, 161], ansi16: "32", bold: true },
-  warn: { rgb: [249, 226, 175], ansi16: "33" },
-  warnBold: { rgb: [249, 226, 175], ansi16: "33", bold: true },
-  crit: { rgb: [243, 139, 168], ansi16: "31" },
-  critBold: { rgb: [243, 139, 168], ansi16: "31", bold: true },
-  marker: { rgb: [137, 220, 235], ansi16: "96" },
-  track: { rgb: [69, 71, 90], ansi16: "90" },
-  border: { rgb: [88, 91, 112], ansi16: "90" },
-  borderDim: { rgb: [49, 50, 68], ansi16: "2;90" },
+/** Catppuccin Mocha, the dark-background palette. */
+const MOCHA: Palette = {
+  accents: {
+    claude: { rgb: [250, 179, 135], ansi16: "93", bold: true },
+    codex: { rgb: [148, 226, 213], ansi16: "96", bold: true },
+    cursor: { rgb: [137, 180, 250], ansi16: "94", bold: true },
+    copilot: { rgb: [116, 199, 236], ansi16: "94", bold: true },
+    grok: { rgb: [180, 190, 254], ansi16: "95", bold: true },
+    kimi: { rgb: [245, 194, 231], ansi16: "95", bold: true },
+    zai: { rgb: [129, 216, 209], ansi16: "96", bold: true },
+    agy: { rgb: [232, 184, 109], ansi16: "93", bold: true },
+    alibaba: { rgb: [255, 155, 120], ansi16: "91", bold: true },
+    "opencode-go": { rgb: [160, 210, 255], ansi16: "96", bold: true },
+    commandcode: { rgb: [110, 210, 168], ansi16: "92", bold: true },
+    minimax: { rgb: [255, 196, 112], ansi16: "93", bold: true },
+    mimo: { rgb: [174, 214, 241], ansi16: "96", bold: true },
+    deepseek: { rgb: [88, 160, 242], ansi16: "94", bold: true },
+    openrouter: { rgb: [183, 148, 232], ansi16: "95", bold: true },
+    elevenlabs: { rgb: [214, 170, 255], ansi16: "95", bold: true },
+    devin: { rgb: [126, 196, 224], ansi16: "96", bold: true },
+    muse: { rgb: [0, 132, 255], ansi16: "94", bold: true },
+    higgsfield: { rgb: [255, 176, 122], ansi16: "93", bold: true },
+  },
+  styles: {
+    dim: { rgb: [127, 132, 156], ansi16: "90" },
+    dimmer: { rgb: [88, 91, 112], ansi16: "90" },
+    dimBold: { rgb: [127, 132, 156], ansi16: "90", bold: true },
+    label: { rgb: [166, 173, 200], ansi16: "37" },
+    ok: { rgb: [166, 227, 161], ansi16: "32" },
+    okBold: { rgb: [166, 227, 161], ansi16: "32", bold: true },
+    warn: { rgb: [249, 226, 175], ansi16: "33" },
+    warnBold: { rgb: [249, 226, 175], ansi16: "33", bold: true },
+    crit: { rgb: [243, 139, 168], ansi16: "31" },
+    critBold: { rgb: [243, 139, 168], ansi16: "31", bold: true },
+    marker: { rgb: [137, 220, 235], ansi16: "96" },
+    track: { rgb: [69, 71, 90], ansi16: "90" },
+    border: { rgb: [88, 91, 112], ansi16: "90" },
+    borderDim: { rgb: [49, 50, 68], ansi16: "2;90" },
+  },
 };
+
+/**
+ * Catppuccin Latte, the light-background counterpart. Same style names and
+ * semantic mapping as Mocha, on Latte hues, darkened where stock Latte falls
+ * under 3:1 WCAG contrast against Latte base (#eff1f5) for text or 1.5:1 for
+ * track/border fills, and separated where two accents would share one
+ * 256-color cell. `ansi16` codes are shared: the 16-color path defers to the
+ * terminal's own palette.
+ */
+const LATTE: Palette = {
+  accents: {
+    ...MOCHA.accents,
+    claude: { rgb: [228, 82, 0], ansi16: "93", bold: true },
+    codex: { rgb: [23, 146, 153], ansi16: "96", bold: true },
+    cursor: { rgb: [30, 102, 245], ansi16: "94", bold: true },
+    copilot: { rgb: [16, 128, 150], ansi16: "94", bold: true },
+    grok: { rgb: [92, 106, 240], ansi16: "95", bold: true },
+    kimi: { rgb: [206, 60, 170], ansi16: "95", bold: true },
+    zai: { rgb: [0, 130, 110], ansi16: "96", bold: true },
+    agy: { rgb: [190, 120, 10], ansi16: "93", bold: true },
+    alibaba: { rgb: [215, 70, 70], ansi16: "91", bold: true },
+    "opencode-go": { rgb: [40, 120, 220], ansi16: "96", bold: true },
+    commandcode: { rgb: [52, 150, 30], ansi16: "92", bold: true },
+    minimax: { rgb: [215, 70, 0], ansi16: "93", bold: true },
+    mimo: { rgb: [4, 140, 190], ansi16: "96", bold: true },
+    deepseek: { rgb: [40, 110, 220], ansi16: "94", bold: true },
+    openrouter: { rgb: [136, 57, 239], ansi16: "95", bold: true },
+    elevenlabs: { rgb: [190, 70, 165], ansi16: "95", bold: true },
+    devin: { rgb: [20, 130, 160], ansi16: "96", bold: true },
+    muse: { rgb: [90, 80, 210], ansi16: "94", bold: true },
+    higgsfield: { rgb: [200, 80, 20], ansi16: "93", bold: true },
+  },
+  styles: {
+    dim: { rgb: [124, 127, 147], ansi16: "90" },
+    dimmer: { rgb: [132, 136, 154], ansi16: "90" },
+    dimBold: { rgb: [124, 127, 147], ansi16: "90", bold: true },
+    label: { rgb: [108, 111, 133], ansi16: "37" },
+    ok: { rgb: [52, 150, 30], ansi16: "32" },
+    okBold: { rgb: [52, 150, 30], ansi16: "32", bold: true },
+    warn: { rgb: [188, 108, 0], ansi16: "33" },
+    warnBold: { rgb: [188, 108, 0], ansi16: "33", bold: true },
+    crit: { rgb: [200, 8, 50], ansi16: "31" },
+    critBold: { rgb: [200, 8, 50], ansi16: "31", bold: true },
+    marker: { rgb: [0, 128, 190], ansi16: "96" },
+    track: { rgb: [188, 192, 204], ansi16: "90" },
+    border: { rgb: [172, 176, 190], ansi16: "90" },
+    borderDim: { rgb: [192, 196, 208], ansi16: "2;90" },
+  },
+};
+
+const PALETTES: Record<TuiTheme, Palette> = { dark: MOCHA, light: LATTE };
 
 /**
  * Resolve the color depth for the TUI report from the environment. Honors
@@ -214,7 +283,7 @@ export function renderQuotaTui(
     }
   }
   return lines
-    .map((line) => renderLine(trimRight(line), options.colorDepth ?? "none"))
+    .map((line) => renderLine(trimRight(line), renderStyle(options)))
     .join("\n");
 }
 
@@ -285,7 +354,16 @@ export function renderTuiHintLine(
   const line: Line = [
     { text: `  ${truncate(text, columns - 2)}`, style: "dim" },
   ];
-  return renderLine(trimRight(line), options.colorDepth ?? "none");
+  return renderLine(trimRight(line), renderStyle(options));
+}
+
+type RenderStyle = { depth: TuiColorDepth; theme: TuiTheme };
+
+function renderStyle(options: TuiOptions): RenderStyle {
+  return {
+    depth: options.colorDepth ?? "none",
+    theme: options.theme ?? "dark",
+  };
 }
 
 function resolveColumns(columns: number | undefined): number {
@@ -405,6 +483,17 @@ function buildLiveCard(
           border,
         ),
       );
+    }
+  }
+
+  const jobs = provider.jobs;
+  if (jobs) {
+    lines.push(interior([], border));
+    for (const text of [
+      `   jobs sampled ${jobs.sampled} · completed ${jobs.completed}`,
+      `        failed ${jobs.failed} · other ${jobs.other}`,
+    ]) {
+      lines.push(interior([{ text, style: "dim" }], border));
     }
   }
 
@@ -1015,6 +1104,8 @@ function fullFooterLines(provider: ProviderQuota, width: number): string[] {
     ...(accountKey ? [accountKey] : []),
   ];
   const protectedAccountParts = new Set([0]);
+  if (provider.accountLocator)
+    accountParts.push(collapseHome(provider.accountLocator.path));
   if (provider.account?.email) accountParts.push(provider.account.email);
   if (provider.account?.organization) {
     accountParts.push(provider.account.organization);
@@ -1365,23 +1456,28 @@ function trimRight(line: Line): Line {
   return out;
 }
 
-function renderLine(line: Line, depth: TuiColorDepth): string {
+function renderLine(line: Line, { depth, theme }: RenderStyle): string {
   if (depth === "none") {
     return line.map((segment) => segment.text).join("");
   }
   return line
     .map((segment) => {
       if (segment.style === undefined) return segment.text;
-      const sgr = styleSgr(segment.style, depth);
+      const sgr = styleSgr(segment.style, depth, theme);
       return sgr === "" ? segment.text : `\x1b[${sgr}m${segment.text}\x1b[0m`;
     })
     .join("");
 }
 
-function styleSgr(style: StyleName, depth: TuiColorDepth): string {
+function styleSgr(
+  style: StyleName,
+  depth: TuiColorDepth,
+  theme: TuiTheme,
+): string {
+  const palette = PALETTES[theme];
   const spec = style.startsWith("accent:")
-    ? ACCENTS[style.slice("accent:".length) as ProviderId]
-    : STYLES[style as Exclude<StyleName, `accent:${ProviderId}`>];
+    ? palette.accents[style.slice("accent:".length) as ProviderId]
+    : palette.styles[style as Exclude<StyleName, `accent:${ProviderId}`>];
   const codes: string[] = [];
   if (spec.bold) codes.push("1");
   if (depth === "truecolor") {
