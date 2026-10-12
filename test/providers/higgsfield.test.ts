@@ -765,6 +765,55 @@ describe("Higgsfield CLI quota provider", () => {
     );
   });
 
+  it("redacts emails and credentials from CLI errors on every report path", async () => {
+    const leaky =
+      "\u001b[31mrequest failed\u001b[0m for jane.doe@example.com " +
+      "token=abc123secret Authorization: Bearer sk_live_9f8e7d6c " +
+      "api_key: 'k-1' eyJhbGciOiJIUzI1NiJ9abcdefghijklmnopqrstuvwxyz0123";
+    const report = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async (_command, args) => {
+        if (args[0] === "account" && args[1] === "status") {
+          return readFixture("status.json");
+        }
+        throw new Error(leaky);
+      },
+    }).fetchQuota(OPTIONS);
+    const toon = renderQuotaToon(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 5,
+        providers: [withQuotaSemantics(report, GENERATED_AT)],
+      },
+      "quota-axi",
+      false,
+    );
+    const statusReport = await createHiggsfieldAdapter({
+      findCommandPath: async () => "/mock/higgsfield",
+      execFileText: async () => {
+        throw new Error(leaky);
+      },
+    }).fetchQuota(OPTIONS);
+
+    for (const text of [toon, String(statusReport.state.error)]) {
+      expect(text).toContain("request failed for [redacted-email]");
+      for (const secret of [
+        "jane.doe@example.com",
+        "abc123secret",
+        "sk_live_9f8e7d6c",
+        "k-1",
+        "eyJhbGciOiJIUzI1NiJ9",
+        "\u001b",
+      ]) {
+        expect(text).not.toContain(secret);
+      }
+    }
+    expect(toon).toContain("higgsfield_transactions_failed: request failed");
+    expect(statusReport.state.error).toMatch(
+      /^higgsfield_status_failed: request failed/,
+    );
+  });
+
   it("rolls up job statuses including unknown values as other", () => {
     expect(
       normalizeHiggsfieldQuota({
@@ -908,7 +957,7 @@ describe("Higgsfield CLI quota provider", () => {
     );
   });
 
-  it("keeps runway unknown for the resetless credits window while headroom publishes", () => {
+  it("bounds resetless credits at included_credits without inventing a model lane", () => {
     const interpret = (percentRemaining: number, percentUsed: number) =>
       withQuotaSemantics(
         {
@@ -943,29 +992,35 @@ describe("Higgsfield CLI quota provider", () => {
     expect(
       interpret(100, 0).quotaSemantics?.effectiveAvailability?.[0],
     ).toMatchObject({
+      scope: "included_credits",
       status: "known",
       effectivePercentRemaining: 100,
+      boundedBy: ["credits"],
       runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
     });
 
-    const empty = interpret(0, 100);
-    expect(empty.quotaSemantics?.effectiveAvailability?.[0]).toMatchObject({
+    expect(
+      interpret(50, 50).quotaSemantics?.effectiveAvailability?.[0],
+    ).toMatchObject({
+      scope: "included_credits",
+      status: "known",
+      effectivePercentRemaining: 50,
+      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+    });
+
+    expect(
+      interpret(0, 100).quotaSemantics?.effectiveAvailability?.[0],
+    ).toMatchObject({
+      scope: "included_credits",
       status: "known",
       effectivePercentRemaining: 0,
-      runway: { status: "unknown", unmeasurableWindowIds: ["credits"] },
+      boundedBy: ["credits"],
+      runway: {
+        status: "exhausted_now",
+        usableRunwaySeconds: 0,
+        limitingWindowId: "credits",
+      },
     });
-
-    const toon = renderQuotaToon(
-      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [empty] },
-      "quota-axi",
-      false,
-    );
-    expect(toon).toContain(
-      "higgsfield,included_credits,0,unknown,unknown,unknown,credits,unknown",
-    );
-    expect(toon).toContain(
-      "higgsfield,included_credits,unmeasurable,credits blocks runway + spendPriority,none",
-    );
   });
 });
 

@@ -433,15 +433,20 @@ describe("computeEffectiveRunway", () => {
     });
   });
 
-  it("keeps zero remaining unknown when no window reports a reset", () => {
+  it("keeps a vendor-reported zero exhausted now when no window reports a reset", () => {
     expect(
       computeEffectiveRunway(
-        [window({ id: "credits", percentUsed: 100, percentRemaining: 0 })],
+        [
+          window({ id: "balance", percentUsed: 40, percentRemaining: 60 }),
+          window({ id: "credits", percentUsed: 100, percentRemaining: 0 }),
+        ],
         GENERATED_AT,
       ),
     ).toEqual({
-      status: "unknown",
-      unmeasurableWindowIds: ["credits"],
+      status: "exhausted_now",
+      usableRunwaySeconds: 0,
+      projectedExhaustedAt: GENERATED_AT,
+      limitingWindowId: "credits",
     });
   });
 
