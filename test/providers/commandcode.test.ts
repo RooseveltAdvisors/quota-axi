@@ -705,6 +705,62 @@ describe("Command Code effective availability", () => {
     });
   });
 
+  it("keeps an untrusted limit partial while the zeroed credits window still reads exhausted", () => {
+    const report: ProviderQuota = {
+      provider: "commandcode",
+      label: "Command Code",
+      source: "api",
+      credits: { remaining: 0, unit: "credits" },
+      windows: [
+        {
+          id: "credits",
+          label: "credits",
+          kind: "credits",
+          percentUsed: 100,
+          percentRemaining: 0,
+        },
+        {
+          id: "five_hour",
+          label: "5-hour",
+          kind: "session",
+          percentUsed: 0,
+          percentRemaining: 100,
+          windowSeconds: 18_000,
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          kind: "weekly",
+          percentUsed: 0,
+          percentRemaining: 100,
+          windowSeconds: 604_800,
+        },
+      ],
+      state: {
+        status: "fresh",
+        stale: false,
+        untrustedWindowIds: ["window:exceeded"],
+      },
+    };
+    const semantics = withQuotaSemantics(
+      report,
+      "2026-09-14T12:00:00.000Z",
+    ).quotaSemantics;
+    expect(semantics).toMatchObject({
+      status: "partial",
+      unresolvedWindowIds: ["window:exceeded"],
+      effectiveAvailability: [
+        {
+          scope: "included_credits",
+          effectivePercentRemaining: 0,
+          boundedBy: ["credits"],
+          limitingWindowIds: ["credits"],
+          runway: { status: "exhausted_now", usableRunwaySeconds: 0 },
+        },
+      ],
+    });
+  });
+
   it("publishes included_credits as the minimum of the trusted rolling windows", () => {
     const report: ProviderQuota = {
       provider: "commandcode",

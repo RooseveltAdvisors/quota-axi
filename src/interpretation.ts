@@ -456,23 +456,32 @@ function commandCodeSemantics(
   const included = windows.find(
     ({ id, percentRemaining }) => id === "credits" && percentRemaining === 0,
   );
-  if (included) {
-    return knownSemantics(
-      [availability("included_credits", [included], generatedAt)],
-      "Command Code's included monthly credits are spent, so they read exhausted now however fresh the five-hour and weekly rate-limit windows look. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.",
-    );
-  }
   const expected = windows.filter(
     ({ id }) => id === "five_hour" || id === "weekly",
   );
   const jointBound =
     expected.some(({ id }) => id === "five_hour") &&
     expected.some(({ id }) => id === "weekly");
-  const recognized = new Set(expected);
+  const recognized = new Set([...expected, ...(included ? [included] : [])]);
   const unresolved = windows.filter((window) => !recognized.has(window));
   const unresolvedWindowIds = [
     ...new Set([...unresolved.map(({ id }) => id), ...untrustedWindowIds]),
   ];
+  if (included) {
+    const effectiveAvailability = [
+      availability("included_credits", [included], generatedAt),
+    ];
+    const description =
+      "Command Code's included monthly credits are spent, so they read exhausted now however fresh the five-hour and weekly rate-limit windows look. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.";
+    return unresolvedWindowIds.length > 0
+      ? {
+          status: "partial",
+          description,
+          effectiveAvailability,
+          unresolvedWindowIds,
+        }
+      : knownSemantics(effectiveAvailability, description);
+  }
   const description =
     "Command Code's five-hour and weekly windows jointly pace included monthly credits. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.";
   if (unresolvedWindowIds.length > 0) {
