@@ -686,7 +686,7 @@ export function normalizeCommandCodePayload(
 
   const monthly = creditPool(data).monthlyCredits;
   if (
-    limitedFlag !== false &&
+    windows.some(({ id }) => id === "five_hour" || id === "weekly") &&
     typeof monthly === "number" &&
     Number.isFinite(monthly) &&
     monthly <= 0

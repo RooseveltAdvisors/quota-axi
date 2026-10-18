@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { withQuotaSemantics } from "../../src/interpretation.js";
+import { renderQuotaToon } from "../../src/render.js";
 import {
   createCommandCodeAdapter,
   COMMANDCODE_API_ORIGIN,
@@ -535,6 +536,33 @@ describe("Command Code payload normalization", () => {
     ).quotaSemantics;
     expect(semantics?.effectiveAvailability).toEqual([]);
     expect(semantics?.status).not.toBe("known");
+  });
+
+  it("keeps a credit-only answer with no windowLimits as a credits attention row", async () => {
+    const report = await testAdapter({
+      fetch: sequentialFetch([
+        jsonResponse({ org: { id: "org_fixture" } }),
+        jsonResponse({
+          monthlyCredits: 0,
+          purchasedCredits: 20,
+          freeCredits: 0,
+        }),
+      ]),
+    }).fetchQuota(OPTIONS);
+    expect(report.windows).toEqual([]);
+    expect(report.credits).toEqual({ remaining: 20, unit: "credits" });
+    expect(report.state).toMatchObject({ status: "fresh" });
+    const toon = renderQuotaToon(
+      {
+        generatedAt: "2026-09-14T12:00:00.000Z",
+        schemaVersion: 5,
+        providers: [withQuotaSemantics(report, "2026-09-14T12:00:00.000Z")],
+      },
+      "quota-axi",
+      false,
+    );
+    expect(toon).toMatch(/commandcode,all,credits,[^\n]*20 credits/);
+    expect(toon).not.toContain("exhausted_now");
   });
 
   it("omits leftover rolling windows when limited is false", () => {
