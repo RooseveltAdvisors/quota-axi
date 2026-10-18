@@ -64,12 +64,7 @@ const FIVE_HOURS_SECONDS = 18_000;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const USER_AGENT = `quota-axi/${VERSION}`;
 const EXPECTED_WINDOW_IDS = ["five_hour", "weekly"] as const;
-const KNOWN_WINDOW_LIMIT_KEYS = new Set([
-  "limited",
-  "exceeded",
-  "fiveHour",
-  "weekly",
-]);
+const KNOWN_WINDOW_LIMIT_KEYS = new Set(["limited", "fiveHour", "weekly"]);
 
 export type CommandCodeDiagnostic =
   | { code: "credits_incomplete" }
@@ -679,6 +674,7 @@ export function normalizeCommandCodePayload(
   if (windowLimits) {
     for (const [key, value] of Object.entries(windowLimits)) {
       if (KNOWN_WINDOW_LIMIT_KEYS.has(key)) continue;
+      if (key === "exceeded" && (value === null || value === false)) continue;
       const unknownId = `window:${sanitizeId(key)}`;
       if (isObject(value)) {
         windows.push(unknownWindow(unknownId, value, key));
@@ -686,6 +682,22 @@ export function normalizeCommandCodePayload(
       untrustedWindowIds.push(unknownId);
       diagnostics.push({ code: "unknown_window", id: unknownId });
     }
+  }
+
+  const monthly = creditPool(data).monthlyCredits;
+  if (
+    limitedFlag !== false &&
+    typeof monthly === "number" &&
+    Number.isFinite(monthly) &&
+    monthly <= 0
+  ) {
+    windows.push({
+      id: "credits",
+      label: "credits",
+      kind: "credits",
+      percentUsed: 100,
+      percentRemaining: 0,
+    });
   }
 
   for (const window of identity.orgLimitWindows) {

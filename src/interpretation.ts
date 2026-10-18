@@ -162,7 +162,6 @@ function semanticsFor(
         provider.windows,
         provider.state.untrustedWindowIds ?? [],
         generatedAt,
-        provider.credits,
       );
     case "minimax":
       return minimaxSemantics(
@@ -449,30 +448,18 @@ function minimaxModelScope(id: string): string {
   return id.replace(/:(?:5h|7d|window:[^:]+)$/, "");
 }
 
-/**
- * The credit pool is the allowance itself. At an empty pool the pool is the
- * bound: it reads exhausted now however fresh the five-hour and weekly
- * rate-limit counters look, because those windows only pace spending inside
- * the pool (and extra pay-as-you-go credits can bypass them).
- */
-const EXHAUSTED_CREDIT_POOL: QuotaWindow = {
-  id: "credits",
-  label: "credits",
-  kind: "credits",
-  percentUsed: 100,
-  percentRemaining: 0,
-};
-
 function commandCodeSemantics(
   windows: QuotaWindow[],
   untrustedWindowIds: string[],
   generatedAt: string,
-  credits?: ProviderQuota["credits"],
 ): QuotaSemantics {
-  if (credits?.remaining !== undefined && credits.remaining <= 0) {
+  const included = windows.find(
+    ({ id, percentRemaining }) => id === "credits" && percentRemaining === 0,
+  );
+  if (included) {
     return knownSemantics(
-      [availability("included_credits", [EXHAUSTED_CREDIT_POOL], generatedAt)],
-      "Command Code's credit pool is empty, so the included credits read exhausted now however fresh the five-hour and weekly rate-limit windows look. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.",
+      [availability("included_credits", [included], generatedAt)],
+      "Command Code's included monthly credits are spent, so they read exhausted now however fresh the five-hour and weekly rate-limit windows look. Extra pay-as-you-go credits can bypass those windows, so they are not an all-model bound.",
     );
   }
   const expected = windows.filter(

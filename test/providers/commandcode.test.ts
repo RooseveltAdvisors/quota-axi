@@ -335,17 +335,55 @@ describe("Command Code payload normalization", () => {
     expect(normalized.windows.map(({ id }) => id)).toEqual([
       "five_hour",
       "weekly",
+      "credits",
     ]);
   });
 
-  it("treats windowLimits.exceeded as a state flag rather than a window", () => {
+  it("reads spent included credits as exhausted while purchased credits remain", () => {
     const normalized = normalizeCommandCodePayload({
-      monthlyCredits: 5,
-      purchasedCredits: 0,
-      freeCredits: 0,
+      credits: { monthlyCredits: 0, purchasedCredits: 50, freeCredits: 0 },
       windowLimits: {
         limited: true,
         exceeded: null,
+        fiveHour: { used: 0, cap: 90, resetAt: 0 },
+        weekly: { used: 0, cap: 180, resetAt: 0 },
+      },
+    });
+    expect(normalized.credits).toEqual({ remaining: 50, unit: "credits" });
+    const semantics = withQuotaSemantics(
+      {
+        provider: "commandcode",
+        label: "Command Code",
+        source: "api",
+        credits: normalized.credits,
+        windows: normalized.windows,
+        state: {
+          status: "fresh",
+          stale: false,
+          untrustedWindowIds: normalized.untrustedWindowIds,
+        },
+      },
+      "2026-09-14T12:00:00.000Z",
+    ).quotaSemantics;
+    expect(semantics).toMatchObject({
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "included_credits",
+          effectivePercentRemaining: 0,
+          boundedBy: ["credits"],
+          limitingWindowIds: ["credits"],
+          runway: { status: "exhausted_now" },
+        },
+      ],
+    });
+  });
+
+  it("publishes no credits window while included credits remain", () => {
+    const normalized = normalizeCommandCodePayload({
+      credits: { monthlyCredits: 5, purchasedCredits: 0, freeCredits: 0 },
+      windowLimits: {
+        limited: true,
         fiveHour: { used: 0, cap: 90, resetAt: 0 },
         weekly: { used: 0, cap: 180, resetAt: 0 },
       },
@@ -354,10 +392,53 @@ describe("Command Code payload normalization", () => {
       "five_hour",
       "weekly",
     ]);
-    expect(normalized.untrustedWindowIds ?? []).not.toContain(
-      "window:exceeded",
-    );
   });
+
+  it.each([null, false])(
+    "treats windowLimits.exceeded %s as a state flag rather than a window",
+    (exceeded) => {
+      const normalized = normalizeCommandCodePayload({
+        monthlyCredits: 5,
+        purchasedCredits: 0,
+        freeCredits: 0,
+        windowLimits: {
+          limited: true,
+          exceeded,
+          fiveHour: { used: 0, cap: 90, resetAt: 0 },
+          weekly: { used: 0, cap: 180, resetAt: 0 },
+        },
+      });
+      expect(normalized.windows.map(({ id }) => id)).toEqual([
+        "five_hour",
+        "weekly",
+      ]);
+      expect(normalized.untrustedWindowIds ?? []).not.toContain(
+        "window:exceeded",
+      );
+    },
+  );
+
+  it.each([true, "weekly", { scope: "weekly" }])(
+    "keeps a windowLimits.exceeded verdict %j untrusted",
+    (exceeded) => {
+      const normalized = normalizeCommandCodePayload({
+        monthlyCredits: 5,
+        purchasedCredits: 0,
+        freeCredits: 0,
+        windowLimits: {
+          limited: true,
+          exceeded,
+          fiveHour: { used: 0, cap: 90, resetAt: 0 },
+          weekly: { used: 0, cap: 180, resetAt: 0 },
+        },
+      });
+      expect(normalized.untrustedWindowIds).toContain("window:exceeded");
+      expect(normalized.diagnostics).toContainEqual({
+        code: "unknown_window",
+        id: "window:exceeded",
+      });
+    },
+  );
 
   it("reads the vendor exceeded flag as spent whatever the counters say", () => {
     const windows = normalizeCommandCodePayload({
@@ -544,13 +625,20 @@ describe("Command Code payload normalization", () => {
 });
 
 describe("Command Code effective availability", () => {
-  it("reads an empty credit pool as exhausted however fresh the rate limits look", () => {
+  it("reads a zeroed credits window as exhausted however fresh the rate limits look", () => {
     const report: ProviderQuota = {
       provider: "commandcode",
       label: "Command Code",
       source: "api",
       credits: { remaining: 0, unit: "credits" },
       windows: [
+        {
+          id: "credits",
+          label: "credits",
+          kind: "credits",
+          percentUsed: 100,
+          percentRemaining: 0,
+        },
         {
           id: "five_hour",
           label: "5-hour",
