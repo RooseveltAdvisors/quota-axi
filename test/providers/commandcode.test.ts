@@ -321,6 +321,65 @@ describe("Command Code payload normalization", () => {
     expect(normalized.windows).toHaveLength(2);
   });
 
+  it("reads the nested credits envelope the live API returns", () => {
+    const normalized = normalizeCommandCodePayload({
+      credits: { monthlyCredits: 0, purchasedCredits: 0, freeCredits: 0 },
+      windowLimits: {
+        limited: true,
+        exceeded: null,
+        fiveHour: { used: 0, cap: 90, exceeded: false, resetAt: 0 },
+        weekly: { used: 0, cap: 180, exceeded: false, resetAt: 0 },
+      },
+    });
+    expect(normalized.credits).toEqual({ remaining: 0, unit: "credits" });
+    expect(normalized.windows.map(({ id }) => id)).toEqual([
+      "five_hour",
+      "weekly",
+    ]);
+  });
+
+  it("treats windowLimits.exceeded as a state flag rather than a window", () => {
+    const normalized = normalizeCommandCodePayload({
+      monthlyCredits: 5,
+      purchasedCredits: 0,
+      freeCredits: 0,
+      windowLimits: {
+        limited: true,
+        exceeded: null,
+        fiveHour: { used: 0, cap: 90, resetAt: 0 },
+        weekly: { used: 0, cap: 180, resetAt: 0 },
+      },
+    });
+    expect(normalized.windows.map(({ id }) => id)).toEqual([
+      "five_hour",
+      "weekly",
+    ]);
+    expect(normalized.untrustedWindowIds ?? []).not.toContain(
+      "window:exceeded",
+    );
+  });
+
+  it("reads the vendor exceeded flag as spent whatever the counters say", () => {
+    const windows = normalizeCommandCodePayload({
+      monthlyCredits: 10,
+      purchasedCredits: 0,
+      freeCredits: 0,
+      windowLimits: {
+        limited: true,
+        fiveHour: { used: 0, cap: 90, exceeded: true },
+        weekly: { used: 0, cap: 180, exceeded: false },
+      },
+    }).windows;
+    expect(windows.find(({ id }) => id === "five_hour")).toMatchObject({
+      percentUsed: 100,
+      percentRemaining: 0,
+    });
+    expect(windows.find(({ id }) => id === "weekly")).toMatchObject({
+      percentUsed: 0,
+      percentRemaining: 100,
+    });
+  });
+
   it("clamps over-cap usage to exhausted rather than a negative remainder", () => {
     const [window] = normalizeCommandCodePayload({
       monthlyCredits: 1,
@@ -485,6 +544,51 @@ describe("Command Code payload normalization", () => {
 });
 
 describe("Command Code effective availability", () => {
+  it("reads an empty credit pool as exhausted however fresh the rate limits look", () => {
+    const report: ProviderQuota = {
+      provider: "commandcode",
+      label: "Command Code",
+      source: "api",
+      credits: { remaining: 0, unit: "credits" },
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour",
+          kind: "session",
+          percentUsed: 0,
+          percentRemaining: 100,
+          windowSeconds: 18_000,
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          kind: "weekly",
+          percentUsed: 0,
+          percentRemaining: 100,
+          windowSeconds: 604_800,
+        },
+      ],
+      state: { status: "fresh", stale: false },
+    };
+    const semantics = withQuotaSemantics(
+      report,
+      "2026-09-14T12:00:00.000Z",
+    ).quotaSemantics;
+    expect(semantics).toMatchObject({
+      status: "known",
+      effectiveAvailability: [
+        {
+          scope: "included_credits",
+          status: "known",
+          effectivePercentRemaining: 0,
+          boundedBy: ["credits"],
+          limitingWindowIds: ["credits"],
+          runway: { status: "exhausted_now", usableRunwaySeconds: 0 },
+        },
+      ],
+    });
+  });
+
   it("publishes included_credits as the minimum of the trusted rolling windows", () => {
     const report: ProviderQuota = {
       provider: "commandcode",
