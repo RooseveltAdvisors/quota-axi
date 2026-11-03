@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.1.69](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.68...quota-axi-v0.1.69) (2026-10-29)
+
+
+### Bug Fixes
+
+* prevent stale Z.AI quota reuse after key rotation ([#361](https://github.com/kunchenguid/quota-axi/issues/361)) ([e56df71](https://github.com/kunchenguid/quota-axi/commit/e56df71f777c9e5824aa9379f48d0941ce44595d))
+
+## [0.1.68](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.67...quota-axi-v0.1.68) (2026-10-26)
+
+
+### Features
+
+* **providers:** read Copilot quota for GitHub Enterprise Cloud (ghe.com) hosts ([#358](https://github.com/kunchenguid/quota-axi/issues/358)) ([91dc7dd](https://github.com/kunchenguid/quota-axi/commit/91dc7dd5007eb3292a6c8b622595460830d5cb85))
+
+## [0.1.67](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.66...quota-axi-v0.1.67) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** update undici to 6.29.1 ([#350](https://github.com/kunchenguid/quota-axi/issues/350)) ([e68103e](https://github.com/kunchenguid/quota-axi/commit/e68103e8e65eaa22d7f6581bba78eed5d951944a))
+
+## [0.1.66](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.65...quota-axi-v0.1.66) (2026-10-22)
+
+
+### Bug Fixes
+
+* **providers:** report Gemini 4 Argon under its own Antigravity window id ([#345](https://github.com/kunchenguid/quota-axi/issues/345)) ([9bad9f3](https://github.com/kunchenguid/quota-axi/commit/9bad9f3593f02ca05cbb015e34db7e68e9650190))
+
+## [0.1.65](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.64...quota-axi-v0.1.65) (2026-10-20)
+
+
+### Features
+
+* **opencode-go:** read OpenCode 2.x credentials from opencode.db ([#341](https://github.com/kunchenguid/quota-axi/issues/341)) ([040fe36](https://github.com/kunchenguid/quota-axi/commit/040fe36178518cc04c21d35742b670fe31225e4d))
+
+## [0.1.64](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.63...quota-axi-v0.1.64) (2026-10-15)
+
+
+### Features
+
+* **tui:** name account lanes by account key in tui.accountLabels ([#335](https://github.com/kunchenguid/quota-axi/issues/335)) ([b3ccf8e](https://github.com/kunchenguid/quota-axi/commit/b3ccf8ed1b3ef6be7d7e920ac51fd620789f2d14))
+
+## [0.1.63](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.62...quota-axi-v0.1.63) (2026-10-15)
+
+
+### Features
+
+* **providers:** report Claude accounts from claude-swap ([#333](https://github.com/kunchenguid/quota-axi/issues/333)) ([5e50b51](https://github.com/kunchenguid/quota-axi/commit/5e50b51653c9bfdf7fa1621b235a49188ce36cb9))
+
+## [0.1.62](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.61...quota-axi-v0.1.62) (2026-10-14)
+
+
+### Features
+
+* **tui:** name account lanes with tui.accountLabels ([#329](https://github.com/kunchenguid/quota-axi/issues/329)) ([97fad39](https://github.com/kunchenguid/quota-axi/commit/97fad392ea67e2bffc5e7900a508af5b02ddbc23))
+
+## [0.1.61](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.60...quota-axi-v0.1.61) (2026-10-12)
+
+
+### Features
+
+* **providers:** report opt-in Claude profile lanes from QUOTA_AXI_CLAUDE_PROFILES ([#327](https://github.com/kunchenguid/quota-axi/issues/327)) ([9b66e34](https://github.com/kunchenguid/quota-axi/commit/9b66e34d0ee26c7ba3067d8a40cad655457f1323))
+
 ## [0.1.60](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.59...quota-axi-v0.1.60) (2026-10-09)
 
 
